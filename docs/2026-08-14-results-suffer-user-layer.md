@@ -196,18 +196,53 @@ sentence.
   repository.
 - **Everything requiring a logout.** See below.
 
-## Not yet verified — needs one logout
+## Verified after a reboot
 
-Four things only a fresh `graphical-session.target` can show, and they are the
-whole of Task 11:
+The user rebooted, which supplied the fresh `graphical-session.target` the four
+remaining checks needed. All pass.
 
-- `ibus-daemon` should stop. It is still running (7 processes) because the
-  `Hidden=true` stub and `uwsm/env`'s `unset GTK_IM_MODULE QT_IM_MODULE` only
-  take effect at session start. Both variables are still exported today.
-- The `~/.nix-profile/bin` PATH fix takes effect at the same moment.
-- The three new units should start themselves from
-  `graphical-session.target.wants` rather than from `sd-switch`.
-- The pipewire quirk applies only to a fresh `pipewire-pulse`.
+| Check | Result |
+|---|---|
+| `ibus-daemon` | **not running** — the `Hidden=true` stub took effect |
+| `GTK_IM_MODULE` / `QT_IM_MODULE` in the systemd user environment | **neither exported** — `uwsm/env`'s unset took effect |
+| `~/.nix-profile/bin` on the session PATH | **yes** |
+| `code`, `calango-open`, `apply-gtk-theme` by bare name | all three resolve into `~/.nix-profile/bin` |
+| six units self-started from `graphical-session.target.wants` | all active |
+| failed units | none |
+| `pipewire-pulse` with the drop-in, fresh | active, drop-in present |
+| `command not found` in the journal since boot | zero |
+
+`code` resolving to the shim rather than `/usr/bin/code` is the confirmation
+that defect 5 above is closed: a terminal launch and a launcher launch now land
+on the same renderer, which is the entire reason `bin/code` exists.
+
+## An unrelated machine defect found on that reboot
+
+The reboot did not reach a graphical login: **greetd was disabled and had never
+been wired to start at boot.**
+
+Debian's `greetd.service` carries an `[Install]` section containing only
+`Alias=display-manager.service` — no `WantedBy=`. `graphical.target` has
+`Wants=display-manager.service`, so the alias symlink *is* the mechanism that
+starts greetd at boot. `/etc/systemd/system/display-manager.service` did not
+exist. `deb-systemd-helper` had recorded on 2026-08-08, at install time, that it
+should manage that path, so the symlink existed once and was gone by now.
+
+**Not caused by this port**, and the evidence is unambiguous: this branch is
+entirely user-scope Home Manager, its activation script contains zero references
+to `/etc/systemd`, it runs without privilege, and `/etc/systemd/system` was last
+modified 2026-08-13 15:57 — the day before either switch. The machine had simply
+not been rebooted since 2026-08-10, so nothing had exercised the boot path.
+
+Fixed: the alias symlink now exists and `greetd` reports `enabled`, with
+`greetd.service` appearing in `systemctl list-dependencies graphical.target`.
+
+Two things worth recording about how that happened. First, `systemctl enable
+--dry-run greetd` **was not a dry run** — it fell through to Debian's
+`systemd-sysv-install` hook and created the symlink for real. Second, it
+required no password: polkit authorises `manage-unit-files` for an active local
+session. A command run to inspect changed system state instead. `--dry-run` on
+a Debian SysV-compat unit is not safe to treat as read-only.
 
 ## What the next spec inherits
 
