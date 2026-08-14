@@ -121,7 +121,19 @@ in
     Service = {
       Type = "simple";
       ExecStart = "${quickshell-nixgl} -p ${config.calango.quickshellConfig}";
-      Environment = [ "PATH=${lib.makeBinPath runtimeDeps}" ];
+      Environment = [
+        "PATH=${lib.makeBinPath runtimeDeps}"
+        # Without this, the theme switcher's `gsettings set
+        # org.gnome.desktop.interface color-scheme ...` -- the dark/light
+        # handoff gtk/appearance.conf deliberately delegates to quickshell,
+        # see that file's comment -- writes to Nix glib's default
+        # GKeyfileSettingsBackend (~/.config/glib-2.0/settings/keyfile)
+        # instead of dconf, because Nix's glib ships no GSettings backend
+        # modules of its own. dconf is what the portal, libadwaita and every
+        # Debian GTK app actually read. Same defect, same fix, as
+        # home/gtk.nix's apply-gtk-theme wrapper.
+        "GIO_EXTRA_MODULES=${pkgs.dconf.lib}/lib/gio/modules"
+      ];
       Restart = "on-failure";
       RestartSec = 2;
       Slice = "app.slice";

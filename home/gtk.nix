@@ -2,10 +2,23 @@
 
 let
   # gsettings comes from Nix's glib rather than Debian's /usr/bin/gsettings,
-  # so the script is self-contained. Both write the same dconf database, so
-  # Debian's GTK applications read what this writes either way. If the schema
-  # versions ever disagree, /usr/bin/gsettings is the documented fallback --
-  # see the spec's open items.
+  # so the script is self-contained. Left unadorned, though, that gsettings
+  # cannot reach dconf at all: Nix's glib builds gio with no GSettings backend
+  # modules on its own closure, so `gio/modules/` in that glib's lib output is
+  # empty, and gsettings silently falls back to GKeyfileSettingsBackend --
+  # confirmed with `G_MESSAGES_DEBUG=all gsettings ...`, which prints "Found
+  # default implementation keyfile (GKeyfileSettingsBackend) for
+  # 'gsettings-backend'". That backend writes
+  # ~/.config/glib-2.0/settings/keyfile, a file nothing else reads: the
+  # portal, libadwaita and every Debian GTK app read dconf. The two stores
+  # had already diverged before this was caught --
+  # org.gnome.desktop.interface cursor-theme was 'Adwaita' via this
+  # gsettings and 'default' via /usr/bin/gsettings.
+  #
+  # GIO_EXTRA_MODULES points gio at dconf's own GIO module
+  # (pkgs.dconf.lib/lib/gio/modules, which does contain libdconfsettings.so),
+  # which is what makes this gsettings pick the dconf backend and land in the
+  # same database Debian's GTK applications read.
   gsettingsSchemas =
     "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/"
     + "${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas";
@@ -92,6 +105,7 @@ let
   applyGtkTheme = pkgs.writeShellScriptBin "apply-gtk-theme" ''
     export PATH=${applyPath}''${PATH:+:$PATH}
     export GSETTINGS_SCHEMA_DIR=${gsettingsSchemas}
+    export GIO_EXTRA_MODULES=${pkgs.dconf.lib}/lib/gio/modules
     exec ${gtkConfig}/apply-gtk-theme "$@"
   '';
 in
