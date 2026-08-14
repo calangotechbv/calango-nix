@@ -31,9 +31,11 @@ The signature's prefix identifies the build: `a0136d8c…` is the Nix 0.55.4,
 `39d7e209…` is apt's 0.55.2. Useful for telling at a glance which compositor a
 socket belongs to.
 
-## The two real defects
+## The three real defects
 
-Both were invisible to static review and only appeared on a real launch.
+None was visible to static review. Two needed a real launch; the third needed
+a real launch *and* someone reading the journal of a bar that appeared to be
+working.
 
 ### 1. A `qmldir` hid nine components
 
@@ -103,18 +105,46 @@ Home Manager owns exactly two paths under `~/.local/state/quickshell`: `.keep`
 and `theme-switcher/.keep`, both store symlinks forcing real parent
 directories. Every other file there is a real, mutable file.
 
-## The runtime closure
+## The runtime closure, and the third defect
 
-All fifteen packages resolve on the unit's `PATH`, and `python3` imports
-`PIL` 12.3.0. Exercised for real: `matugen` 4.0.0, `wallust` 3.5.2, `jq`,
-`sh`, `cat`, and `hyprctl`. Taken on trust from `command -v`, pending a
-person driving the interface: `brightnessctl`, `cliphist`, `wl-copy`,
-`swaybg` (though a `wallpaper` layer exists, so it ran), `gsettings`,
-`notify-send`, `curl`, `systemctl`.
+The closure shipped wrong, and the final review caught it with the bar
+already running. `runtimeDeps` had been transcribed from spec 2's closure
+table — and that table was built by grepping QML `command:` arrays, which
+misses every command invoked inside an `sh -c` string. Six packages were
+absent: `gnugrep`, `gnused`, `gawk`, `procps`, `networkmanager`, `uwsm`.
 
-`libnotify` is in the closure but `notify-send` is never invoked —
-quickshell implements its own DBus `org.freedesktop.Notifications` server.
-One wrong row in spec 2's runtime-closure table.
+The proof was already in the journal, in a bar that looked fine:
+
+```
+WARN qml: MonitorService sourceCheck: …/sh: line 1: grep: command not found
+```
+
+Dead at that moment, with no visible error: the bar's CPU, memory, SSID and
+temperature widgets; all of `SystemPanel`; monitor persistence; and the Log
+out button, which runs `uwsm stop`.
+
+This is the third instance in this project of the same mistake — reasoning
+about what code calls by reading one syntactic form of the call. The path
+rewrite missed QML string concatenation and third-party TOML. The closure
+missed `sh -c` strings. Both times the count looked right and both times the
+failure was silent.
+
+`runtimeDeps` is now derived from the tree rather than from the table:
+`findutils` and `util-linux` were needed too, on top of the six above.
+
+Deliberately excluded, with the reasons recorded in the module:
+
+- `ddcutil` — self-guards with `command -v`, so it fails silently-clean.
+  Enabling it needs i2c-dev group setup, which is out of scope here.
+- `swww`, `swww-daemon` — not packaged; `WallpaperService` falls back to
+  `swaybg`, which is what runs.
+- `kitty` — invoked only behind a `[ -S "$sock" ]` guard on a socket that
+  never exists, since this project installs `foot`.
+- `bluetoothctl` — the bluetooth panel is D-Bus only and execs nothing.
+
+`libnotify` stays. It was flagged as unused because quickshell runs its own
+DBus `org.freedesktop.Notifications` server, but it also provides a
+`notify-send` binary and costs nothing to keep.
 
 ## Closed open items
 
@@ -163,10 +193,22 @@ and network secrets in a live session.
 
 ## Surprises
 
-The two defects share a shape worth naming: **both were correct in isolation
-and wrong in context.** The `qmldir` was a valid file that changed the meaning
-of files it did not mention; the matugen flags were valid for the version
-calango-desktop was written against. Neither is the kind of error that review
-of a diff can catch, and both took a real launch to surface — which is the
-argument for the plan's insistence that `hyprctl layers`, not
-`systemctl is-active`, is the test that counts.
+The defects share a shape worth naming: **each was correct in isolation and
+wrong in context.** The `qmldir` was a valid file that changed the meaning of
+files it did not mention. The matugen flags were valid for the version
+calango-desktop was written against. The closure was a faithful transcription
+of a table that had itself been built from one syntactic form of a call.
+
+None is the kind of error a diff review can catch, and none surfaced until the
+thing actually ran — which is the argument for the plan's insistence that
+`hyprctl layers`, not `systemctl is-active`, is the test that counts. But the
+closure defect goes further and is the more uncomfortable lesson: `hyprctl
+layers` passed, the bar drew, and six packages were still missing. A shell can
+map its surface and be substantially broken. The journal, not the screen, is
+where that shows.
+
+The recurring root cause across all three: **enumerating what code does by
+grepping one syntactic form of it.** Paths appeared as `$HOME/...` strings, as
+QML concatenation, and as third-party TOML. Commands appeared in `command:`
+arrays and inside `sh -c` strings. Each time, the first grep looked complete
+and the count looked plausible.
