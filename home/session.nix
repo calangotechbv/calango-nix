@@ -50,8 +50,21 @@ let
   #
   # Prepended, not appended: apt's Hyprland, hyprctl and hyprlock are all
   # still installed under /usr/bin, and an appended path would let them win.
+  #
+  # QS_CONFIG_PATH looks removable and is not. `qs` with no -p/-c targets
+  # the "default" config, and quickshell.service (home/quickshell.nix) is
+  # launched with -p <store path>, so there is no "default" instance to
+  # find -- every one of the 15 `qs ipc call ...` binds in hyprland.lua
+  # (session menu, layout switcher, brightness keys, and every other panel
+  # toggle) would otherwise fail with "Could not find 'default' config
+  # directory or shell.qml in any valid config path." quickshell documents
+  # this variable as the environment fallback for --path, so exporting it
+  # here makes every `qs` the compositor spawns find the same running
+  # instance quickshell.service started with -p, with no edit to
+  # hyprland.lua and no coupling of hyprland.lua to quickshell's store path.
   hyprland-nixgl = pkgs.writeShellScriptBin "hyprland-nixgl" ''
     export PATH=${compositorPath}''${PATH:+:$PATH}
+    export QS_CONFIG_PATH=${config.calango.quickshellConfig}
     exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
       ${pkgs.hyprland}/bin/Hyprland --config ${config.calango.hyprConfig}/hyprland.lua "$@"
   '';
