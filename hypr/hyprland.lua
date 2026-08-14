@@ -33,10 +33,11 @@
 -- further down read those names, so the *policy* (1-5 here, 6-10 there) stays
 -- in this file and shared, while the *hardware* stays per host.
 --
--- The host is chosen at build time: home/hyprland.nix substitutes @host@ from
--- the flake's mkHome argument. The old /etc/hostname lookup, its domain
--- stripping, its pcall and its fail-loud banner are gone -- an unknown host is
--- now an evaluation error, which is the earlier and louder failure.
+-- The host is chosen at build time: home/hyprland.nix substitutes the
+-- machine's name, taken from the flake's mkHome argument, into the path
+-- below. The old runtime hostname lookup, its domain stripping, its pcall
+-- and its fail-loud banner are gone -- an unknown host is now an evaluation
+-- error, which is the earlier and louder failure.
 local loaded, hostCfg = pcall(dofile, "@hyprSource@/hosts/@host@.lua")
 if not loaded or type(hostCfg) ~= "table" then
     -- No file for this machine: no monitor declarations, which leaves Hyprland
