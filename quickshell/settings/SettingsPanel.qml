@@ -568,10 +568,12 @@ Scope {
 
             Text {
               Layout.fillWidth: true
-              // Names the file that actually exists under the Lua config, and a
-              // line that actually loads it. pcall so a machine without the
-              // generated file still starts.
-              text: "Persistence disabled — add pcall(require, \"monitors\") to hyprland.lua."
+              // hyprland.lua lives read-only in the Nix store now and
+              // unconditionally dofiles monitors.lua back in, so there is no
+              // line left for a user to add. The only thing that makes this
+              // check fail is the state directory itself being missing, so
+              // name that directory -- it's the one thing a user can act on.
+              text: "Persistence disabled — state directory " + Paths.hyprStateDir + " is missing."
               color: root.theme.accentOrange
               font { pixelSize: 11; family: root.font }
               elide: Text.ElideRight
