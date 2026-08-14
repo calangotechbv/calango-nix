@@ -84,6 +84,7 @@
         modules = [
           ./home/default.nix
           ./home/session.nix
+          ./home/quickshell.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";
