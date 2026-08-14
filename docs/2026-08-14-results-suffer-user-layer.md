@@ -184,13 +184,22 @@ sentence.
 
 ## Still open
 
-- **Two comment defects, parked and known.** `lf/lfrc:1-2` says lf is launched as
-  `kitty --class lf -e lf`; `hyprland.lua:107` sets `foot --app-id lf lf`.
-  `lf/colors:14` references `kitty/theme-colors.conf`, a file this branch
-  deleted. Comment-only, no behavioural effect.
-- **foot's 22 deprecation warnings per start.** `[colors]` is deprecated in 1.27
-  and `[colors-dark]` is fatal in 1.21. No spelling is clean on both, and the
-  other host may still be on 1.21.
+- ~~Two comment defects in `lf/`.~~ **Fixed.** `lf/lfrc` said lf is launched as
+  `kitty --class lf -e lf`; it is `foot --app-id lf lf`. `lf/colors` went
+  further than a wrong filename — its whole argument for staying inside ANSI
+  0-15 rested on Theme.qml pushing the palette live over kitty's control
+  socket, which foot has no equivalent for. The rationale survives (the
+  terminal still does the theming) but the mechanism does not: foot reads the
+  palette at startup only, so a running lf keeps the colours it opened with.
+  Rewritten to say that, rather than to swap one noun.
+- ~~foot's 22 deprecation warnings per start.~~ **Fixed.** Renamed to
+  `[colors-dark]` in `foot.ini`, `themes/monokai-pro.ini` and the palette
+  `Theme.qml` writes at runtime. `exit 0`, zero warnings. The `[colors]` choice
+  was correct while Debian's foot 1.21 read this config — 1.21 rejects
+  `[colors-dark]` outright — but nothing reads this tree's foot config except
+  the foot this flake pins, and the other host runs calango-desktop's separate
+  copies. The decision to keep `[colors]` cited a constraint that does not
+  apply here.
 - **An upstream evaluation warning** — `'system' has been renamed to
   'stdenv.hostPlatform.system'` — comes from `nixgl/flake.nix:36`, not this
   repository.

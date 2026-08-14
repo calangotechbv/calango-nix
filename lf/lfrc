@@ -1,5 +1,7 @@
 # lf, the file manager SUPER+E opens. See hypr/hyprland.lua, which runs it as
-# `kitty --class lf -e lf`.
+# `foot --app-id lf lf`. It was kitty until foot became the default terminal --
+# foot draws sixel, which is what makes lf/preview show pictures rather than
+# coloured blocks.
 #
 # home/lf.nix links this directory (build-time-patched, see its `lfConfig`
 # derivation) to ~/.config/lf, which is where lf looks for lfrc, colors and

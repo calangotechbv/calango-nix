@@ -3,16 +3,23 @@
 # Every value here stays inside ANSI 0-15 -- the 30-37 range, plus 01 for bold.
 # That is the whole theme story for lf, and it is deliberate.
 #
-# kitty resolves those sixteen numbers from its own palette, and
-# quickshell/theme-switcher/Theme.qml already rewrites that palette live over
-# kitty's remote control socket. So a theme change reaches lf with no file to
-# generate and no reload -- the glyphs on screen are simply re-rendered by the
-# terminal underneath them.
+# foot resolves those sixteen numbers from its own palette, and
+# quickshell/theme-switcher/Theme.qml rewrites that palette on every theme
+# change. So a theme change reaches lf with no file of its own to generate --
+# the glyphs are re-rendered by the terminal underneath them.
+#
+# Not live, though: foot has neither remote control nor a config reload, so it
+# reads the new palette only at startup and a running lf keeps the colours it
+# opened with. Reopen the window (SUPER+E) to see a theme change. This used to
+# be live, when the terminal was kitty and Theme.qml pushed the palette over
+# kitty's control socket; foot trades that for sixel, which is the swap
+# lf/preview cares about.
 #
 # Use a 256-colour code here (38;5;N above 15) or a 24-bit one (38;2;R;G;B) and
-# that stops being true: the colour is then fixed in this file and lf becomes
-# the one thing on screen that ignores the switcher. kitty/theme-colors.conf
-# and foot/theme-colors.ini exist because those two could not do it this way.
+# even that stops being true: the colour is then fixed in this file and lf
+# becomes the one thing on screen that ignores the switcher entirely.
+# foot/theme-colors.ini -- the file Theme.qml writes and foot.ini includes --
+# exists because foot's own config could not be driven this way.
 #
 # What that buys costs something, and the cost is the palette is narrower than
 # sixteen. Theme.qml builds all sixteen slots out of five accents:
