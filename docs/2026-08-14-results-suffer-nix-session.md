@@ -268,12 +268,35 @@ So the established account's keyring is healthy, which is what Task 9 needs.
 `isutton`'s `login.keyring` is 2859 bytes of real secrets; `nixtest`'s is an
 empty 105.
 
-**Open.** The control that settles it is the same read-only collections query
-run as `nixtest` under apt's `Hyprland (uwsm-managed)`. If `login` is absent
-there too, the Nix session is not implicated and this is a fresh-account
-artifact. PAM runs inside greetd, before any compositor exists, so the session
-choice cannot affect whether the keyring is unlocked — but that reasoning is
-worth checking rather than trusting.
+**Resolved, and not the session's doing.** `nixtest` had no *default* keyring.
+Creating one — with `seahorse`, inside the Nix session — made the probe
+round-trip:
+
+```sh
+secret-tool store --label=probe calango probe <<<'x' && secret-tool lookup calango probe
+# x
+```
+
+The collections query then lists `login` under `Hyprland (Nix)` as well, so
+both sessions behave identically. PAM runs inside greetd, before any
+compositor exists, which is why the session choice could not have mattered.
+
+Two false leads, recorded so they are not chased again:
+
+- `GNOME_KEYRING_CONTROL` being empty means nothing. `isutton`'s working
+  session has it unset too. It is a legacy control-socket variable; libsecret
+  reaches the daemon over D-Bus through `org.freedesktop.secrets`.
+- The absent `~/.local/share/keyrings/default` file was dismissed too early,
+  on the grounds that `isutton` has no such file either. That comparison does
+  not hold: `isutton` has an established default collection regardless. A
+  missing default keyring *was* the operative difference.
+
+`isutton` is unaffected either way — the login collection is already exposed
+and unlocked, so Task 9 inherits a working keyring.
+
+Incidental, but useful for spec 2: `seahorse` is an apt GTK application and it
+drew correctly inside the Nix session with no wrapper. Only Nix-built GUI
+applications need nixGL. That is the boundary.
 
 ## The repository copy
 
