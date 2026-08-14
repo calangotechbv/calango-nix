@@ -84,14 +84,32 @@ change inside `$HOME` where the rest of this project lives.
 
 ```bash
 nix --version
-systemctl is-active nix-daemon.socket
+systemctl is-active nix-daemon.service
 nix flake --help >/dev/null && echo "flakes ok"
 ```
 
 Expected: a version at or above `2.26.3`, then `active`, then `flakes ok`.
 
+Check `nix-daemon.service`, not `nix-daemon.socket`. Debian enables both, but
+the service is `WantedBy=multi-user.target` and its `ExecStart` is
+`nix-daemon --daemon`, which binds `/nix/var/nix/daemon-socket/socket`
+itself. The socket unit therefore never gets to listen: it reads
+`inactive (dead)` on a working machine, and `systemctl start
+nix-daemon.socket` fails. Verified on `suffer`, where a 5 GB closure built
+fine with the socket unit dead the whole time.
+
 If `nix flake --help` reports an experimental-feature error, the group change
 has not taken effect in this shell. Start a new login shell and repeat.
+
+If instead it reports
+`getting status of '/nix/var/nix/daemon-socket/socket': Permission denied`,
+that is the same cause with a different symptom: the socket is `0666` but its
+directory is `0770 root:nix-users`, so the group is what gates access. In a
+shell you cannot re-login (an agent's, for instance), prefix each command:
+
+```bash
+sg nix-users -c 'nix build ...'
+```
 
 - [ ] **Step 6: Write the README**
 

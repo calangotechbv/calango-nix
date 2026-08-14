@@ -20,8 +20,26 @@ printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
 Check it:
 
 ```sh
-nix --version                      # 2.26.3 or later
-systemctl is-active nix-daemon.socket
+nix --version                            # 2.26.3 or later
+systemctl is-active nix-daemon.service   # active
+nix flake --help >/dev/null && echo ok   # needs the group change; see below
+```
+
+Check the **service**, not the socket. Debian ships both, but
+`nix-daemon.service` is `WantedBy=multi-user.target`, so it starts on its own
+and `nix-daemon --daemon` binds `/nix/var/nix/daemon-socket/socket` itself.
+That leaves `nix-daemon.socket` reading `inactive (dead)` forever, and
+`systemctl start nix-daemon.socket` failing, on a machine where Nix works
+perfectly well.
+
+Until you have logged in again, the `nix-users` group is not in your process,
+and every `nix` command fails with
+`getting status of '/nix/var/nix/daemon-socket/socket': Permission denied` —
+the socket is `0666` but its directory is `0770 root:nix-users`. Either log in
+again or prefix the command:
+
+```sh
+sg nix-users -c 'nix build ...'
 ```
 
 ## What apt still owns
