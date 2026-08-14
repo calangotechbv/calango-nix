@@ -244,6 +244,62 @@ required no password: polkit authorises `manage-unit-files` for an active local
 session. A command run to inspect changed system state instead. `--dry-run` on
 a Debian SysV-compat unit is not safe to treat as read-only.
 
+## A sixth defect, found by using the desktop after the merge
+
+Editing `Theme.qml` to fix foot's deprecation warnings killed every `qs ipc call`
+keybind — session menu, layout switcher, brightness keys, every panel toggle.
+Fifteen of the ninety-four binds, and the fifteen most often pressed.
+
+The compositor exported `QS_CONFIG_PATH=<store path>` **once, at session start**,
+to match the `-p <store path>` that `quickshell.service` was launched with. Any
+edit to the quickshell tree changes that hash. The service restarts on the new
+one at the next switch; the compositor keeps the old one for the life of the
+session. From that moment `qs ipc call` asks for a path with nothing listening
+and reports `No running instances for <old path>/shell.qml`.
+
+Nothing was broken on disk: 94 binds loaded, zero config errors. The binds were
+aimed at an address that had moved.
+
+This is spec 3's defect wearing a different hat. That one was a **missing**
+`QS_CONFIG_PATH`; this is a **stale** one. Identical symptom, identical fifteen
+binds, identical silence — and the fix for the first one is what created the
+second. Worth stating plainly: **an environment variable holding a store path is
+a handshake that expires**, because one side is a long-lived process and the
+other is rebuilt on every switch. It was not a one-off; it was a landmine under
+every future edit to the quickshell tree.
+
+Fixed by removing the variable rather than refreshing it. `quickshell.service`
+now runs with no `-p` and reads `~/.config/quickshell/shell.qml`, an
+`xdg.configFile` symlink a switch retargets atomically; a bare `qs` resolves the
+same symlink. Both ends agree by construction, and `calango-open` drops its copy
+too. This also makes quickshell consistent with `foot` and `lf`, which this spec
+had already given stable config paths — quickshell was the odd one out.
+
+Verified before switching, because getting it wrong would have left no bar:
+quickshell does follow a symlinked config directory, and reports the symlink
+path rather than canonicalising it, so both ends compute the same string. After
+a fresh session: the compositor exports no `QS_CONFIG_PATH` at all, and
+`qs ipc show` from a bind's environment enumerates the live targets (`theme`,
+`layout`, `launcher`, `audio`, …).
+
+One diagnostic note: the first test appeared to show the mechanism failing. It
+did not — the shell running the test had inherited the stale `QS_CONFIG_PATH`
+from the session, which overrode the lookup being tested. A test environment
+polluted by the very bug under investigation.
+
+## Final state, after the fresh session
+
+| Check | Result |
+|---|---|
+| `qs ipc show` from a bind's environment | lists the live targets |
+| binds loaded / config errors | 94 / none |
+| `foot --check-config` | exit 0, **0 deprecation warnings** |
+| six units | all active, none failed |
+| `code`, `calango-open`, `apply-gtk-theme` | all resolve into `~/.nix-profile/bin` |
+| `foot`, `lf`, `qs` | the Nix builds, via `compositorPath` |
+| `ibus` / IM variables | 0 processes, neither exported |
+| `command not found` this boot | zero |
+
 ## What the next spec inherits
 
 Removing `trixie-backports` is **still blocked** on Nix's hyprlock failing PAM
