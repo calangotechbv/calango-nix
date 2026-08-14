@@ -99,7 +99,7 @@ pgrep -x .Hyprland-wrapp
 
 | Check | Command | Result |
 |---|---|---|
-| Qt6 draws | `pkexec true` | **failed** — see below |
+| Qt6 draws | `pkcheck --action-id … --allow-user-interaction` | **passes**, after two fixes — see below |
 | graphical-session.target | `systemctl --user is-active graphical-session.target` | `active` |
 | a unit runs | `systemctl --user is-active hypridle.service` | `active` |
 | portal reachable | `busctl --user list \| grep portal` | `org.freedesktop.impl.portal.desktop.hyprland`, running |
@@ -156,6 +156,34 @@ Debian's `polkitd` is 126 against nixpkgs' 127. Both fixes pair nixpkgs'
 `libpolkit-agent-1` with Debian's helper binary, so the skew is the same
 either way.
 
+### The second fix: the agent needed nixGL too
+
+With the helper path corrected the agent got further and then aborted:
+
+```
+polkit-agent-helper-1: pam_unix(polkit-1:auth): conversation failed
+polkit-agent-helper-1: pam_authenticate failed: Authentication failure
+hyprpolkitagent.service: Main process exited, code=dumped, status=6/ABRT
+```
+
+No dialog was ever drawn, so PAM's conversation returned no password and the
+helper reported an authentication failure. The cause was the same
+`/run/opengl-driver/lib` as Task 6 rung 1: Qt Quick builds an OpenGL
+scenegraph the moment it shows its first window, and
+`hyprpolkitagent.service` ran the bare store binary. Wrapping the compositor
+does nothing for it — a systemd user unit runs whatever `ExecStart` names,
+and home-manager's module names the unwrapped path.
+
+`services.hyprpolkitagent.package` is now a `runCommand` whose
+`libexec/hyprpolkitagent` is the nixGL wrapper. With that, the dialog draws.
+
+**This is the finding with the longest reach in spec 1.** It is not about
+polkit. Every Nix GUI application on this machine needs the GL wrapper, and
+quickshell — Qt6, like this agent — will need it in spec 2. Spec 1 only ever
+had the compositor in view, and it took a SIGABRT with no GL message in it to
+notice. Anything spec 2 adds as a systemd user unit should be assumed broken
+until it is wrapped.
+
 ### A note on `pkexec` as the Qt6 proof
 
 `/usr/share/polkit-1/rules.d/50-default.rules` returns `unix-group:sudo` as
@@ -163,6 +191,30 @@ the admin identity, and `sudo` holds only `isutton`. `pkexec true` is an
 `auth_admin` action, so on the test account it correctly asks for `isutton`'s
 password, not `nixtest`'s. That is polkit working, not a fault — but it makes
 the proof weaker here than it will be on the real account.
+
+It is worse than weaker: on this account it is impossible. `polkit-agent-helper-1`
+is setuid root and refuses to authenticate any user other than the one the
+agent runs as, so an agent running as `nixtest` cannot collect `isutton`'s
+password:
+
+```
+Not authorized to ask the password of another user
+```
+
+That guard is the helper's, not ours, and it fires before any window is
+drawn. So `pkexec true` can never produce a dialog on the test account. The
+proof was obtained instead with an action whose `allow_active` is `auth_self`,
+which asks for the agent's own user's password:
+
+```sh
+pkcheck --action-id com.1password.1Password.unlock --process $$ --allow-user-interaction
+```
+
+`pkcheck` only asks polkit whether a process is authorized. It performs no
+action, so nothing is unlocked or changed; the dialog is the entire output of
+interest. On `isutton`, who is the only member of `sudo`, the plan's original
+`pkexec true` will work as written, because the agent will be authenticating
+its own user.
 
 ## The repository copy
 
