@@ -1,0 +1,561 @@
+#!/usr/bin/env bash
+#
+# Make GTK theming consistent under a Hyprland session.
+#
+# Under GNOME, gnome-settings-daemon's XSettings module bridges the gsettings
+# keys into GTK at runtime. Hyprland runs no such daemon, so GTK never reads
+# gsettings at all -- it reads ~/.config/gtk-{3,4}.0/settings.ini and nothing
+# else. The result is a split where libadwaita apps follow the dark preference
+# (AdwStyleManager asks the xdg-desktop-portal Settings interface directly,
+# bypassing GtkSettings) while every plain GTK3/GTK4 app stays light.
+#
+# This script treats gsettings as the source of truth and propagates it into
+# the ini files GTK actually reads, so the two layers agree. With no arguments
+# it changes no preferences -- it only makes the existing ones take effect.
+#
+# Deliberately does NOT set GTK_THEME. That variable is a debug override: it
+# bypasses GtkSettings entirely, cannot be changed at runtime, and silently
+# defeats every setting below. It is the most common suggestion in Hyprland
+# dotfiles and it is the wrong layer.
+
+set -euo pipefail
+
+readonly PROG=${0##*/}
+
+# Themes GTK ships compiled in as a gresource. These have no directory under
+# /usr/share/themes -- on a stock Fedora that directory holds only Default and
+# Emacs, and on Debian whatever Breeze and friends dropped there, never Adwaita
+# -- so validating them by path would reject the default theme on either.
+readonly BUILTIN_THEMES=" Adwaita Adwaita-dark HighContrast HighContrastInverse Default "
+
+readonly GTK3_INI="${XDG_CONFIG_HOME:-$HOME/.config}/gtk-3.0/settings.ini"
+readonly GTK4_INI="${XDG_CONFIG_HOME:-$HOME/.config}/gtk-4.0/settings.ini"
+readonly GTK2_RC="$HOME/.gtkrc-2.0"
+
+theme=""; icons=""; cursor=""; cursor_size=""; font=""; mono_font=""; scheme=""
+dry_run=0; check_only=0; do_gtk2=-1
+
+die()  { printf '%s: %s\n' "$PROG" "$*" >&2; exit 1; }
+warn() { printf '  ! %s\n' "$*" >&2; }
+info() { printf '  %s\n' "$*"; }
+
+usage() {
+    cat <<EOF
+Usage: $PROG [options]
+
+Propagates the gsettings desktop appearance keys into the GTK ini files, which
+is the only place GTK reads them when no settings daemon is running.
+
+With no options it re-applies what gsettings already says. Any option below
+overrides that value *and* writes it back to gsettings, so the two stay in sync.
+
+  --theme NAME        GTK theme            (default: current gsettings value)
+  --icons NAME        icon theme
+  --cursor NAME       cursor theme
+  --cursor-size N     cursor size in px
+  --font "NAME SIZE"  interface font, e.g. "Adwaita Sans 11"
+  --mono-font "N S"   monospace font
+  --scheme MODE       dark | light | auto
+
+  --gtk2 / --no-gtk2  force writing ~/.gtkrc-2.0 on or off
+                      (default: on only when gtk2 is installed)
+  -n, --dry-run       show the resulting files without writing anything
+      --check         verify only; report what GTK currently resolves
+  -h, --help          this text
+
+Cursor size is also pushed to the running compositor via hyprctl setcursor.
+Persisting XCURSOR_THEME for the session is a hyprland.lua concern and is
+reported, not edited, by this script.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --theme)       theme=${2:?--theme needs a value}; shift 2 ;;
+        --icons)       icons=${2:?--icons needs a value}; shift 2 ;;
+        --cursor)      cursor=${2:?--cursor needs a value}; shift 2 ;;
+        --cursor-size) cursor_size=${2:?--cursor-size needs a value}; shift 2 ;;
+        --font)        font=${2:?--font needs a value}; shift 2 ;;
+        --mono-font)   mono_font=${2:?--mono-font needs a value}; shift 2 ;;
+        --scheme)      scheme=${2:?--scheme needs a value}; shift 2 ;;
+        --gtk2)        do_gtk2=1; shift ;;
+        --no-gtk2)     do_gtk2=0; shift ;;
+        -n|--dry-run)  dry_run=1; shift ;;
+        --check)       check_only=1; shift ;;
+        -h|--help)     usage; exit 0 ;;
+        *)             die "unknown option: $1 (try --help)" ;;
+    esac
+done
+
+command -v gsettings >/dev/null || die "gsettings not found (install glib2)"
+
+gs_get() {
+    # gsettings quotes string values; strip the outer single quotes.
+    local v
+    v=$(gsettings get org.gnome.desktop.interface "$1" 2>/dev/null) || return 1
+    v=${v#\'}; v=${v%\'}
+    printf '%s' "$v"
+}
+
+# ---------------------------------------------------------------- resolve ----
+# Anything not given on the command line comes from gsettings, so a bare run is
+# a no-op on preferences and only fixes where they are stored.
+
+[ -n "$theme" ]       || theme=$(gs_get gtk-theme)             || die "cannot read gtk-theme"
+[ -n "$icons" ]       || icons=$(gs_get icon-theme)            || die "cannot read icon-theme"
+[ -n "$cursor" ]      || cursor=$(gs_get cursor-theme)         || die "cannot read cursor-theme"
+[ -n "$cursor_size" ] || cursor_size=$(gs_get cursor-size)     || cursor_size=24
+[ -n "$font" ]        || font=$(gs_get font-name)              || font="Cantarell 11"
+[ -n "$mono_font" ]   || mono_font=$(gs_get monospace-font-name) || mono_font="monospace 11"
+
+if [ -n "$scheme" ]; then
+    case $scheme in
+        dark)  color_scheme=prefer-dark ;;
+        light) color_scheme=prefer-light ;;
+        auto)  color_scheme=default ;;
+        *)     die "--scheme must be dark, light or auto (got '$scheme')" ;;
+    esac
+else
+    color_scheme=$(gs_get color-scheme) || color_scheme=default
+fi
+
+case $color_scheme in
+    prefer-dark) prefer_dark=1 ;;
+    *)           prefer_dark=0 ;;
+esac
+
+# Where a theme, icon set or cursor set called $1 could be, most specific first.
+#
+# The tail of each list comes from XDG_DATA_DIRS rather than a hardcoded
+# /usr/share. Both Fedora and Debian put their packages in /usr/share, so this
+# is not what makes the script portable between them -- what it fixes is the
+# case neither distro's default covers: a theme installed into a flatpak
+# runtime, a nix profile or /usr/local, all of which announce themselves in
+# XDG_DATA_DIRS and were invisible here. The fallback is the value the XDG spec
+# defines for an unset XDG_DATA_DIRS, so behaviour on a normal login is
+# unchanged.
+xdg_data_dirs() {
+    local d dd
+    IFS=: read -ra dd <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+    for d in "${dd[@]}"; do [ -n "$d" ] && printf '%s\n' "$d"; done
+}
+
+theme_dirs() {
+    local d
+    printf '%s\n' "$HOME/.themes/$1" "${XDG_DATA_HOME:-$HOME/.local/share}/themes/$1"
+    while read -r d; do printf '%s\n' "$d/themes/$1"; done < <(xdg_data_dirs)
+}
+
+icon_dirs() {
+    local d
+    printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/icons/$1" "$HOME/.icons/$1"
+    while read -r d; do printf '%s\n' "$d/icons/$1"; done < <(xdg_data_dirs)
+}
+
+# "default" is a real cursor theme directory that only carries an Inherits line.
+# Resolving it to the concrete theme matters because XCURSOR_THEME consumers and
+# Hyprland's own cursor loading follow that indirection inconsistently.
+resolve_cursor_alias() {
+    local name=$1 dir target
+    while read -r dir; do
+        [ -d "$dir/cursors" ] && { printf '%s' "$name"; return 0; }
+        if [ -f "$dir/index.theme" ]; then
+            target=$(sed -n 's/^[[:space:]]*Inherits[[:space:]]*=[[:space:]]*\([^,;]*\).*/\1/p' \
+                     "$dir/index.theme" | head -n1 | tr -d '[:space:]')
+            if [ -n "$target" ] && [ "$target" != "$name" ]; then
+                resolve_cursor_alias "$target"; return $?
+            fi
+        fi
+    done < <(icon_dirs "$name")
+    printf '%s' "$name"
+    return 1
+}
+
+# ---------------------------------------------------------------- validate ---
+# Fail loudly on a name that does not exist. A typo here is otherwise invisible:
+# GTK silently falls back to the default theme and everything merely looks
+# slightly wrong forever.
+
+theme_exists() {
+    case "$BUILTIN_THEMES" in *" $1 "*) return 0 ;; esac
+    local d
+    while read -r d; do [ -d "$d" ] && return 0; done < <(theme_dirs "$1")
+    return 1
+}
+
+icons_exist() {
+    local d
+    while read -r d; do [ -f "$d/index.theme" ] && return 0; done < <(icon_dirs "$1")
+    return 1
+}
+
+theme_exists "$theme"  || die "GTK theme '$theme' not found in ~/.themes or any themes/ under XDG_DATA_DIRS"
+icons_exist "$icons"   || die "icon theme '$icons' has no index.theme in any icon directory"
+
+if ! cursor_real=$(resolve_cursor_alias "$cursor"); then
+    die "cursor theme '$cursor' resolves to '$cursor_real', which ships no cursors/ directory"
+fi
+
+case $cursor_size in ''|*[!0-9]*) die "--cursor-size must be a number (got '$cursor_size')" ;; esac
+
+# ---------------------------------------------------- font rendering keys ----
+# gsettings carries these too, and GTK reads none of them without a daemon.
+
+case "$(gs_get font-antialiasing 2>/dev/null || echo grayscale)" in
+    none)     xft_antialias=0; xft_rgba=none ;;
+    rgba)     xft_antialias=1; xft_rgba=$(gs_get font-rgba-order 2>/dev/null || echo rgb) ;;
+    *)        xft_antialias=1; xft_rgba=none ;;
+esac
+
+case "$(gs_get font-hinting 2>/dev/null || echo slight)" in
+    none)   xft_hinting=0; xft_hintstyle=hintnone ;;
+    slight) xft_hinting=1; xft_hintstyle=hintslight ;;
+    medium) xft_hinting=1; xft_hintstyle=hintmedium ;;
+    full)   xft_hinting=1; xft_hintstyle=hintfull ;;
+    *)      xft_hinting=1; xft_hintstyle=hintslight ;;
+esac
+
+# Ordered list of the keys this script owns. Anything else already in a
+# settings.ini is preserved untouched by the merge below.
+#
+# gtk-application-prefer-dark-theme makes libadwaita apps print
+#   "Using GtkSettings:gtk-application-prefer-dark-theme with libadwaita is
+#    unsupported. Please use AdwStyleManager:color-scheme instead."
+# once on stderr. That is cosmetic and the key stays: libadwaita ignores it and
+# follows the portal regardless, while plain GTK3 and non-libadwaita GTK4 apps
+# have no other way to select the dark variant.
+managed_keys() {
+    cat <<EOF
+gtk-theme-name=$theme
+gtk-icon-theme-name=$icons
+gtk-font-name=$font
+gtk-cursor-theme-name=$cursor_real
+gtk-cursor-theme-size=$cursor_size
+gtk-application-prefer-dark-theme=$prefer_dark
+gtk-xft-antialias=$xft_antialias
+gtk-xft-hinting=$xft_hinting
+gtk-xft-hintstyle=$xft_hintstyle
+gtk-xft-rgba=$xft_rgba
+EOF
+}
+
+# ------------------------------------------------------------------ merge ----
+# Rewrite only the managed keys, keep every other line and comment in place, and
+# append whatever was missing to the end of the [Settings] section. Clobbering
+# the file wholesale would throw away hand-added keys such as
+# gtk-decoration-layout or gtk-primary-button-warps-slider.
+
+render_ini() {
+    local path=$1
+
+    if [ ! -f "$path" ]; then
+        printf '# Written by %s. GTK reads this file; it does not read gsettings\n' "$PROG"
+        printf '# unless a settings daemon is running, and Hyprland runs none.\n'
+        printf '[Settings]\n'
+        managed_keys
+        return
+    fi
+
+    managed_keys | awk -v RS='\n' '
+        { split($0, kv, "="); want[kv[1]] = $0; order[++n] = kv[1] }
+        END { for (i = 1; i <= n; i++) print order[i] "\t" want[order[i]] }
+    ' > "$tmpdir/managed"
+
+    awk -F'\t' '
+    NR == FNR { val[$1] = $2; ord[++n] = $1; next }
+    {
+        # A new section ends [Settings]: emit any managed key the file lacked
+        # before the header, so it stays inside the section it belongs to.
+        if ($0 ~ /^[ \t]*\[/) {
+            if (in_settings) { flush(); in_settings = 0 }
+            if (tolower($0) ~ /^[ \t]*\[settings\][ \t]*$/) { in_settings = 1; had_settings = 1 }
+            print; next
+        }
+        if (in_settings) {
+            key = $0
+            sub(/[ \t]*=.*$/, "", key)
+            gsub(/^[ \t]+|[ \t]+$/, "", key)
+            if (key in val) {
+                if (!(key in done)) { print val[key]; done[key] = 1 }
+                next          # drop duplicates of a key we already rewrote
+            }
+        }
+        print
+    }
+    END {
+        if (in_settings)        flush()
+        else if (!had_settings) { print ""; print "[Settings]"; flush() }
+    }
+    function flush(   i) {
+        for (i = 1; i <= n; i++)
+            if (!(ord[i] in done)) { print val[ord[i]]; done[ord[i]] = 1 }
+    }' "$tmpdir/managed" "$path"
+}
+
+tmpdir=$(mktemp -d) || die "cannot create temp directory"
+trap 'rm -rf "$tmpdir"' EXIT
+
+# ------------------------------------------------------------------ report ---
+
+printf '\n%s\n' "Resolved configuration"
+info "theme         $theme"
+info "icons         $icons"
+if [ "$cursor_real" != "$cursor" ]; then
+    info "cursor        $cursor_real  (from '$cursor', which only inherits)"
+else
+    info "cursor        $cursor_real"
+fi
+info "cursor size   $cursor_size"
+info "font          $font"
+info "mono font     $mono_font"
+info "color scheme  $color_scheme  (gtk-application-prefer-dark-theme=$prefer_dark)"
+printf '\n'
+
+if [ -n "${GTK_THEME:-}" ]; then
+    warn "GTK_THEME=$GTK_THEME is set in the environment."
+    warn "It overrides everything below and cannot be changed at runtime. Unset it."
+fi
+
+# ------------------------------------------------------------------ verify ---
+
+# One python process per toolkit version: gi refuses to load Gtk 3.0 and Gtk 4.0
+# into the same interpreter, and libadwaita pulls in Gtk 4.0 of its own accord.
+# Checking them in a single process silently skips everything after the first.
+#
+# Exit 2 means "no typelib for this toolkit", which is not a failure of the
+# settings and must not be reported as one. Debian is why it exists: it splits
+# the GObject introspection data into gir1.2-* packages of its own, so a machine
+# with GTK4 and libadwaita installed can still have no Gtk-4.0.typelib -- and
+# require_version then raises, which used to come out of `--check` as a Python
+# traceback and a non-zero exit that looked like a broken theme.
+readonly VERIFY_PY='
+import sys, gi
+ver, want_theme, want_dark, want_icons, want_cursor = sys.argv[1:6]
+want_dark = want_dark == "1"
+
+try:
+    if ver == "adw":
+        gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")
+    else:
+        gi.require_version("Gtk", ver)
+except ValueError as e:
+    name = "libadwaita" if ver == "adw" else "gtk" + ver[0]
+    print(f"       {name}  not verified: {e}")
+    sys.exit(2)
+
+if ver == "adw":
+    from gi.repository import Adw
+    Adw.init()
+    print(f"       libadwaita  dark={Adw.StyleManager.get_default().get_dark()}  (via portal)")
+    sys.exit(0)
+
+from gi.repository import Gtk
+Gtk.init() if ver == "4.0" else Gtk.init_check()
+s = Gtk.Settings.get_default()
+if s is None:
+    print(f"       gtk{ver[0]}  no display; cannot verify")
+    sys.exit(0)
+got = (s.get_property("gtk-theme-name"),
+       s.get_property("gtk-application-prefer-dark-theme"),
+       s.get_property("gtk-icon-theme-name"),
+       s.get_property("gtk-cursor-theme-name"))
+ok = got == (want_theme, want_dark, want_icons, want_cursor)
+mark = "ok  " if ok else "FAIL"
+print(f"  {mark} gtk{ver[0]}  theme={got[0]} dark={got[1]} "
+      f"icons={got[2]} cursor={got[3]}")
+sys.exit(0 if ok else 1)
+'
+
+verify() {
+    local heading=$1 v rc=0 rc_py no_typelib=0
+    printf '%s\n' "$heading"
+    if ! python3 -c 'import gi' 2>/dev/null; then
+        # python3-gobject on Fedora, python3-gi on Debian.
+        info "(skipped: the python gobject bindings are not installed)"
+        return 0
+    fi
+    for v in 3.0 4.0 adw; do
+        rc_py=0
+        python3 -c "$VERIFY_PY" "$v" "$theme" "$prefer_dark" "$icons" "$cursor_real" || rc_py=$?
+        case $rc_py in
+            0) ;;
+            2) no_typelib=1 ;;                      # no introspection data; not a failure
+            *) [ "$v" = adw ] || rc=1 ;;
+        esac
+    done
+    if [ "$no_typelib" -eq 1 ]; then
+        info "the toolkits above without a typelib cannot be checked from here; the"
+        info "settings are still written. to check them too:"
+        info "  fedora: they come with gtk4 and libadwaita"
+        info "  debian: sudo apt install gir1.2-gtk-4.0 gir1.2-adw-1"
+    fi
+    return $rc
+}
+
+if [ "$check_only" -eq 1 ]; then
+    verify "What GTK resolves right now"
+    exit 0
+fi
+
+if [ "$dry_run" -eq 1 ]; then
+    for f in "$GTK3_INI" "$GTK4_INI"; do
+        printf -- '---- %s ----\n' "$f"
+        render_ini "$f"
+        printf '\n'
+    done
+    exit 0
+fi
+
+# ------------------------------------------------------------------- apply ---
+
+printf 'Writing gsettings\n'
+gsettings set org.gnome.desktop.interface gtk-theme             "$theme"
+gsettings set org.gnome.desktop.interface icon-theme            "$icons"
+gsettings set org.gnome.desktop.interface cursor-theme          "$cursor_real"
+gsettings set org.gnome.desktop.interface cursor-size           "$cursor_size"
+gsettings set org.gnome.desktop.interface font-name             "$font"
+gsettings set org.gnome.desktop.interface monospace-font-name   "$mono_font"
+gsettings set org.gnome.desktop.interface color-scheme          "$color_scheme"
+# Legacy key that some GTK3 apps still consult for the dark preference.
+gsettings set org.gnome.desktop.wm.preferences theme            "$theme" 2>/dev/null || true
+info "org.gnome.desktop.interface updated"
+
+printf '\nWriting GTK ini files\n'
+for f in "$GTK3_INI" "$GTK4_INI"; do
+    mkdir -p "${f%/*}"
+    render_ini "$f" > "$tmpdir/out"
+    if [ -f "$f" ] && cmp -s "$tmpdir/out" "$f"; then
+        info "$f  (unchanged)"
+    else
+        cp -- "$tmpdir/out" "$f"
+        info "$f"
+    fi
+done
+
+if [ "$do_gtk2" -eq -1 ]; then
+    # Only bother when something can actually read it.
+    #
+    # Finding the library is where this was Fedora-only: it looked in /usr/lib64
+    # and /usr/lib, and Debian has it in neither -- multiarch puts it in
+    # /usr/lib/x86_64-linux-gnu -- so ~/.gtkrc-2.0 was silently skipped on a
+    # machine that did have GTK2 installed, and GTK2 apps kept the old theme
+    # with nothing to explain why. The glob covers both layouts; ldconfig is the
+    # fallback for any third one, and is second because it costs a process and
+    # because a stale cache would answer for a library that is really there.
+    do_gtk2=0
+    for _lib in /usr/lib64/libgtk-x11-2.0.so.0 /usr/lib/libgtk-x11-2.0.so.0 \
+                /usr/lib/*-linux-gnu/libgtk-x11-2.0.so.0; do
+        [ -e "$_lib" ] && { do_gtk2=1; break; }
+    done
+    if [ "$do_gtk2" -eq 0 ]; then
+        # /sbin explicitly: ldconfig lives there, and a user shell's PATH does
+        # not always include it (Debian's does not, Fedora's usr-merge does).
+        for _ldconfig in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+            command -v "$_ldconfig" >/dev/null 2>&1 || continue
+            "$_ldconfig" -p 2>/dev/null | grep -q 'libgtk-x11-2\.0\.so' && do_gtk2=1
+            break
+        done
+    fi
+    unset _lib _ldconfig
+fi
+
+if [ "$do_gtk2" -eq 1 ]; then
+    cat > "$GTK2_RC" <<EOF
+# Written by $PROG.
+gtk-theme-name="$theme"
+gtk-icon-theme-name="$icons"
+gtk-font-name="$font"
+gtk-cursor-theme-name="$cursor_real"
+gtk-cursor-theme-size=$cursor_size
+gtk-enable-animations=1
+gtk-xft-antialias=$xft_antialias
+gtk-xft-hinting=$xft_hinting
+gtk-xft-hintstyle=$xft_hintstyle
+gtk-xft-rgba=$xft_rgba
+EOF
+    info "$GTK2_RC"
+else
+    info "gtk2 not installed; skipping $GTK2_RC"
+fi
+
+# ------------------------------------------------------------------- cursor --
+# The compositor keeps its own cursor state. hyprctl setcursor updates it and
+# the wl_seat pointer for every running client without a restart.
+
+printf '\nCursor\n'
+if command -v hyprctl >/dev/null && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    if out=$(hyprctl setcursor "$cursor_real" "$cursor_size" 2>&1) && [ "$out" = "ok" ]; then
+        info "hyprctl setcursor $cursor_real $cursor_size"
+    else
+        warn "hyprctl setcursor failed: $out"
+    fi
+else
+    info "not inside a Hyprland session; skipping hyprctl setcursor"
+fi
+
+# XCURSOR_THEME has to exist in the environment before clients start, so it
+# belongs in hyprland.lua. Report rather than edit: that file is hand-maintained
+# and a script rewriting it is how configs get corrupted.
+hypr_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua"
+if [ -f "$hypr_cfg" ] && ! grep -q 'XCURSOR_THEME' "$hypr_cfg"; then
+    warn "XCURSOR_THEME is not set in $hypr_cfg"
+    warn "add:  hl.env(\"XCURSOR_THEME\", \"$cursor_real\")"
+fi
+
+# --------------------------------------------------------------- xresources --
+# The same "no settings daemon" hole, one layer down. X11 and XWayland clients
+# read neither settings.ini nor the portal: GTK on its X11 backend, Java/Swing,
+# Tk and friends take font rendering from the X resource database, which an
+# XSETTINGS daemon would normally populate. Hyprland runs none and `xrdb -query`
+# is empty, so the same GTK app resolves gtk-xft-hintstyle=hintslight under
+# Wayland and hintmedium under XWayland.
+#
+# Deliberately no Xft.dpi. Hyprland already scales XWayland surfaces by the
+# monitor scale; adding a DPI on top of that applies the scaling twice.
+
+printf '\nX resources (XWayland / X11 clients)\n'
+xres="${XDG_CONFIG_HOME:-$HOME/.config}/X11/xresources"
+mkdir -p "${xres%/*}"
+cat > "$xres" <<EOF
+! Written by $PROG. Kept in step with the GTK settings.
+Xft.antialias: $xft_antialias
+Xft.hinting:   $xft_hinting
+Xft.hintstyle: $xft_hintstyle
+Xft.rgba:      $xft_rgba
+Xft.lcdfilter: lcddefault
+EOF
+info "$xres"
+
+if [ -n "${DISPLAY:-}" ] && command -v xrdb >/dev/null; then
+    if xrdb -merge "$xres" 2>/dev/null; then
+        info "merged into the X resource database on $DISPLAY"
+        # The database lives on the XWayland root window, so it is lost whenever
+        # XWayland restarts. Re-running this script re-applies it.
+    else
+        warn "xrdb -merge failed on $DISPLAY"
+    fi
+elif [ -z "${DISPLAY:-}" ]; then
+    info "no DISPLAY; XWayland is not running yet, nothing to merge into"
+else
+    info "xrdb not installed; skipping (package: xorg-x11-server-utils)"
+fi
+
+# ---------------------------------------------------------------- propagate --
+# Import into the systemd user environment so units started later (quickshell
+# with QT_QPA_PLATFORMTHEME=gtk3, for one) see the cursor settings.
+
+if command -v dbus-update-activation-environment >/dev/null; then
+    systemctl --user set-environment "XCURSOR_THEME=$cursor_real" "XCURSOR_SIZE=$cursor_size" 2>/dev/null || true
+fi
+
+printf '\n'
+verify "Verifying (fresh GTK processes)"
+
+cat <<EOF
+
+Running apps: GTK watches settings.ini and applies most changes live. A theme
+or icon change that does not appear is a repaint the app did not do -- restart
+it. Newly installed *fonts* are different: Qt and GTK both build their font
+database at process start, so quickshell needs
+'systemctl --user restart quickshell'.
+EOF

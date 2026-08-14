@@ -1,0 +1,75 @@
+# lf icons. Two columns: a pattern, then one glyph.
+#
+# The glyphs are Nerd Font code points, which the shell, kitty and foot already
+# require -- install.sh declares AdwaitaMono Nerd Font, so this file adds no
+# dependency. On a machine whose font is not patched every one of these renders
+# as a hollow box, which is the whole failure mode: annoying, never fatal.
+#
+# Deliberately small. This is the Font Awesome file-type family -- U+F07B and
+# the U+F1C* block -- that every Nerd Font release has carried, rather than the
+# larger per-language sets that move between releases and leave boxes behind on
+# whichever machine upgraded last.
+#
+# A line with only a pattern and no glyph does not mean "no icon": lf reads it
+# as "disable the rule for this type". Every line below has two columns.
+
+# file types
+di	
+fi	
+ln	
+or	
+ex	
+
+# documents
+*.pdf	
+*.md	
+*.txt	
+*.org	
+
+# archives
+*.tar	
+*.tgz	
+*.gz	
+*.bz2	
+*.xz	
+*.zst	
+*.zip	
+*.rpm	
+*.deb	
+
+# images
+*.png	
+*.jpg	
+*.jpeg	
+*.gif	
+*.svg	
+*.webp	
+
+# audio
+*.mp3	
+*.flac	
+*.opus	
+*.wav	
+
+# video
+*.mp4	
+*.mkv	
+*.webm	
+
+# code
+*.sh	
+*.py	
+*.lua	
+*.qml	
+*.go	
+*.rs	
+*.c	
+*.h	
+
+# configuration and data
+*.json	
+*.yaml	
+*.yml	
+*.toml	
+*.ini	
+*.conf	

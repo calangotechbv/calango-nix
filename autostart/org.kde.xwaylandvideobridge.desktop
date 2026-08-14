@@ -1,0 +1,45 @@
+# Suppresses /etc/xdg/autostart/org.kde.xwaylandvideobridge.desktop.
+#
+# ../install.sh symlinks this ONE FILE into ~/.config/autostart/. Not the
+# directory: that directory holds entries this repo does not own -- 1password,
+# bitwarden, deskflow, syncthingtray and displaycal on suffer -- and linking the
+# tree would take them out.
+#
+# Why it exists. uwsm runs XDG autostart; the hand-rolled session this repo used
+# before it did not. The old hyprland.start hook started exactly three things,
+# and /etc/xdg/autostart was never read. uwsm's wayland-session@ target Wants
+# wayland-session-xdg-autostart@, so on the first uwsm login ten entries started
+# that never had under Hyprland -- most of them wanted, this one not.
+#
+# xwaylandvideobridge is KDE's shim that lets X11 applications record Wayland
+# screens and windows. It came in as a dependency of kwin-wayland, with Plasma,
+# and nothing Hyprland asked for it. Under Plasma the shell hides its window;
+# Hyprland has no reason to, so it appears as a bare XWayland window titled
+# "Wayland to X Recording bridge".
+#
+# Why it is off rather than hidden. Nothing on this machine can use it. A
+# Wayland-native application does not need the bridge -- it calls the ScreenCast
+# portal directly, and xdg-desktop-portal-hyprland provides one. Checked on
+# suffer: kitty and chrome are Wayland-native, the only flatpak is Slack, and
+# Slack's `sockets=wayland;pulseaudio;fallback-x11` grants an X11 socket only
+# when Wayland is absent -- so it runs native and shares through the portal. No
+# discord, zoom, obs, teams or element, natively or as flatpaks. The bridge was
+# the only XWayland client running, and it existed to serve clients that are
+# not there. It cost ~36 MB by systemd's accounting for its unit.
+#
+# Hidden=true, not a masked unit. systemd-xdg-autostart-generator(8) documents
+# "Hidden=, X-systemd-skip=: No service will be generated if set to true", and
+# XDG reads ~/.config/autostart before /etc/xdg/autostart, so the copy here
+# wins. Verified both ways on suffer: with this file present,
+# `systemctl --user daemon-reload` leaves no
+# app-org.kde.xwaylandvideobridge@autostart.service at all; remove it, reload,
+# and the unit comes back. A mask would work today and break the day the
+# upstream unit is renamed, and it is local state no repo replicates.
+#
+# To undo: delete the symlink, `systemctl --user daemon-reload`, log back in.
+# For a one-off, just run `xwaylandvideobridge` -- nothing here removes the
+# program, only its autostart.
+[Desktop Entry]
+Type=Application
+Name=Xwayland Video Bridge
+Hidden=true

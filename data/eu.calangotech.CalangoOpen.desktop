@@ -1,0 +1,58 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Calango Link Opener
+GenericName=Web Browser Chooser
+Comment=Ask the quickshell panel which browser opens this link
+# A bare name, and it has been both spellings. The history matters because
+# each fixed the other's caller.
+#
+# It was `sh -c 'exec "$HOME/.local/bin/calango-open" "$1"' sh %u`, to reach
+# ~/.local/bin through a shell that would expand $HOME -- because the portal
+# launches handlers with the systemd user environment, whose PATH was then
+# `/usr/local/bin:/usr/bin`, and a bare name exited 127 so flatpak links went
+# to firefox. Measured at the time and correct at the time.
+#
+# That form breaks xdg-open. xdg-utils' open_generic -- which is the path taken
+# whenever XDG_CURRENT_DESKTOP is something it does not recognise, so always
+# under Hyprland -- splits Exec on whitespace WITHOUT honouring quoting. The
+# single-quoted script is torn into `'exec`, `"$HOME/.local/bin/calango-open"`,
+# `"$1"'`, and sh is handed the script `'exec` with $0 set to the quoted path:
+#     "$HOME/.local/bin/calango-open": 1: Syntax error: Unterminated quoted string
+# Nothing opens. GIO parses it correctly, which is why portal callers kept
+# working and only `xdg-open` from a terminal was broken -- and why it went
+# unnoticed.
+#
+# The bare name is safe again because the constraint that killed it lapsed:
+# hyprland.lua's start hook now imports the *whole* session environment into
+# the systemd user manager (`--all`, added for Electron's XDG_SESSION_TYPE), so
+# the portal's PATH carries ~/.local/bin. Verified, not assumed:
+#     env -i HOME=$HOME PATH="$(systemctl --user show-environment | sed -n 's/^PATH=//p')" \
+#       sh -c 'command -v calango-open'   ->  /home/isutton/.local/bin/calango-open
+#
+# So this depends on that import continuing to happen. `install.sh --status`
+# checks it the way the portal resolves it -- by name, under the portal's PATH
+# -- and will say so if it ever stops. Do not reintroduce quoting here: no
+# amount of it survives open_generic.
+Exec=calango-open %u
+Icon=web-browser
+Terminal=false
+Categories=Network;WebBrowser;
+# Every type xdg-settings registers for a default browser, not just the two
+# schemes this actually needs -- and that is load-bearing rather than
+# thorough. `xdg-settings set default-web-browser` rewrites the .desktop in
+# place when it has to add a type, which replaces install.sh's symlink with a
+# frozen copy: `--status` then reports it as NOT OURS forever, and editing this
+# file in the repo stops having any effect. Declaring the full set up front
+# leaves xdg-settings nothing to add, so the symlink survives. Measured both
+# ways. Trim this list and that breaks again, silently.
+MimeType=x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/about;x-scheme-handler/unknown;text/html;application/xhtml+xml;
+# Deliberately absent: NoDisplay. It was set here at first, on the reasoning
+# that a link handler is not something you launch from a menu -- which is true,
+# and cost the feature every caller that is not a terminal.
+# xdg-desktop-portal filters candidate handlers through
+# g_app_info_should_show(), and NoDisplay=true makes that false, so the portal
+# skipped this entry entirely and opened links in firefox instead. The price of
+# leaving it out is one dud row in the app launcher; the price of setting it is
+# that flatpaks silently bypass the picker.
+StartupNotify=false

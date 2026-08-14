@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# hand a url to the quickshell browser picker, or open it directly if the shell
+# is not there to ask.
+#
+# registered as the handler for http/https by install.sh, so this is what
+# xdg-open runs when anything on the desktop opens a link.
+
+set -euo pipefail
+
+url=${1:-}
+[ -n "$url" ] || { printf 'usage: %s URL\n' "${0##*/}" >&2; exit 2; }
+
+discover="$HOME/.config/quickshell/browser/discover.py"
+
+# `qs ipc call` exits 0 and prints "Target not found." when the handler is
+# missing, and exits 0 for an unknown function too -- only *no running
+# instance* gives a non-zero exit. so an exit-code check alone would report
+# success and drop the link on the failure that is actually likely: a qml error
+# that keeps BrowserPicker from loading while the rest of the shell runs fine.
+#
+# a void ipc function prints nothing when it succeeds, so "exited 0 and said
+# nothing" is the honest test.
+if out=$(qs ipc call browser open -- "$url" 2>&1) && [ -z "$out" ]; then
+  exit 0
+fi
+
+# the shell did not take it. discover.py knows how to turn a config entry into
+# an argv and is the same code the panel uses, so the fallback opens the
+# browser the panel would have offered first rather than one named here.
+exec python3 "$discover" --fallback -- "$url"

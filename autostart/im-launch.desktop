@@ -1,0 +1,61 @@
+# Suppresses /etc/xdg/autostart/im-launch.desktop, from Debian's im-config.
+#
+# ../install.sh symlinks this ONE FILE into ~/.config/autostart/. The name must
+# match the entry it suppresses exactly -- XDG matches autostart entries by
+# file name, and ~/.config/autostart wins over /etc/xdg/autostart. See
+# ./org.kde.xwaylandvideobridge.desktop for why the directory is not linked
+# whole.
+#
+# This switches ibus off. There is no input method on this machine, by choice.
+#
+# What it did. im-launch starts an input method the X11 way: it reads
+# /usr/share/im-config/xinputrc.common, picks an input method, and runs it. With
+# no ~/.xinputrc here, /etc/X11/xinit/xinputrc says `run_im default`, which
+# auto-selected ibus -- nothing on this machine chose it. The result was
+# `ibus-daemon --daemonize --xim`: ibus as an X11 input method, in a Wayland
+# session.
+#
+# Why it showed up. uwsm runs XDG autostart; the session this repo carried
+# before it did not. So this entry first ran under Hyprland on 2026-08-07
+# 21:15:19, the first uwsm login. The starts before that are Plasma sessions.
+#
+# What went wrong. ibus-ui-gtk3 checks its own footing on Wayland, and posts a
+# desktop notification titled "IBus Notification" when it finds ibus started as
+# an X11 input method while GTK_IM_MODULE and QT_IM_MODULE point at it. That
+# notification is the reason this file exists. ibus offers no setting to
+# silence it -- checked every key in all three org.freedesktop.ibus schemas.
+#
+# The first attempt at this kept ibus and took the notification's advice: a
+# sibling entry started ibus as a proper Wayland input method, and ../uwsm/env
+# unset the two variables. That worked -- Hyprland handed ibus a real
+# zwp_input_method_v2 and activated it against a focused field, traced under
+# WAYLAND_DEBUG. It was removed anyway, on 2026-08-08, because ibus-ui-gtk3
+# segfaults on this machine:
+#
+#   2026-07-15 16:22, 17:21, 18:29 | X11 ibus, under Plasma
+#   2026-07-16 07:21               | X11 ibus, under Plasma
+#   2026-08-08 18:50, 19:15        | the Wayland panel
+#
+# Six SIGSEGVs in three weeks, in both modes, four of them predating any of this
+# work. The crash is a Debian/ibus bug, not a configuration fault, and no config
+# here can fix it. What the Wayland panel changed was visibility: under
+# im-launch the unit's ExecStart exited 0 immediately and a crashing panel
+# failed nothing, whereas the panel WAS its unit's MainPID, so every segfault
+# became a failed unit and a fumon notification.
+#
+# So it goes. ibus carried one engine here, xkb:us::eng -- a plain US layout
+# identical to hyprland.lua's kb_layout -- so it provided nothing that XKB does
+# not, and nothing on this machine ever chose it. ../uwsm/env still unsets
+# GTK_IM_MODULE and QT_IM_MODULE, which matters more now than it did: with no
+# ibus running, those variables would point GTK and Qt at a client library for
+# a daemon that is not there.
+#
+# To get an input method back, run `ibus-setup`, add a real engine, and restore
+# the deleted entry from git history -- or install fcitx5, which speaks
+# zwp_input_method_v2 natively and does not have this crash.
+#
+# To undo: delete the symlink, `systemctl --user daemon-reload`, log back in.
+[Desktop Entry]
+Type=Application
+Name=im-launch
+Hidden=true

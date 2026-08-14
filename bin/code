@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#
+# run vs code on angle-over-vulkan (radv) rather than the gl default.
+#
+# ~/.local/share/applications/code.desktop carries the same two flags, but a
+# .desktop only covers launcher launches. `code` typed in a terminal goes
+# straight to /usr/bin/code and silently gets the gl path instead -- which is
+# how one window ended up on radeonsi while another was on radv, with nothing
+# anywhere saying so. this shim sits earlier on PATH than /usr/bin, so both
+# routes land on the same renderer.
+#
+# execs the real cli wrapper by its absolute path -- which is exactly what
+# /usr/bin/code is a symlink to. going through PATH would find this file again.
+#
+# to see which renderer a running window actually got:
+#   pgrep -af type=gpu-process | grep -o 'use-angle=[a-z]*'
+# and to confirm the driver behind it, radv rather than radeonsi:
+#   grep -o 'libvulkan_radeon.so' /proc/PID/maps
+
+exec /usr/share/code/bin/code \
+  --use-angle=vulkan \
+  --enable-features=Vulkan,VulkanFromANGLE \
+  "$@"

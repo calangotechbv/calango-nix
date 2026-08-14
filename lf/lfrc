@@ -1,0 +1,114 @@
+# lf, the file manager SUPER+E opens. See hypr/hyprland.lua, which runs it as
+# `kitty --class lf -e lf`.
+#
+# install.sh symlinks this directory to ~/.config/lf, which is where lf looks
+# for lfrc, colors and icons -- three files it finds by name, so the names here
+# are lf's and not ours.
+#
+# Nothing in this directory is generated and nothing is per-host. That is a
+# choice rather than an accident: see lf/colors for why the theme needs no
+# written file, and lf/preview for the two binary names Debian and Fedora
+# disagree about.
+
+# -eu so a failing command in a cmd block stops there instead of running the
+# rest against a half-made state. ifs newline so $fx -- lf's list of selected
+# files -- splits per file and not per space, which is the difference between
+# deleting one file called "my notes.txt" and deleting two that do not exist.
+set shellopts '-eu'
+set ifs "\n"
+
+set icons true
+set drawbox true
+set scrolloff 5
+set info size
+set ratios 1:2:3
+
+# Poll rather than watch. lf has no inotify, so a directory changed by something
+# else -- a download landing, a build writing output -- only refreshes on this
+# tick. One second is cheap and it is also what makes `trash` below look
+# instant without the command having to ask for a reload.
+set period 1
+
+# The previewer is a path, not a shell line, and lf expands the leading ~ --
+# verified on a live session, where moving XDG_CONFIG_HOME left the pane blank
+# and the default location filled it. Both scripts live beside this file and are
+# linked with it.
+#
+# So the one assumption here is that ~/.config is where the config went.
+# install.sh links to ${XDG_CONFIG_HOME:-$HOME/.config}/lf, and lf finds this
+# file the same way, but these two lines cannot: ~ is $HOME and nothing else. A
+# machine that sets XDG_CONFIG_HOME elsewhere gets an lf that reads this file
+# and then previews nothing, silently. Neither machine here does that.
+set previewer ~/.config/lf/preview
+
+# Sixel is the one graphics format lf carries through its own output, so this is
+# what lets lf/preview hand it a picture and have lf place it. Harmless on a
+# terminal that cannot draw one: lf/preview looks at TERM and writes coloured
+# symbols instead, and this option then has nothing to act on.
+set sixel true
+
+# No `set cleaner`, and that is a conclusion rather than an omission. A cleaner
+# runs only for a preview that declared itself uncacheable, and nothing here
+# does: lf owns the sixel it placed, so it takes it down itself. The one path
+# that did need a cleaner -- kitty's own protocol, written past lf to /dev/tty --
+# is written up in lf/preview, along with why it is not used.
+
+# --------------------------------------------------------------------------
+# commands
+
+# Open is two rules, not a table. Anything textual goes to the editor in this
+# terminal, because a terminal file manager that opens a text file in another
+# window has lost the reason it is a terminal file manager. Everything else
+# goes to xdg-open, which is already a declared dependency and already knows
+# what this desktop registered -- including calango-open for a link.
+cmd open ${{
+    case $(file --mime-type -Lb -- "$f") in
+        text/*|application/json|application/x-shellscript|inode/x-empty)
+            ${EDITOR:-vi} -- "$f"
+            ;;
+        *)
+            xdg-open -- "$f" >/dev/null 2>&1 &
+            ;;
+    esac
+}}
+
+# Trash, not delete. gio implements the freedesktop trash spec, writes the
+# .trashinfo that makes a restore possible, and ships in glib2 -- already here
+# for browser/discover.py, so this costs no new package.
+#
+# Bound to D and not to d: d is lf's cut, and the two keys are neighbours on
+# the row above the one your hand rests on.
+cmd trash %gio trash -- $fx
+
+cmd mkdir %{{
+    printf "directory name: "
+    read -r name
+    if [ -n "$name" ]; then
+        mkdir -p -- "$name"
+    fi
+}}
+
+cmd touch %{{
+    printf "file name: "
+    read -r name
+    if [ -n "$name" ]; then
+        touch -- "$name"
+    fi
+}}
+
+# --------------------------------------------------------------------------
+# keys
+
+map D trash
+map . set hidden!
+map <enter> open
+map gh cd ~
+map gp cd ~/Projects
+map gd cd ~/Downloads
+map md mkdir
+map mf touch
+
+# lf ships delete on d-d. Unbind it. Nothing in this configuration should
+# remove a file that trash cannot bring back, and a two-key sequence starting
+# with cut is exactly the one to press by accident.
+map dd

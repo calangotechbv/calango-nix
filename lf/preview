@@ -1,0 +1,159 @@
+#!/bin/sh
+#
+# lf's previewer. lf calls this for regular files only -- it draws directories
+# itself -- and passes five arguments: the file name, then the width, height,
+# horizontal and vertical position of the preview pane. Only the first three
+# are used here.
+#
+# Exit status is an instruction to lf, not a report. A zero exit lets lf cache
+# what we printed; a non-zero exit disables the cache for that file, which is
+# what makes lf call lf/cleaner before the next preview. Every sixel path below
+# therefore ends in `exit 1` on purpose: a raster left on screen has to be
+# cleared, and text does not.
+#
+# Every tool here degrades to the line below it. That is the whole reason a
+# missing chafa on a fresh machine costs a picture and not a working pane.
+set -eu
+
+file=$1
+width=$2
+height=$3
+
+# Debian installs bat's binary as batcat -- the name bat belongs to
+# bacula-console-qt there -- and Fedora installs it as bat, from a package both
+# distros call bat. install.sh probes for both names for the same reason.
+if command -v bat >/dev/null 2>&1; then
+    BAT=bat
+elif command -v batcat >/dev/null 2>&1; then
+    BAT=batcat
+else
+    BAT=
+fi
+
+have() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Plain text, at most one pane's worth of lines. The fallback for everything.
+#
+# --theme=ansi is what keeps this pane inside the rule lf/colors sets out. Every
+# other bat theme emits 24-bit colour -- verified: the default writes
+# 38;2;253;151;31 -- which is fixed at whatever that theme chose and ignores the
+# switcher, so a text preview would be the one panel on screen still wearing the
+# old palette. The ansi theme emits 34 and 35, which kitty resolves from the
+# palette like the file names beside it.
+as_text() {
+    if [ -n "$BAT" ]; then
+        "$BAT" --color=always --theme=ansi --style=plain --paging=never \
+               --terminal-width="$width" --line-range=":$height" -- "$1"
+    else
+        head -n "$height" -- "$1"
+    fi
+}
+
+# Draws an image as coloured text. Not a raster, and that is not a compromise
+# reached for its own sake -- it is the only one of the three that works here.
+#
+# Measured on this machine, kitty 0.41.1, rather than assumed:
+#
+#   chafa -f sixel   nothing at all, and a hand-built twelve-pixel sixel with
+#                    no chafa in the picture drew nothing either, so the sixel
+#                    reader is what is missing and not chafa's spelling of it
+#   chafa -f kitty   renders when run straight into the terminal, but lf writes
+#                    the APC sequence into the pane as the literal text
+#                    _Ga=T,f=32,s=432 -- lf passes sixel through and nothing else
+#   chafa -f symbols renders, in the palette, in every terminal
+#
+# So symbols it is, at 16 colours, which is the same rule lf/colors follows and
+# means the picture recolours with the theme like everything around it. It also
+# costs nothing on foot, and needs no agreement about protocols with whatever
+# kitty epiphany turns out to have.
+#
+# This is plain text, so it is cacheable and there is nothing left on screen to
+# clean up afterwards. That is why there is no lf/cleaner and no `set sixel` in
+# lfrc: both existed to serve a raster that this stack cannot draw.
+as_image() {
+    if ! have chafa; then
+        printf 'image: %s\n' "$(file -Lb -- "$1")"
+        return
+    fi
+
+    # Sixel on stdout, which is the one image path that is not a fight. lf reads
+    # this, places it and owns it -- sixel is the single graphics format it
+    # passes through -- so there is no cursor to position, no cleaner to run and
+    # nothing racing lf's repaint.
+    #
+    # That is why hyprland.lua opens lf in foot rather than kitty. Measured, not
+    # assumed: foot 1.21.0 draws a hand-built twelve-pixel sixel and a 1.3M png
+    # alike; kitty 0.41.1 draws neither, and it is the reader that is missing,
+    # not chafa's spelling of it.
+    #
+    # The way round on kitty was tried and rejected. lf writes kitty's own
+    # graphics escape into the pane as the literal text _Ga=T,f=32, so it has to
+    # go to /dev/tty -- outside lf's drawing -- and chafa must decode first: 49
+    # ms for an 80x80 png, 182 ms at 1920x1200, 515 ms at 3840x2400. lf repaints
+    # inside that window and the panes come back overlapping a duplicated status
+    # line. Small files looked perfect, which is what made it look like a
+    # per-file bug rather than a race.
+    # foot only, because foot is the only terminal here measured to draw one.
+    # Adding a name to this list is a claim about that terminal, so check it
+    # first -- kitty is the cautionary tale, and chafa's own auto-detection is
+    # no help: in kitty it picks kitty's protocol, which lf cannot carry.
+    case "${TERM:-}" in
+        foot*)
+            chafa --format=sixel --polite=on --relative=off \
+                  --size="${width}x${height}" --animate=off -- "$1"
+            ;;
+        *)
+            # No sixel reader. Coloured symbols are ordinary text, so they cost
+            # nothing and still recolour with the theme like lf/colors does.
+            chafa --format=symbols --colors=16 --polite=on \
+                  --size="${width}x${height}" --animate=off -- "$1"
+            ;;
+    esac
+}
+
+case "$(file -Lb --mime-type -- "$file")" in
+    image/*)
+        as_image "$file"
+        ;;
+    application/pdf)
+        if have pdftoppm && have chafa; then
+            # -singlefile drops the page-number suffix, so the output path is
+            # predictable. 72 dpi is a preview, not a proof.
+            tmp=$(mktemp -d)
+            trap 'rm -rf "$tmp"' EXIT
+            pdftoppm -png -f 1 -l 1 -r 72 -singlefile -- "$file" "$tmp/page"
+            as_image "$tmp/page.png"
+        else
+            file -Lb -- "$file"
+        fi
+        ;;
+    application/json)
+        if have jq; then
+            jq -C . -- "$file" | head -n "$height"
+        else
+            as_text "$file"
+        fi
+        ;;
+    application/zip|application/x-tar|application/gzip|application/x-bzip2|\
+    application/x-xz|application/zstd|application/x-rpm|application/vnd.debian.binary-package)
+        if have bsdtar; then
+            bsdtar -tf "$file" | head -n "$height"
+        else
+            file -Lb -- "$file"
+        fi
+        ;;
+    text/*|application/x-shellscript|application/javascript|application/xml)
+        as_text "$file"
+        ;;
+    inode/x-empty)
+        printf 'empty file\n'
+        ;;
+    *)
+        # Not something we can show. Say what it is and how big, which is the
+        # useful answer for a binary.
+        file -Lb -- "$file"
+        printf '%s\n' "$(du -h -- "$file" | cut -f1)"
+        ;;
+esac
