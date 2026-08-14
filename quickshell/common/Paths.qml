@@ -15,7 +15,14 @@ Singleton {
   // hypr's state, not quickshell's. Four files live here and hyprland.lua
   // reads three of them; the two must agree or the compositor silently
   // loads nothing.
+  //
+  // Deliberately does NOT honour XDG_STATE_HOME, unlike stateDir and
+  // sourceDir above. home/hyprland.nix's hyprState is baked into
+  // hyprland.lua at build time as ${homeDirectory}/.local/state/hypr, with
+  // no way to read an environment variable at that point, so this has to
+  // name the same fixed path rather than a possibly-different one -- if
+  // XDG_STATE_HOME were ever set, honouring it here would make quickshell
+  // write where the compositor never reads.
   readonly property string hyprStateDir:
-    (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
-    + "/hypr"
+    Quickshell.env("HOME") + "/.local/state/hypr"
 }

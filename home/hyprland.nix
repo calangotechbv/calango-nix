@@ -20,6 +20,12 @@ let
     substituteInPlace "$out/hyprland.lua" \
       --replace '@hyprState@' '${hyprState}'
 
+    # The real invariant: substitution tokens (@host@, @hyprState@, ...) are
+    # lowercase-alpha, so the guard can tell them apart from wpctl's
+    # UPPERCASE_WITH_UNDERSCORES @DEFAULT_AUDIO_SINK@ / @DEFAULT_AUDIO_SOURCE@
+    # placeholders, which [a-zA-Z]* does not match end to end. Do not widen
+    # this to digits or underscores -- that would match those too and fail
+    # every build.
     if grep -q '@[a-zA-Z]*@' "$out/hyprland.lua"; then
       echo "unsubstituted token left in hyprland.lua:" >&2
       grep -n '@[a-zA-Z]*@' "$out/hyprland.lua" >&2
@@ -81,9 +87,20 @@ in
         #
         # So this points at /usr/bin/hyprlock -- Debian's build, absolute
         # and explicit so it reads as deliberate rather than a leftover bare
-        # name -- with no --config and no nixGLIntel: Debian's hyprlock
-        # finds ~/.config/hypr/hyprlock.conf on its own and runs against
-        # Debian's Mesa, so neither is wanted here.
+        # name -- with no nixGLIntel: Debian's hyprlock runs against
+        # Debian's Mesa, so that wrapper is not wanted here.
+        #
+        # --config IS wanted, though. hyprlock searches only the XDG config
+        # locations (HOME, XDG_CONFIG_HOME, XDG_CONFIG_DIRS, /etc/hypr), and
+        # hyprlock.conf deliberately lives under hyprState instead: the theme
+        # switcher (quickshell/theme-switcher/Theme.qml) rewrites it on every
+        # theme change, and that state directory is the one place Home
+        # Manager and quickshell agree writers may touch. Without --config
+        # there is nothing at any of hyprlock's search paths, it exits with
+        # "CRIT: Config path error", and the machine silently never locks.
+        # Pointing --config at hyprState keeps that directory the single
+        # canonical copy, so no second, unmanaged file has to be kept in
+        # sync with it by hand.
         #
         # This BLOCKS removing trixie-backports: deleting Debian's hyprlock
         # with nothing that can authenticate in its place leaves no working
@@ -93,7 +110,7 @@ in
         # /lib/x86_64-linux-gnu/security, scoped to hyprlock's closure only,
         # so Nix's pam_unix.so calls Debian's setgid unix_chkpwd instead of
         # its own.
-        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || /usr/bin/hyprlock";
+        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || /usr/bin/hyprlock --config ${hyprState}/hyprlock.conf";
         before_sleep_cmd = "${pkgs.systemd}/bin/loginctl lock-session";
         after_sleep_cmd = "${pkgs.hyprland}/bin/hyprctl dispatch dpms on";
       };

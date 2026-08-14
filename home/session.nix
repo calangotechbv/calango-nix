@@ -36,11 +36,13 @@ let
   # Wrap the compositor itself rather than the caller. A wrapper on the
   # binary survives being launched by uwsm through a systemd unit, which a
   # wrapper on the session entry may not -- a unit does not inherit the
-  # environment of whoever invoked uwsm unless uwsm exports it. Task 6
-  # measures which of the two is actually needed.
-  # The binary is spelled Hyprland here. nixpkgs 26.05 ships both spellings in
-  # bin/, so either works; Hyprland is the one calango-desktop's DEPS table
-  # probes for first.
+  # environment of whoever invoked uwsm unless uwsm exports it. That is why
+  # the wrapper below execs the binary directly rather than wrapping
+  # whatever calls into uwsm.
+  #
+  # The binary wrapped is start-hyprland, not bare Hyprland: commit c366f90
+  # restored it as the compositor's parent, for the reason given in the
+  # start-hyprland comment further down.
   #
   # hyprland.lua's own comment at line 194 notes that its hl.env calls do not
   # cover PATH. Everything the compositor spawns -- every bind, every startup
@@ -62,6 +64,7 @@ let
   # here makes every `qs` the compositor spawns find the same running
   # instance quickshell.service started with -p, with no edit to
   # hyprland.lua and no coupling of hyprland.lua to quickshell's store path.
+  #
   # start-hyprland is a watchdog around the compositor binary, not an
   # alternative session manager to uwsm -- apt's own chain ran both
   # together (uwsm -> hyprland.desktop -> start-hyprland -> Hyprland), and

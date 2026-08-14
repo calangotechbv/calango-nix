@@ -46,12 +46,16 @@ of the four found while writing the spec.
 |---|---|
 | `monitors.lua` written on first panel use | yes, and valid Lua |
 | compositor reads it back | no Lua errors |
-| `workspace-layouts.lua` | not yet exercised |
+| `workspace-layouts.lua` written by the layout switcher | yes, and valid Lua |
+| compositor reads `workspace-layouts.lua` back | untested |
 | `~/.config/hypr` holds only `hypridle.conf` | yes, after removing two stale duplicates |
 
 `monitors.lua` arrived as `hl.monitor({ output = "eDP-1", … })`, which works
 identically under `dofile` and `require`: `hl` is a global by the time the
-config loads either way.
+config loads either way. `workspace-layouts.lua` arrived too, as
+`hl.workspace_rule({ workspace = "1", layout = "scrolling" })`, and parses the
+same way. The write side of the state contract is now proven for both files;
+only the compositor's read-back of `workspace-layouts.lua` remains untested.
 
 ## Four defects, and only one was spec 3's own
 

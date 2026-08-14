@@ -161,7 +161,9 @@ hl.on("hyprland.start", function ()
   -- with HYPRLAND_INSTANCE_SIGNATURE, HYPRLAND_CMD, HYPRCURSOR_THEME,
   -- HYPRCURSOR_SIZE, XCURSOR_SIZE and XCURSOR_THEME. That covers the cursor
   -- variables set with hl.env further down this file. It does NOT cover PATH,
-  -- which is what ~/.config/uwsm/env is for; see uwsm/env in this repo.
+  -- which this repo does not hand to uwsm's env plugin at all: PATH is set by
+  -- the wrapper script itself, in home/session.nix's compositorPath (unlike
+  -- calango-desktop, calango-nix has no tracked uwsm/env).
   --
   -- The `||` is the whole alarm. Started outside uwsm -- the plain "Hyprland"
   -- session entry, or a bare TTY -- finalize exits non-zero and nothing else in
@@ -193,8 +195,9 @@ hl.on("hyprland.start", function ()
   -- one second later. It hid for months because the duplication was harmless --
   -- two `loginctl lock-session` calls at five minutes are idempotent, two `dpms
   -- off` at five and a half are the same picture, and `lock_cmd = pidof hyprlock
-  -- || hyprlock` already refused to start a second locker. Adding a listener that
-  -- suspends the machine is what made it worth finding.
+  -- || /usr/bin/hyprlock --config ...` already refused to start a second
+  -- locker. Adding a listener that suspends the machine is what made it worth
+  -- finding.
   --
   -- If a host turns up where the package does not enable it, the fix is
   -- `systemctl --user enable --now hypridle.service` on that host, not this line

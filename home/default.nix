@@ -37,7 +37,14 @@ in
     hyprland
     uwsm
     xdg-desktop-portal-hyprland
-    hyprlock
+    # hyprlock is deliberately NOT here while home/hyprland.nix's lock_cmd
+    # revert stands: Nix's hyprlock links Nix's libpam, which cannot
+    # authenticate against Debian's /etc/shadow, and a bare invocation --
+    # e.g. from PATH -- would reject every password and crash, exactly the
+    # lockout that already happened once. Put it back once the PAM problem
+    # is solved (see the lock_cmd comment in home/hyprland.nix). lock_cmd's
+    # own `pidof hyprlock` guard is unaffected either way: it matches a
+    # running process by name, not a binary on PATH.
     # hypridle and hyprpolkitagent arrive through their modules below.
     # ydotool is dev tier and belongs to spec 3.
 
