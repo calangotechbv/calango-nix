@@ -1072,8 +1072,8 @@ below `~/.config` — `systemd/user/quickshell.service.d/killmode.conf` and
 `pipewire/pipewire-pulse.conf.d/20-block-source-volume.conf` — so a depth-3
 search finds 19 and reads as a missing link when nothing is missing.
 
-The other four are not install.sh's at all, and they are the reason this step
-matters. `systemctl --user enable` wrote them:
+The other four are not install.sh's at all. `systemctl --user enable` wrote
+them:
 
 ```
 ~/.config/systemd/user/graphical-session.target.wants/
@@ -1084,9 +1084,18 @@ matters. `systemctl --user enable` wrote them:
 ```
 
 They point *absolutely into the calango-desktop checkout*, bypassing the
-links in `~/.config/systemd/user` entirely. `install.sh --uninstall` does not
-know about them, so it will not remove them, and because the checkout stays
-they will not dangle either. See step 3.
+links in `~/.config/systemd/user` entirely, and because the checkout stays
+they never dangle.
+
+`install.sh --uninstall` clears three of them. Line 1265 is
+
+```sh
+run systemctl --user disable quickshell.service bt-agent.service night-light.service
+```
+
+which omits `nm-secret-agent.service`, though that unit is in the same
+`LINK_SRC` list as the other three. So exactly one survives, still enabled
+against the target `uwsm` creates. Step 3 removes it.
 
 - [ ] **Step 2: Unlink calango-desktop**
 
@@ -1107,28 +1116,27 @@ find ~/.config ~/.local/share/applications ~/.local/bin -maxdepth 4 -type l \
 find ~/.config/systemd/user -xtype l 2>/dev/null
 ```
 
-Expected: the four `graphical-session.target.wants` links and nothing else,
-then no output. The second command finds dangling symlinks, which is the
-failure mode that would make `home-manager switch` fail in a confusing way.
+Expected: `graphical-session.target.wants/nm-secret-agent.service` and nothing
+else, then no output. The second command finds dangling symlinks, which is
+the failure mode that would make `home-manager switch` fail in a confusing
+way.
 
-Then disable the four, which is what actually removes them:
+Then disable the survivor, which is what actually removes it:
 
 ```bash
-systemctl --user disable quickshell.service night-light.service \
-  nm-secret-agent.service bt-agent.service
+systemctl --user disable nm-secret-agent.service
 find ~/.config ~/.local/share/applications ~/.local/bin -maxdepth 4 -type l \
   -lname '*calango-desktop*' 2>/dev/null | wc -l
 ```
 
-Expected: `0`.
+Expected: `0`. On `suffer` the whole `graphical-session.target.wants`
+directory disappeared with it, having held nothing else.
 
 Do not skip this. `graphical-session.target` is the target `uwsm` creates, so
-leaving the four enabled means the Nix session starts calango-desktop's
-quickshell, night-light, nm-secret-agent and bt-agent out of the old checkout
-— which is precisely the "no calango-desktop QML, no theme, no bar" that
-Global Constraint 8 rules out of spec 1, and it would arrive looking like a
-half-working desktop rather than a mistake. `--uninstall` does not do it,
-because it never created these links.
+leaving the unit enabled means the Nix session starts calango-desktop's
+nm-secret-agent out of the old checkout — a fragment of the old desktop
+arriving inside the new session, which reads as a half-working port rather
+than a mistake.
 
 - [ ] **Step 4: Activate Home Manager for `isutton`**
 
