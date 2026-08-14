@@ -44,7 +44,6 @@ Singleton {
     : root.located        ? "Night light follows the sun, " + root.temp + "K at night"
                           : "Night light on a schedule, but there is no location yet"
 
-  readonly property string home: Quickshell.env("HOME")
   readonly property string confPath: Paths.stateDir + "/night-light.conf"
 
   function setMode(m) {
