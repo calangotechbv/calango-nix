@@ -3,7 +3,9 @@
 # hand a url to the quickshell browser picker, or open it directly if the shell
 # is not there to ask.
 #
-# registered as the handler for http/https by install.sh, so this is what
+# registered as the handler for http/https by home/apps.nix's defaultBrowser
+# activation hook (an `xdg-settings set default-web-browser` run against the
+# eu.calangotech.CalangoOpen.desktop entry it also installs), so this is what
 # xdg-open runs when anything on the desktop opens a link.
 
 set -euo pipefail

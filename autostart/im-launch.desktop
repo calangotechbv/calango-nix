@@ -1,8 +1,9 @@
 # Suppresses /etc/xdg/autostart/im-launch.desktop, from Debian's im-config.
 #
-# ../install.sh symlinks this ONE FILE into ~/.config/autostart/. The name must
-# match the entry it suppresses exactly -- XDG matches autostart entries by
-# file name, and ~/.config/autostart wins over /etc/xdg/autostart. See
+# home/apps.nix links this ONE FILE, by build-time-resolved store path, into
+# ~/.config/autostart/ via xdg.configFile. The name must match the entry it
+# suppresses exactly -- XDG matches autostart entries by file name, and
+# ~/.config/autostart wins over /etc/xdg/autostart. See
 # ./org.kde.xwaylandvideobridge.desktop for why the directory is not linked
 # whole.
 #
@@ -54,7 +55,10 @@
 # the deleted entry from git history -- or install fcitx5, which speaks
 # zwp_input_method_v2 natively and does not have this crash.
 #
-# To undo: delete the symlink, `systemctl --user daemon-reload`, log back in.
+# To undo: remove the xdg.configFile."autostart/im-launch.desktop" entry from
+# home/apps.nix and switch again -- deleting the symlink by hand does not
+# stick, the next switch's linkGeneration recreates it. Then
+# `systemctl --user daemon-reload` and log back in.
 [Desktop Entry]
 Type=Application
 Name=im-launch

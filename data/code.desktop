@@ -3,12 +3,15 @@
 # wholesale rather than merging with it, so this has to carry every key the
 # original does -- there is no way to override Exec alone.
 #
-# Exec is the bare name, not /usr/share/code/code with the flags spelled out
-# again: it resolves to bin/code from this repo, which is where the renderer
-# flags live. uwsm/env guarantees ~/.local/bin is on the session PATH before
-# anything is launched, and it is first in the systemd user manager's PATH, so
-# the launcher finds the shim rather than /usr/bin/code. One file decides which
-# renderer VS Code gets, whether it is started from the launcher or a terminal.
+# Exec is not /usr/share/code/code with the flags spelled out again: the
+# codeShim placeholder below (see the literal Exec= line) is a token
+# home/apps.nix's desktopEntries substitutes at build time with the absolute
+# store path of the codeShim derivation wrapping bin/code from this repo,
+# which is where the renderer flags live. No PATH lookup is involved --
+# uwsm/env used to put ~/.local/bin on the session PATH for this, but that
+# block was deleted once every Exec in this repo started carrying a store
+# path (see uwsm/env's comment). One file decides which renderer VS Code
+# gets, whether it is started from the launcher or a terminal.
 #
 # Dropped from the vendor copy: the eleven Name[xx] translations of the action
 # below. Nothing else -- MimeType and StartupWMClass in particular are load

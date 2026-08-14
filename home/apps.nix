@@ -29,10 +29,10 @@ let
   #
   # python3 is plain here, not python3.withPackages (ps: [ ps.pillow ]) the way
   # home/quickshell.nix wraps it for the compositor's copy of this same
-  # discover.py. That comment in quickshell.nix is inaccurate about
-  # discover.py: reading the whole file shows its imports are stdlib only
-  # (configparser, json, os, re, shlex, subprocess, tempfile) -- pillow belongs
-  # to wallpaper/generate-abstract.py alone. A plain interpreter is enough for
+  # discover.py. Reading discover.py end to end shows its imports are stdlib
+  # only (configparser, json, os, re, shlex, subprocess, tempfile) -- pillow
+  # belongs to wallpaper/generate-abstract.py alone, and home/quickshell.nix's
+  # comment on runtimeDeps says so too. A plain interpreter is enough for
   # every path calango-open can take.
   calangoOpenPath = lib.makeBinPath (with pkgs; [
     quickshell # qs, bin/calango-open's primary path to the running shell

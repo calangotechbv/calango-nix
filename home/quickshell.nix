@@ -57,7 +57,14 @@ let
     findutils                                     # find, wallpaper/WallpaperService.qml scanner
     util-linux                                    # setsid, common/AppLaunch.qml, wallpaper/WallpaperService.qml
     bash coreutils                                # sh, cat, ls, sort, head, cut, mktemp, mv, dirname, ...
-    (python3.withPackages (ps: [ ps.pillow ]))    # wallpaper/generate-abstract.py, browser/discover.py
+    (python3.withPackages (ps: [ ps.pillow ]))    # wallpaper/generate-abstract.py only.
+                                                   # discover.py's own imports are stdlib
+                                                   # only (configparser, json, os, re,
+                                                   # shlex, subprocess, tempfile) -- see
+                                                   # home/apps.nix's comment on
+                                                   # calangoOpenPath, which reads
+                                                   # discover.py end to end. pillow stays
+                                                   # in this closure for generate-abstract.py.
     # NOT ddcutil: brightness/BrightnessService.qml's DDC backend self-guards
     # with `command -v ddcutil`, so omitting it fails silently-clean rather
     # than breaking. Enabling it needs i2c-dev group setup, out of scope here.
@@ -65,12 +72,12 @@ let
     # swaybg. Deliberately absent from nixpkgs' search index as of this port
     # (see docs/superpowers/specs/2026-08-14-base-and-session-design.md), so
     # there is nothing to add; the probe's `command -v` fallback is the point.
-    # NOT kitty: theme-switcher/Theme.qml's applyKittyTheme only ever runs
-    # `kitty @ ...` against a socket under /tmp/kitty-*, which only exists if
-    # kitty is running -- and this project installs foot, not kitty (see
-    # docs/superpowers/plans/2026-08-14-base-and-session.md). No socket, no
-    # invocation; adding the package would just be installing an unused
-    # terminal emulator to satisfy a PATH that is never reached.
+    # NOT kitty: this project installs foot, not kitty (see
+    # docs/superpowers/plans/2026-08-14-base-and-session.md), and nothing
+    # under quickshell/ invokes a `kitty` binary any more -- the theme
+    # switcher's old kitty-socket code path (applyKittyTheme) was deleted
+    # along with kitty itself. Adding the package would just be installing an
+    # unused terminal emulator to satisfy a PATH nothing reaches.
   ];
 
   # Qt Quick builds its scenegraph on first window show. Unwrapped, this unit

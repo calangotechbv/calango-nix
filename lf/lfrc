@@ -1,9 +1,10 @@
 # lf, the file manager SUPER+E opens. See hypr/hyprland.lua, which runs it as
 # `kitty --class lf -e lf`.
 #
-# install.sh symlinks this directory to ~/.config/lf, which is where lf looks
-# for lfrc, colors and icons -- three files it finds by name, so the names here
-# are lf's and not ours.
+# home/lf.nix links this directory (build-time-patched, see its `lfConfig`
+# derivation) to ~/.config/lf, which is where lf looks for lfrc, colors and
+# icons -- three files it finds by name, so the names here are lf's and not
+# ours.
 #
 # Nothing in this directory is generated and nothing is per-host. That is a
 # choice rather than an accident: see lf/colors for why the theme needs no
@@ -29,16 +30,12 @@ set ratios 1:2:3
 # instant without the command having to ask for a reload.
 set period 1
 
-# The previewer is a path, not a shell line, and lf expands the leading ~ --
-# verified on a live session, where moving XDG_CONFIG_HOME left the pane blank
-# and the default location filled it. Both scripts live beside this file and are
-# linked with it.
-#
-# So the one assumption here is that ~/.config is where the config went.
-# install.sh links to ${XDG_CONFIG_HOME:-$HOME/.config}/lf, and lf finds this
-# file the same way, but these two lines cannot: ~ is $HOME and nothing else. A
-# machine that sets XDG_CONFIG_HOME elsewhere gets an lf that reads this file
-# and then previews nothing, silently. Neither machine here does that.
+# The lfPreview placeholder below (see the literal `set previewer` line) is a
+# token home/lf.nix's lfConfig derivation substitutes at build time with the
+# absolute store path of the lfPreview wrapper's bin/lf-preview. The previewer
+# is a path, not a shell line, so this needs no ~ or XDG_CONFIG_HOME
+# resolution at all -- the store path is fixed at build time regardless of
+# where lf finds this file.
 set previewer @lfPreview@
 
 # Sixel is the one graphics format lf carries through its own output, so this is

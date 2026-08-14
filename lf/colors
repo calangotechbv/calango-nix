@@ -6,8 +6,8 @@
 # kitty resolves those sixteen numbers from its own palette, and
 # quickshell/theme-switcher/Theme.qml already rewrites that palette live over
 # kitty's remote control socket. So a theme change reaches lf with no file to
-# generate, no seeding step in install.sh, and no reload -- the glyphs on
-# screen are simply re-rendered by the terminal underneath them.
+# generate and no reload -- the glyphs on screen are simply re-rendered by the
+# terminal underneath them.
 #
 # Use a 256-colour code here (38;5;N above 15) or a 24-bit one (38;2;R;G;B) and
 # that stops being true: the colour is then fixed in this file and lf becomes

@@ -1,8 +1,9 @@
 # lf icons. Two columns: a pattern, then one glyph.
 #
 # The glyphs are Nerd Font code points, which the shell, kitty and foot already
-# require -- install.sh declares AdwaitaMono Nerd Font, so this file adds no
-# dependency. On a machine whose font is not patched every one of these renders
+# require -- home/default.nix's home.packages installs the Nerd Font
+# (pkgs.nerd-fonts.adwaita-mono), so this file adds no dependency. On a
+# machine whose font is not patched every one of these renders
 # as a hollow box, which is the whole failure mode: annoying, never fatal.
 #
 # Deliberately small. This is the Font Awesome file-type family -- U+F07B and

@@ -1,9 +1,10 @@
 # Suppresses /etc/xdg/autostart/org.kde.xwaylandvideobridge.desktop.
 #
-# ../install.sh symlinks this ONE FILE into ~/.config/autostart/. Not the
-# directory: that directory holds entries this repo does not own -- 1password,
-# bitwarden, deskflow, syncthingtray and displaycal on suffer -- and linking the
-# tree would take them out.
+# home/apps.nix links this ONE FILE, by build-time-resolved store path, into
+# ~/.config/autostart/ via xdg.configFile. Not the directory: that directory
+# holds entries this repo does not own -- 1password, bitwarden, deskflow,
+# syncthingtray and displaycal on suffer -- and linking the tree would take
+# them out.
 #
 # Why it exists. uwsm runs XDG autostart; the hand-rolled session this repo used
 # before it did not. The old hyprland.start hook started exactly three things,
@@ -36,9 +37,13 @@
 # and the unit comes back. A mask would work today and break the day the
 # upstream unit is renamed, and it is local state no repo replicates.
 #
-# To undo: delete the symlink, `systemctl --user daemon-reload`, log back in.
-# For a one-off, just run `xwaylandvideobridge` -- nothing here removes the
-# program, only its autostart.
+# To undo: remove the
+# xdg.configFile."autostart/org.kde.xwaylandvideobridge.desktop" entry from
+# home/apps.nix and switch again -- deleting the symlink by hand does not
+# stick, the next switch's linkGeneration recreates it. Then
+# `systemctl --user daemon-reload` and log back in. For a one-off, just run
+# `xwaylandvideobridge` -- nothing here removes the program, only its
+# autostart.
 [Desktop Entry]
 Type=Application
 Name=Xwayland Video Bridge

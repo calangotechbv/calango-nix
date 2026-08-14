@@ -4,36 +4,16 @@ Type=Application
 Name=Calango Link Opener
 GenericName=Web Browser Chooser
 Comment=Ask the quickshell panel which browser opens this link
-# A bare name, and it has been both spellings. The history matters because
-# each fixed the other's caller.
-#
-# It was `sh -c 'exec "$HOME/.local/bin/calango-open" "$1"' sh %u`, to reach
-# ~/.local/bin through a shell that would expand $HOME -- because the portal
-# launches handlers with the systemd user environment, whose PATH was then
-# `/usr/local/bin:/usr/bin`, and a bare name exited 127 so flatpak links went
-# to firefox. Measured at the time and correct at the time.
-#
-# That form breaks xdg-open. xdg-utils' open_generic -- which is the path taken
-# whenever XDG_CURRENT_DESKTOP is something it does not recognise, so always
-# under Hyprland -- splits Exec on whitespace WITHOUT honouring quoting. The
-# single-quoted script is torn into `'exec`, `"$HOME/.local/bin/calango-open"`,
-# `"$1"'`, and sh is handed the script `'exec` with $0 set to the quoted path:
-#     "$HOME/.local/bin/calango-open": 1: Syntax error: Unterminated quoted string
-# Nothing opens. GIO parses it correctly, which is why portal callers kept
-# working and only `xdg-open` from a terminal was broken -- and why it went
-# unnoticed.
-#
-# The bare name is safe again because the constraint that killed it lapsed:
-# hyprland.lua's start hook now imports the *whole* session environment into
-# the systemd user manager (`--all`, added for Electron's XDG_SESSION_TYPE), so
-# the portal's PATH carries ~/.local/bin. Verified, not assumed:
-#     env -i HOME=$HOME PATH="$(systemctl --user show-environment | sed -n 's/^PATH=//p')" \
-#       sh -c 'command -v calango-open'   ->  /home/isutton/.local/bin/calango-open
-#
-# So this depends on that import continuing to happen. `install.sh --status`
-# checks it the way the portal resolves it -- by name, under the portal's PATH
-# -- and will say so if it ever stops. Do not reintroduce quoting here: no
-# amount of it survives open_generic.
+# The calangoOpen placeholder below (see the literal Exec= line) is a token
+# home/apps.nix's desktopEntries substitutes at build time with the absolute
+# store path of the calangoOpen wrapper's bin/calango-open, e.g.
+# /nix/store/.../bin/calango-open %u. No PATH lookup, no shell quoting to
+# survive: xdg-utils' open_generic splits Exec on whitespace WITHOUT
+# honouring quoting, which is why an earlier version of this entry (a quoted
+# `sh -c 'exec "$HOME/.local/bin/calango-open" "$1"' sh %u`, needed when the
+# portal's PATH did not carry ~/.local/bin) broke `xdg-open` from a terminal
+# while GIO's own parser kept portal callers working. A single absolute path
+# has no whitespace to split on and needs no quoting either way.
 Exec=@calangoOpen@ %u
 Icon=web-browser
 Terminal=false
@@ -41,7 +21,7 @@ Categories=Network;WebBrowser;
 # Every type xdg-settings registers for a default browser, not just the two
 # schemes this actually needs -- and that is load-bearing rather than
 # thorough. `xdg-settings set default-web-browser` rewrites the .desktop in
-# place when it has to add a type, which replaces install.sh's symlink with a
+# place when it has to add a type, which replaces the store symlink with a
 # frozen copy: `--status` then reports it as NOT OURS forever, and editing this
 # file in the repo stops having any effect. Declaring the full set up front
 # leaves xdg-settings nothing to add, so the symlink survives. Measured both
