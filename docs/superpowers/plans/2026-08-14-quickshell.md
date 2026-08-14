@@ -477,7 +477,10 @@ In `home/quickshell.nix`, add to the `config` attribute set:
   };
 ```
 
-Merge this into the existing `config` block rather than adding a second one.
+Add this as a sibling attribute of the `config.calango.quickshellConfig` line
+Task 3 wrote. That module has no `config = { ... }` block, so there is nothing
+to merge into — two `config.<something>` attributes at the same level is the
+correct shape.
 
 - [ ] **Step 3: Build and check the links**
 
