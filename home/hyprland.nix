@@ -39,6 +39,18 @@ let
     export PATH=${idleSleepPath}''${PATH:+:$PATH}
     exec ${config.calango.hyprConfig}/idle-sleep.sh "$@"
   '';
+
+  # hypridle's lock_cmd needs two things a bare `hyprlock` does not get:
+  # --config, because hyprlock only searches $HOME/.config/hypr,
+  # $XDG_CONFIG_HOME, $XDG_CONFIG_DIRS and /etc/hypr, while hyprlock.conf
+  # lives in the state directory because quickshell's theme switcher
+  # rewrites it there at runtime; and nixGLIntel, because hyprlock is a Nix
+  # GUI binary and nixpkgs' Mesa looks for /run/opengl-driver/lib, which
+  # exists on NixOS and nowhere on this Debian machine -- unwrapped, it
+  # throws "EGL_EXT_platform_base not supported" and never draws. Every Nix
+  # GUI application here needs the same wrapper; the compositor and
+  # hyprpolkitagent get their own copy of it in home/default.nix.
+  hyprlockCmd = "${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${pkgs.hyprlock}/bin/hyprlock --config ${hyprState}/hyprlock.conf";
 in
 {
   options.calango = {
@@ -68,13 +80,11 @@ in
     enable = true;
     settings = {
       general = {
-        # hyprlock only searches $HOME/.config/hypr, $XDG_CONFIG_HOME,
-        # $XDG_CONFIG_DIRS and /etc/hypr for its config. hyprlock.conf lives
-        # in the state directory instead, because quickshell's theme switcher
-        # rewrites it at runtime -- without --config here, hyprlock starts,
-        # finds no config anywhere it looks, and exits, and the lock silently
-        # never happens.
-        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || ${pkgs.hyprlock}/bin/hyprlock --config ${hyprState}/hyprlock.conf";
+        # See hyprlockCmd above for why this is not a plain hyprlock
+        # invocation. The pidof guard still matches: nixGLIntel execs into
+        # hyprlock rather than staying resident, so the process name it
+        # searches for is unchanged.
+        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || ${hyprlockCmd}";
         before_sleep_cmd = "${pkgs.systemd}/bin/loginctl lock-session";
         after_sleep_cmd = "${pkgs.hyprland}/bin/hyprctl dispatch dpms on";
       };
