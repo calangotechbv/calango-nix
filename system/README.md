@@ -46,6 +46,12 @@ Task 6:
 and cannot read inside `/home/isutton`, which is mode `0700`, so no absolute
 path into a home directory can appear in this file.
 
+That resolution is also why the entry only works for an account that has
+already run `home-manager switch`. It is offered to every user from the
+moment it is installed, and choosing it as anyone else fails on a missing
+`$HOME/.nix-profile/bin/uwsm`. `tuigreet` runs with
+`--remember-user-session`, so it will happily pre-fill the wrong account.
+
 ## Undo, in full
 
 ```sh

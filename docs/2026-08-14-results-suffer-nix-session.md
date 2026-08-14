@@ -216,6 +216,65 @@ interest. On `isutton`, who is the only member of `sudo`, the plan's original
 `pkexec true` will work as written, because the agent will be authenticating
 its own user.
 
+## The greeter
+
+`tuigreet` lists three sessions: `Hyprland`, `Hyprland (uwsm-managed)` and
+`Hyprland (Nix)`. The two apt entries are untouched, and
+`/etc/greetd/config.toml` was not edited.
+
+Logging in as `nixtest` through `Hyprland (Nix)` reaches the same bare desktop
+as Task 6 rung 3, with no VT and no shell. `pkcheck` draws its Qt dialog
+there, so the whole path — greeter, PAM, uwsm, wrapped compositor, wrapped
+Qt6 agent — works end to end.
+
+### The entry works for one account at a time
+
+The entry is visible to every user the moment it is installed, but it only
+works for an account that has already run `home-manager switch`. Today that is
+`nixtest` alone. `tuigreet` runs with `--remember-user-session` and pre-filled
+`isutton`, and the first attempt failed for exactly that reason: `$HOME`
+resolved to `/home/isutton`, where `.nix-profile/bin/uwsm` does not yet exist.
+
+That is not a fault in the entry, but it is a trap worth naming — after a
+reboot and without context it reads as a broken greeter rather than a
+premature one. Task 9 closes it.
+
+### The keyring probe
+
+Not the silent failure the plan feared. It errors:
+
+```
+secret-tool: Object does not exist at path “/org/freedesktop/secrets/collection/login”
+```
+
+State on `nixtest`, inside the Nix session: `~/.local/share/keyrings/`
+holds `login.keyring` (105 bytes, created at first greeter login, so
+`pam_gnome_keyring` did run) and `user.keystore`; `gnome-keyring-daemon` runs
+for uid 1004 with `--components=pkcs11,secrets`; `org.freedesktop.secrets` is
+on the session bus. But the `login` collection is not exposed, and
+`GNOME_KEYRING_CONTROL` is empty.
+
+The missing `default` alias file is **not** the cause: `isutton` has no such
+file either and works fine. On `isutton`, checked read-only during a normal
+apt session:
+
+```
+Collections: /org/freedesktop/secrets/collection/login
+             /org/freedesktop/secrets/collection/session
+login.Locked: false
+```
+
+So the established account's keyring is healthy, which is what Task 9 needs.
+`isutton`'s `login.keyring` is 2859 bytes of real secrets; `nixtest`'s is an
+empty 105.
+
+**Open.** The control that settles it is the same read-only collections query
+run as `nixtest` under apt's `Hyprland (uwsm-managed)`. If `login` is absent
+there too, the Nix session is not implicated and this is a fresh-account
+artifact. PAM runs inside greetd, before any compositor exists, so the session
+choice cannot affect whether the keyring is unlocked — but that reasoning is
+worth checking rather than trusting.
+
 ## The repository copy
 
 `/home/isutton` is 0700, so `nixtest` cannot clone from it. A bare clone at
