@@ -1,9 +1,12 @@
 # calango-nix spec 5: removing trixie-backports
 
-Makes Nix's hyprlock authenticate on Debian, moves the last two things apt still
-provides to the session — the lock screen and the Hyprland portal — onto Nix,
-and removes `trixie-backports`: the source, and every package of it that can go.
-Finishes the migration the first four specs began.
+Makes Nix's hyprlock authenticate on Debian, moves the last three things apt
+still provides to the session — the lock screen, the Hyprland portal and
+Xwayland — onto Nix, and removes `trixie-backports`: the source, and every
+package of it that can go. Finishes the migration the first four specs began.
+
+Along the way it fixes a defect nobody was looking for: X11 clients have been
+running on software rendering since spec 1.
 
 ## What the spike established
 
@@ -88,14 +91,12 @@ neither the package list nor the earlier specs would have revealed.
 **Removed, and unused:** `hyprpaper` — the session draws wallpaper with
 `swaybg`.
 
-**Removed, and this spec must replace:** `hyprlock` and
-`xdg-desktop-portal-hyprland` — both from backports, both currently serving the
-session. See Design.
-
-**Removed, and must be PROTECTED rather than replaced:** `xwayland`. It is
-`2:24.1.6-1` from trixie/main, not a backports package at all; `--autoremove`
-takes it only because apt cannot see that the Nix compositor spawns it. One
-`apt-mark manual` keeps it. Decision 4.
+**Removed, and this spec must replace:** `hyprlock`,
+`xdg-desktop-portal-hyprland` and `xwayland`. The first two are backports
+packages currently serving the session. `xwayland` is not — it is `2:24.1.6-1`
+from trixie/main and `--autoremove` takes it only because apt cannot see that
+the Nix compositor spawns it — but it is replaced rather than held, because
+Debian's is currently giving X11 clients software rendering. Decision 4.
 
 **Removed, and correct to remove:** `calango-desktop-deps`, the old
 repository's dependency metapackage. Nothing in calango-nix references it.
@@ -134,44 +135,40 @@ see Non-goals.
    authentication config in a theme generator and would not take effect until
    the next theme switch.
 
-4. **Xwayland stays Debian's, and is protected from `--autoremove` rather than
-   replaced.** It appears in the removal list, but `apt policy` shows
-   `2:24.1.6-1` from **trixie/main at priority 500** — it is not a backports
-   package. It is swept up only because `--autoremove` sees it orphaned once
-   apt's hyprland goes; the Nix Hyprland that spawns it is invisible to apt.
-   `sudo apt-mark manual xwayland` before the removal is the whole fix.
+4. **Xwayland comes from nixpkgs, and this fixes a live defect.** Debian's
+   Xwayland is currently giving every X11 client **software rendering**.
+   Measured, with identical client environments and only the server binary
+   differing:
 
-   **Nix's `xwayland` would also work**, and an earlier draft of this decision
-   said otherwise on a false premise. It claimed Debian's Xwayland uses "the
-   system Mesa that matches the system GPU drivers" and Nix's would not.
-   Measured, that is wrong twice over. nixGL does not use Debian's Mesa at all:
-   it exports `LIBGL_DRIVERS_PATH`, `GBM_BACKENDS_PATH` and `LD_LIBRARY_PATH`
-   pointing at Nix's `mesa-26.1.5`, which is what drives this machine's AMD
-   Phoenix3 today. And those variables are inherited, so Debian's Xwayland —
-   a child of the compositor — has already loaded
-   `…mesa-26.1.5/lib/dri/libdril_dri.so`. The Nix DRI driver is in use either
-   way; only the `libgbm.so.1` it links differs.
+   | display | Xwayland | `glxinfo -B` |
+   |---|---|---|
+   | `:99` | `pkgs.xwayland` | **Accelerated: yes** -- AMD Radeon 780M, radeonsi, phoenix, ACO |
+   | `:0` | Debian's, live | **Accelerated: no** -- llvmpipe (LLVM 21.1.8) |
 
-   That inheritance is also why Nix's Xwayland would need no wrapper. The
-   distinction that actually governs nixGL in this project is **compositor
-   child versus systemd unit**: children (foot, lf, Xwayland, anything a keybind
-   spawns) inherit the wrapper's environment; units (quickshell,
-   hyprpolkitagent, and hyprlock via hypridle) do not, which is why exactly
-   those needed wrapping.
+   The cause is nixGL. Debian's Xwayland is a child of the wrapped compositor,
+   so it inherits `LIBGL_DRIVERS_PATH` and `GBM_BACKENDS_PATH` pointing into
+   Nix's `mesa-26.1.5`, while linking Debian's
+   `/lib/x86_64-linux-gnu/libgbm.so.1`. Glamor needs a matching GBM/DRI pair, it
+   gets a mismatched one, and it falls back to llvmpipe. The wrapper that makes
+   Nix binaries work has been silently breaking this Debian one since spec 1.
 
-   So the choice is genuinely free, and Debian's wins on cost alone: `xwayland`
-   is not a backports package, removing it was never a goal, and keeping it is
-   one `apt-mark` against a package swap plus a `compositorPath` entry. Nothing
-   about hardware or drivers argues either way.
+   `pkgs.xwayland` joins `compositorPath` in `home/session.nix`, which is
+   prepended, so it wins over `/usr/bin/Xwayland`. It needs **no** nixGL wrapper:
+   it is a compositor child and inherits the environment already -- exactly what
+   the `:99` test demonstrated, since that server was started with nothing but
+   the compositor's inherited variables.
 
-   Getting this wrong breaks every X11 client: Chrome, VS Code, deskflow, and
-   `apply-gtk-theme`'s `xrdb` step.
+   Debian's is then allowed to go with `--autoremove` rather than being held.
+   Keeping both would leave two servers where PATH order decides the winner, and
+   ambiguity of precisely that kind has cost this project four defects already.
 
-   The other trixie-sourced packages in the removal list — `libseat1`,
-   `libiniparser4`, `libmuparser2v5`, `libsdbus-c++2`, `libxcb-errors0` — are
-   genuinely orphaned. They were dependencies of apt's hypr packages, Nix's
-   builds carry their own, and nothing in the session invokes them by name.
-   They go.
+   Two earlier drafts of this decision were wrong, both in the same way. The
+   first claimed Nix's Xwayland would not match the hardware -- false; nixGL
+   never used Debian's Mesa, and Nix's `mesa-26.1.5` already drives this machine.
+   The second conceded that and concluded the choice was free, so Debian's won on
+   cost -- also false. Neither draft ran `glxinfo`. The lesson is the one this
+   project keeps relearning: a claim about behaviour is worth nothing until it is
+   measured, and "it should work the same either way" is a claim about behaviour.
 
 5. **`xdg-desktop-portal-hyprland` gets a Home Manager user unit.** Nix's binary
    is already in the profile and its `.portal` file already shadows Debian's
@@ -280,11 +277,17 @@ fails, decision 3's fallback is to emit the `auth` block from
 
 ### 3. Xwayland and the portal
 
-Xwayland needs no Nix work at all — decision 4. The only action is
-`sudo apt-mark manual xwayland` in section 4, *before* the removal, so
-`--autoremove` leaves Debian's in place. Nothing changes in `compositorPath`:
-the compositor spawns `Xwayland` by bare name and finds `/usr/bin/Xwayland`
-through the inherited PATH, exactly as it does today.
+`pkgs.xwayland` joins `compositorPath` in `home/session.nix`, with a comment
+recording the llvmpipe measurement — the reason is not obvious from the code and
+a future reader would otherwise see a package that duplicates one apt already
+provides. `compositorPath` is prepended, so Nix's wins over `/usr/bin/Xwayland`
+from the moment of the next login, before apt's is removed. It needs no nixGL
+wrapper: the compositor spawns it as a child, so it inherits the environment.
+
+This is the one part of the port that can be verified *before* any apt change and
+*without* a logout, by starting it on a spare display with the compositor's
+inherited environment and running `glxinfo -B` against it — which is how the
+defect was found.
 
 `xdg-desktop-portal-hyprland` gets a `systemd.user.services` entry with the
 Nix binary's absolute path, shadowing `/usr/lib/systemd/user/`'s. It needs the
@@ -296,19 +299,17 @@ already discoverable, so no `XDG_DATA_DIRS` work is needed.
 
 Three root actions, in this order, each run by the user:
 
-1. `sudo apt-mark manual xwayland` — decision 4, and it must come first, or
-   step 2 removes it
-2. `sudo apt remove --autoremove hyprland hypridle hyprlock hyprpolkitagent hyprpaper hyprland-guiutils`
-3. remove the two `trixie-backports` lines from `/etc/apt/sources.list`
-4. `sudo apt update`
+1. `sudo apt remove --autoremove hyprland hypridle hyprlock hyprpolkitagent hyprpaper hyprland-guiutils`
+2. remove the two `trixie-backports` lines from `/etc/apt/sources.list`
+3. `sudo apt update`
 
-The order matters twice over: `apt-mark` must precede the removal or Xwayland
-goes with it, and removing the source before the packages would leave apt unable
-to resolve what it is about to remove.
+The order matters: removing the source first would leave apt unable to resolve
+the packages it is about to remove.
 
-A `--dry-run` of step 2 after step 1 must show **25** removals, not 26, with
-`xwayland` absent from the list. If it still names `xwayland`, stop — the
-`apt-mark` did not take.
+A `--dry-run` of step 1 immediately beforehand must still show the **26**
+packages this spec measured, `xwayland` among them. A different set means
+something has drifted since the inventory was taken — stop and re-measure rather
+than proceeding.
 
 **This is the irreversible step and the one with no undo inside Nix.** It must
 come *after* the lock screen, Xwayland and the portal are all verified working
@@ -334,8 +335,10 @@ The order is the point: each step must pass before the irreversible one.
 - Nix's hyprlock locks and **unlocks** — run from a spare VT as `nixtest`, so a
   failure costs a VT switch rather than a killed session. Spec 3's lockout
   happened because this test was run on the live session.
-- `apt-mark showmanual | grep -x xwayland` returns it, and the step-2 dry run
-  shows 25 removals without `xwayland`.
+- `Xwayland` on the compositor's PATH resolves to the Nix build, and
+  `glxinfo -B` against the live display reports **Accelerated: yes** with the
+  radeonsi renderer rather than llvmpipe. This is a fix, not just a swap, so it
+  has a before value to beat.
 - The Nix portal unit is active and a portal-mediated action works — opening a
   link through the browser picker exercises it end to end.
 
