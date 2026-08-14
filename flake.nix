@@ -104,6 +104,23 @@
         in
         {
           hyprlock = prev.hyprlock.override { pam = patched; };
+
+          # A deliberate second consumer, not a convenience. The plan's
+          # authentication gate -- the one that decides whether the apt
+          # removal is safe -- runs pamtester against `common-auth`. Stock
+          # nixpkgs pamtester links stock linux-pam, whose pam_unix execs
+          # /run/wrappers/bin/unix_chkpwd: the exact NixOS-only path this
+          # overlay exists to fix, and a directory this machine does not have.
+          # That test could not pass with any password, and its failure would
+          # read as "the PAM fix did not work" immediately before the
+          # irreversible step. Overridden here so the gate exercises the SAME
+          # patched libpam the lock screen loads, which is the only version of
+          # that test that answers the spike's open question.
+          #
+          # pamtester takes `pam` as a function argument
+          # (pkgs/by-name/pa/pamtester/package.nix:6), so a plain .override is
+          # enough -- no overrideAttrs, as with hyprlock.
+          pamtester = prev.pamtester.override { pam = patched; };
         };
 
       pkgs = import nixpkgs {
