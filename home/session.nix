@@ -14,6 +14,17 @@ let
   # (unlike hypridle.service, which has none either -- see idleSleepPath in
   # home/hyprland.nix), so a missing entry here is a keybind or startup exec
   # that does nothing and logs nothing.
+  # xwayland is in this list to FIX something, not merely to replace apt's.
+  # Debian's Xwayland is a child of this nixGL-wrapped compositor, so it
+  # inherits LIBGL_DRIVERS_PATH and GBM_BACKENDS_PATH pointing into Nix's mesa
+  # while linking Debian's libgbm. Glamor needs a matching GBM/DRI pair, gets a
+  # mismatched one, and silently falls back to software rendering. Measured with
+  # identical clients, only the server differing:
+  #     Nix's Xwayland      Accelerated: yes  AMD Radeon 780M (radeonsi)
+  #     Debian's Xwayland   Accelerated: no   llvmpipe
+  # Every X11 client has been on the CPU since spec 1. Nix's needs no nixGL
+  # wrapper of its own -- it inherits the compositor's environment, which is
+  # exactly what makes it work.
   compositorPath = lib.makeBinPath (with pkgs; [
     bash          # sh -- wl-paste --type text --watch's handler is `sh -c '...'`
     cliphist      # cliphist store, the two clipboard watchers started on hyprland.start
@@ -31,6 +42,7 @@ let
     uwsm          # uwsm finalize, on hyprland.start
     wireplumber   # wpctl, every volume/mute bind
     wl-clipboard  # wl-copy (shot()) and wl-paste (both clipboard watchers)
+    xwayland      # Xwayland, spawned by the compositor for every X11 client
   ]);
 
   # Wrap the compositor itself rather than the caller. A wrapper on the
