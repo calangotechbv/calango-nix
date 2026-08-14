@@ -71,6 +71,18 @@ In `flake.nix`, after the `debianPolkit` binding:
         in
         {
           hyprlock = prev.hyprlock.override { pam = patched; };
+
+          # A deliberate second consumer, not a convenience. Task 5 step 2's
+          # authentication gate -- the check that decides whether the apt
+          # removal is safe -- runs pamtester against common-auth. Stock
+          # nixpkgs pamtester links stock linux-pam, whose pam_unix execs
+          # /run/wrappers/bin/unix_chkpwd: the exact path this overlay exists
+          # to fix. That test could not pass with any password. Overridden
+          # here so the gate exercises the SAME patched libpam the lock screen
+          # loads. pamtester takes `pam` as a function argument
+          # (pkgs/by-name/pa/pamtester/package.nix:6), so a plain .override
+          # is enough.
+          pamtester = prev.pamtester.override { pam = patched; };
         };
 ```
 
@@ -90,6 +102,11 @@ sg nix-users -c 'nix build --no-link --dry-run .#homeConfigurations."isutton@suf
 Expected: a small build list. If `systemd`, `dbus`, `util-linux` or a comparable
 low-level package appears, the overlay is not scoped — stop and fix it rather
 than starting a large rebuild.
+
+`pamtester` will **not** appear here and that is correct: it is not in
+`home.packages`, so nothing in the activation package pulls it. It is built on
+demand by Task 5 step 2, which is a third derivation on top of the two the
+constraint names.
 
 - [ ] **Step 3: Prove the patch reached the binary**
 
@@ -113,6 +130,11 @@ done
 
 Expected: exactly one linux-pam path in hyprlock's closure, whose `pam_unix.so`
 contains `/usr/sbin/unix_chkpwd` and **not** `/run/wrappers/bin/unix_chkpwd`.
+
+Run the same probe against `.pkgs.pamtester` (`/tmp/pamtest.nix`, the shape
+Task 5 step 2 uses) and confirm it resolves the **same** linux-pam store path.
+If the two differ, the gate would be testing a different libpam than the lock
+screen loads, which is the failure the override exists to prevent.
 
 Both strings appearing would mean the substitution ran on a copy that is not the
 one being linked. Only the `/run/wrappers` string appearing means the overlay is
@@ -162,11 +184,22 @@ do not re-derive the path.
 
 In `home/hyprland.nix`'s `let` block, after `hyprConfig`:
 
+The comments below are abridged; `home/hyprland.nix` carries the full text and
+is the authority. Two things they must **not** say, both corrected after the
+fact and both measured:
+
+- The store/state split is **not** symmetric with foot. The store file carries
+  only the `auth` block; the state file carries the entire visual
+  configuration -- `general`, `animations`, `background`, `input-field` and two
+  `label` blocks, 66 lines.
+- The wrapper is **not** named `hyprlock` so that `pidof hyprlock` matches. A
+  script that `exec`s away is never a process `pidof` can see; the guard
+  matches the final exec'd real hyprlock. The name matters because
+  `writeShellScriptBin` is what puts `hyprlock` on `~/.nix-profile/bin`.
+
 ```nix
-  # hyprlock's static configuration. The palette is deliberately not here: the
-  # quickshell theme switcher rewrites it on every theme change, so it lives in
-  # state and is pulled in by the `source` below. Same split as foot -- store
-  # config, state palette, store file naming the state file.
+  # hyprlock's static configuration -- see the file for why the split is
+  # lopsided rather than symmetric with foot.
   #
   # auth:pam:module is the whole reason this file exists. hyprlock's default
   # service is "hyprlock", whose /etc/pam.d/hyprlock is `auth include login`,
@@ -192,7 +225,12 @@ In `home/hyprland.nix`'s `let` block, after `hyprConfig`:
   # compositor's nixGL wrapper. Spec 3 found this the hard way: unwrapped, Nix's
   # hyprlock draws nothing and dies with
   #   CRIT: Hyprlock threw: EGL_EXT_platform_base not supported
-  # Named `hyprlock` so lock_cmd's `pidof hyprlock` guard still matches.
+  #
+  # writeShellScriptBin "hyprlock" is what puts `hyprlock` on
+  # ~/.nix-profile/bin -- that is what the name is for. See the file for the
+  # hazard a bare `hyprlock` (no --config) carries: PAM service "hyprlock" ->
+  # `auth include login` -> `@include common-auth`, which Nix's libpam
+  # ignores, so every password is rejected.
   hyprlock-nixgl = pkgs.writeShellScriptBin "hyprlock" ''
     exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${pkgs.hyprlock}/bin/hyprlock "$@"
   '';
@@ -222,22 +260,42 @@ In the `config` block of `home/hyprland.nix`:
 ```nix
   config.home.packages = [ hyprlock-nixgl ];
 
-  # hyprlock's `source` treats a missing target as an error, so this file must
-  # exist before the first lock. The theme switcher creates it on its first
-  # theme apply, which is not soon enough on a fresh machine.
-  #
-  # Deliberately NOT suffixed with `|| true`, matching home/foot.nix's
-  # equivalent hook and for the same reason: if this cannot run, the screen
-  # will not lock, and a switch that fails loudly leaves the previous
-  # generation working.
+  # Seeds the state file hyprlockConfig's `source` names, for the fresh-machine
+  # case where the theme switcher has not written it yet. Cosmetic, and
+  # therefore non-fatal -- see the file for the two measurements that establish
+  # that, summarised below.
   config.home.activation.hyprlockConf =
     lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       if [ ! -e ${lib.escapeShellArg "${hyprState}/hyprlock.conf"} ]; then
-        run mkdir -p ${lib.escapeShellArg hyprState}
-        run touch ${lib.escapeShellArg "${hyprState}/hyprlock.conf"}
+        run mkdir -p ${lib.escapeShellArg hyprState} \
+          && run touch ${lib.escapeShellArg "${hyprState}/hyprlock.conf"} \
+          || warnEcho "could not seed ${hyprState}/hyprlock.conf; the lock screen will render from hyprlock's built-in defaults until the theme switcher writes it"
       fi
     '';
 ```
+
+**This hook is `|| warnEcho`, not fatal, and an earlier version of this step got
+that wrong on two counts:**
+
+1. A missing `source` target does **not** stop the screen locking. Measured:
+   hyprlock 0.9.5 against a config whose source target is absent logs
+   `source= globbing error: found no match`, then `Config has errors ...
+   Proceeding ignoring faulty entries`, and carries on. An error *message*, not
+   a fatal error. Without the file the screen still locks, from built-in
+   defaults -- which is why the hook stays (those defaults render no input
+   field) but not why it should be fatal.
+2. A loud failure here does **not** leave the previous generation working. The
+   generated `activate` order is `writeBoundary -> linkGeneration ->
+   desktopDatabase -> defaultBrowser -> footThemeColors -> gtkAppearance ->
+   hyprlockConf -> installPackages -> reloadSystemd`. This hook runs *after*
+   `linkGeneration`, so aborting leaves config symlinks swapped, the profile
+   not installed and systemd not reloaded -- a half-applied state.
+
+`home/foot.nix`'s hook stays fatal and is **not** to be changed to match: foot's
+`include=` genuinely does refuse to start on a missing target, so its
+load-bearing premise holds where this one's did not. (Its second sentence, about
+the previous generation surviving, is inaccurate there too -- but its reason to
+be fatal does not rest on it.)
 
 - [ ] **Step 4: Remove the stale explanation in `home/default.nix`**
 
@@ -454,11 +512,21 @@ with a `BusName` — the portal is D-Bus activated and the type must match):
     Service = {
       Type = "dbus";
       BusName = "org.freedesktop.impl.portal.desktop.hyprland";
-      ExecStart = "${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland";
+      ExecStart = "${portal-nixgl}";
       Restart = "on-failure";
       Slice = "session.slice";
     };
   };
+```
+
+with `portal-nixgl` in the `let` block — see step 4, which is where that
+wrapper is justified:
+
+```nix
+  portal-nixgl = pkgs.writeShellScript "xdg-desktop-portal-hyprland-nixgl" ''
+    exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
+      ${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland "$@"
+  '';
 ```
 
 Note there is **no** `Install.WantedBy`: Debian's unit has no `[Install]` section
@@ -467,17 +535,25 @@ pulled in by a target.
 
 - [ ] **Step 2: Build and compare against Debian's unit**
 
+**Normalise with `sort` before diffing.** Home Manager re-orders the sections
+(`[Service]` before `[Unit]`) and sorts the keys inside each, so a plain `diff`
+against Debian's unit reports about **11 differing lines** of pure reordering
+and buries the one that matters:
+
 ```bash
 git add home/services.nix
 sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage'
 OUT=$(sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."isutton@suffer".activationPackage')
-diff <(grep -vE '^\s*#|^\s*$' /usr/lib/systemd/user/xdg-desktop-portal-hyprland.service) \
-     <(grep -vE '^\s*#|^\s*$' "$OUT/home-files/.config/systemd/user/xdg-desktop-portal-hyprland.service")
+diff <(grep -vE '^\s*#|^\s*$' /usr/lib/systemd/user/xdg-desktop-portal-hyprland.service | sort) \
+     <(grep -vE '^\s*#|^\s*$' "$OUT/home-files/.config/systemd/user/xdg-desktop-portal-hyprland.service" | sort)
 ```
 
-Expected: the only difference is the `ExecStart` path, `/usr/libexec/...`
-against `/nix/store/...`. Any other difference is a transcription error — the
-whole point is to change the binary and nothing else.
+Expected: the only difference is the `ExecStart` line, `/usr/libexec/...`
+against the `/nix/store/...` nixGL wrapper. Any other difference is a
+transcription error — the whole point is to change the binary and nothing else.
+(Sorting means a key moving between sections would not be caught, but both
+files have only `[Unit]` and `[Service]` and every key is unambiguously one or
+the other, so there is nothing for that to hide here.)
 
 - [ ] **Step 3: Confirm the binary exists and is executable**
 
@@ -486,42 +562,49 @@ E=$(sed -n 's/^ExecStart=//p' "$OUT/home-files/.config/systemd/user/xdg-desktop-
 test -x "$E" && echo "ok $E" || echo "MISSING $E"
 ```
 
-- [ ] **Step 4: Gather the nixGL evidence — but do NOT add the wrapper**
+- [ ] **Step 4: The nixGL wrapper, and the linkage that establishes it**
 
 Spec 1 established that a systemd unit runs exactly what `ExecStart` names, so a
-Qt/GL binary aborts on first draw unless wrapped. Whether this one draws needs
-evidence rather than a guess.
+GL binary gets no driver environment unless it is wrapped. Whether this one
+needs it wanted evidence rather than a guess — and closure-shape similarity to
+quickshell is analogy, not evidence, which is why an earlier version of this
+step forbade adding the wrapper on that basis. Direct evidence is now in hand.
 
-**`ldd` on the main binary does not answer this.** Qt loads its platform and GL
-plugins with `dlopen`, so they never appear in `ldd` output. Measured: `ldd` finds
-zero GL libraries in `quickshell` too, and quickshell demonstrably needs the
-wrapper — it reaches "active (running)" and then aborts with `status=6/ABRT` the
-moment the bar tries to map. Any check built on `ldd` here is a false negative.
-
-Compare closures instead, and look at what the portal spawns:
+**Find the real binary first.** `libexec/xdg-desktop-portal-hyprland` is a
+makeWrapper shim that only prepends the package's own `bin` to `PATH` (that is
+how the portal locates `hyprland-share-picker`). The binary is
+`libexec/.xdg-desktop-portal-hyprland-wrapped`:
 
 ```bash
+# ExecStart is now the nixGL wrapper; read the package path back out of it
 P=$(sed -n 's/^ExecStart=//p' "$OUT/home-files/.config/systemd/user/xdg-desktop-portal-hyprland.service")
-PKG=$(echo "$P" | sed 's|/libexec/.*||')
-for pat in qtbase qtwayland mesa libglvnd; do
-  printf '%-12s portal=%s quickshell=%s\n' "$pat" \
-    "$(sg nix-users -c "nix path-info --recursive $PKG" 2>/dev/null | grep -c $pat)" \
-    "$(sg nix-users -c 'nix path-info --recursive /nix/store/ij0frm7iyv9m71y99gvz79sy22qvg7x5-quickshell-0.3.0' 2>/dev/null | grep -c $pat)"
-done
-ls "$PKG/bin"
+PKG=$(grep -o '/nix/store/[^ ]*-xdg-desktop-portal-hyprland-[0-9.]*' "$P" | head -1)
+ldd "$PKG/libexec/.xdg-desktop-portal-hyprland-wrapped" | grep -iE 'gbm|EGL|GL'
+systemctl --user show-environment | grep -cE 'GBM_BACKENDS_PATH|LIBGL_DRIVERS_PATH|__EGL_VENDOR_LIBRARY_FILENAMES|LD_LIBRARY_PATH'
 ```
 
-Recorded when the plan was written, so you have something to compare against: the
-two closures are identical in shape — `qtbase 2, qtwayland 1, mesa 1, libglvnd 1`
-— and the portal package ships `bin/hyprland-share-picker`, a Qt GUI it launches
-for the screen-share dialog. A child of a systemd unit inherits that unit's
-environment, so an unwrapped portal would hand the picker no GL setup either.
+Measured:
 
-The evidence therefore points at needing the wrapper. **Do not add it anyway.**
-Every one of the four wrappers in this project was established by a crash or a
-runtime failure, never by analogy, and "the closure looks similar" is analogy.
-Task 5 starts the unit and exercises screen sharing, which settles it with the
-only evidence that counts. Report your findings so Task 5 knows what to expect.
+```
+libgbm.so.1 => /nix/store/…-mesa-libgbm-26.0.3/lib/libgbm.so.1
+0
+```
+
+A **direct, non-`dlopen`** dependency — so the "`ldd` is a false negative"
+caveat, which is real for Qt's `dlopen`'d platform and GL plugins, does not
+apply to this one; the dynamic linker resolves it at load. And the user
+manager's environment carries **none** of the four driver variables, so Nix's
+libgbm falls back to its compiled-in `/run/opengl-driver/lib/gbm`, which does
+not exist on Debian.
+
+So the wrapper goes in, and it goes in **now**, not after a live test: Task 5's
+switch replaces the running Debian portal with this one, so there is no later
+moment of controlled choice. Wrap *outside* the shim (`nixGLIntel` → shim →
+real binary) so the shim's `PATH` work survives and the share-picker, a child
+of this unit, inherits the GL environment too.
+
+Task 5 step 8 still exercises screen sharing — as functional confirmation, not
+as the input to this decision.
 
 - [ ] **Step 5: Commit**
 
@@ -543,6 +626,28 @@ This task changes the running session and hands two checks to the user. **An
 agent must not run `home-manager switch`, must not lock the screen, and must not
 run any apt command.**
 
+> **The step order below is the safety property, not a preference.**
+> `sd-switch --dry-run` between the current and new generations reports:
+>
+> ```
+> Stopping units: hypridle.service, xdg-desktop-portal-hyprland.service
+> Starting units: hypridle.service, xdg-desktop-portal-hyprland.service
+> ```
+>
+> `hypridle.service`'s `X-Restart-Triggers` change, so the switch restarts it,
+> and the restarted hypridle reads the **new** `lock_cmd` and starts its
+> 300-second idle timer from zero. Three paths then reach the new lock screen
+> within minutes: the idle timeout, a lid close
+> (`before_sleep_cmd = loginctl lock-session`), and the session menu's Lock on
+> `SUPER+M`. **So the switch arms the lock screen.** The authentication test and
+> the spare-VT safety net must therefore both come *before* it. An earlier
+> version of this task had them after, which is how this project produced a
+> lockout once already.
+>
+> The authentication test does not depend on the switch at all — it resolves
+> pamtester out of the flake, not out of the activated profile — so nothing is
+> lost by moving it first.
+
 - [ ] **Step 1: Record the before state**
 
 ```bash
@@ -556,7 +661,67 @@ run any apt command.**
 } | tee /tmp/backports-before.txt
 ```
 
-- [ ] **Step 2: Hand the switch to the user**
+- [ ] **Step 2: The authentication test — BEFORE the switch, and the gate for everything else**
+
+This is the evidence the spike could not gather, and nothing downstream should
+proceed without it. It runs before the switch on purpose: it needs no part of
+the new generation to be active, and after the switch the lock screen is armed.
+
+**Resolve pamtester from this configuration, not from the registry.**
+`nix run nixpkgs#pamtester` builds against nixpkgs' *stock* linux-pam, whose
+`pam_unix` execs `/run/wrappers/bin/unix_chkpwd` — the NixOS-only path this
+whole branch exists to fix, and a directory that does not exist on this
+machine. That command could not succeed with any password, and its failure
+would read as "the PAM fix didn't work" immediately before the irreversible
+step. `flake.nix`'s `debianPam` overlay carries a `pamtester` override for
+exactly this reason, so the gate exercises the same patched libpam the lock
+screen loads.
+
+Ask the user to run this, entering their **real** password:
+
+```bash
+cat > /tmp/pamtest.nix <<'EOF'
+let
+  f = builtins.getFlake (toString /home/isutton/Projects/calango-nix);
+in f.outputs.homeConfigurations."isutton@suffer".pkgs.pamtester
+EOF
+PT=$(sg nix-users -c 'nix build --no-link --print-out-paths --impure --file /tmp/pamtest.nix' 2>&1 | tail -1)
+"$PT/bin/pamtester" common-auth "$USER" authenticate
+```
+
+Expected: `pamtester: successfully authenticated`.
+
+Confirm first that it really is the patched build — the whole point of the
+detour:
+
+```bash
+for p in $(sg nix-users -c "nix path-info --recursive $PT" 2>/dev/null | grep linux-pam); do
+  echo "== $p"; strings "$p/lib/security/pam_unix.so" | grep chkpwd | head -1
+done
+```
+
+Expected: exactly one linux-pam path, containing `/usr/sbin/unix_chkpwd` and no
+`/run/wrappers`. It must be the same store path Task 1 step 3 found for
+hyprlock.
+
+**If this fails, stop.** Do not switch. The switch arms a lock screen whose
+authentication has just been shown not to work.
+
+- [ ] **Step 3: Open the spare VT — BEFORE the switch**
+
+Also before the switch, and for the same reason: once the switch runs, a lock
+can arrive at any moment, and the escape hatch has to already be open.
+
+Ask the user to:
+
+1. switch to a free VT (Ctrl+Alt+F3) and **log in as `nixtest`**
+2. leave that session logged in and switch back to the graphical VT
+
+From that VT the user can `pkill hyprlock` without killing the graphical
+session, which is the whole reason for the arrangement. Spec 3 caused a lockout
+by not having it.
+
+- [ ] **Step 4: Hand the switch to the user**
 
 Report, and stop:
 
@@ -566,47 +731,62 @@ Report, and stop:
 > home-manager switch --flake ~/Projects/calango-nix#isutton@suffer
 > ```
 >
-> Expect `sd-switch` to restart `quickshell` and start the new portal unit. The
-> lock screen is not exercised by the switch.
+> `sd-switch` will restart two units: **`hypridle.service`** (its
+> `X-Restart-Triggers` changed) and **`xdg-desktop-portal-hyprland.service`**.
+> `quickshell.service` is byte-identical between the two generations and is
+> **not** restarted.
+>
+> **The restarted hypridle arms the new lock screen immediately** — it reads the
+> new `lock_cmd` and starts its 300-second idle timer from zero, so an idle
+> timeout, a lid close or `SUPER+M` will all reach the new lock screen from this
+> point on. Step 2 is what makes that safe; step 3's VT is what makes it
+> recoverable.
+>
+> The portal is also **replaced at switch time**: the running Debian
+> `/usr/libexec` portal is stopped and the Nix one started in its place. Unlike
+> Xwayland (step 7, which does not change until a fresh login) there is no grace
+> period here.
 
-- [ ] **Step 3: The authentication test — the gate for everything else**
-
-This is the evidence the spike could not gather, and nothing downstream should
-proceed without it. Ask the user to run, entering their **real** password:
+**If the user could not open a spare VT in step 3**, they should disarm the
+lock instead, immediately after the switch:
 
 ```bash
-sg nix-users -c 'nix run nixpkgs#pamtester -- common-auth "$USER" authenticate'
+systemctl --user stop hypridle
 ```
 
-Expected: `pamtester: successfully authenticated`. That binary links nixpkgs'
-stock pam, so it proves the *service file* is usable but not the patched helper.
-For the patched one, ask them to run:
+and start it again only once step 5's lock test has passed:
 
 ```bash
-HL=$(grep -o '/nix/store/[^ ]*/bin/hyprlock' ~/.config/hypr/hypridle.conf | head -1)
-ldd "$HL" 2>/dev/null | grep libpam
+systemctl --user start hypridle
 ```
 
-and record which linux-pam store path hyprlock resolves — it must be the patched
-one from Task 1 step 3, not nixpkgs' stock.
+- [ ] **Step 5: The lock test, from the VT opened in step 3**
 
-- [ ] **Step 4: The lock test, from a spare VT as `nixtest`**
+Now that authentication is proven and the escape hatch is open, exercise the
+real thing. Ask the user to:
 
-Spec 3 caused a lockout by testing this on the live session. Ask the user to:
-
-1. switch to a free VT (Ctrl+Alt+F3) and log in as `nixtest`
+1. switch to the `nixtest` VT from step 3
 2. from there, run `loginctl lock-session <isutton's session id>` — or simply
    wait for hypridle's 300-second timeout
-3. switch back to the graphical VT and try to unlock with the real password
+3. switch back to the graphical VT and unlock with the real password
 
-Expected: the lock screen appears and **unlocks**. If it does not, the user can
-return to the `nixtest` VT and `pkill hyprlock` without killing the graphical
-session — which is the whole reason for this arrangement.
+Expected: the lock screen appears and **unlocks**. If it does not, return to the
+`nixtest` VT and `pkill hyprlock`.
 
 If unlocking fails, stop the plan here and report. Tasks 6 onward remove the
 fallback.
 
-- [ ] **Step 5: Xwayland and the portal, live**
+- [ ] **Step 6: Confirm hypridle is running**
+
+Only relevant if step 4's fallback was used, but cheap either way:
+
+```bash
+systemctl --user is-active hypridle
+```
+
+Expected: `active`. A stopped hypridle means no idle lock and no idle suspend.
+
+- [ ] **Step 7: Xwayland and the portal, live**
 
 ```bash
 readlink -f /proc/$(pgrep -x Xwayland | head -1)/exe
@@ -615,15 +795,22 @@ readlink -f /proc/$(pgrep -f 'xdg-desktop-portal-hyprland' | head -1)/exe
 systemctl --user status xdg-desktop-portal-hyprland --no-pager | head -5
 ```
 
-Expected: Xwayland is now a `/nix/store/...` path, `Accelerated: yes` with the
-radeonsi renderer, and the portal is the Nix binary. Note that Xwayland only
-changes at a fresh login — the running one was started by the old compositor —
-so if it is still `/usr/bin/Xwayland`, that is expected until Task 7's reboot,
-and should be recorded rather than treated as a failure.
+Expected: `Accelerated: yes` with the radeonsi renderer, and the portal
+`ExecStart` is the Nix `xdg-desktop-portal-hyprland-nixgl` wrapper.
 
-- [ ] **Step 6: Exercise the portal end to end, including the part that draws**
+Two different expectations for the two binaries, and they are not symmetric:
 
-Two different paths, and the second is the one Task 4 could not settle:
+- **The portal is replaced at switch time.** Its unit was stopped and started
+  by `sd-switch`, so `readlink /proc/<pid>/exe` should already resolve into
+  `/nix/store` (via the nixGL wrapper). If it is still `/usr/libexec/...`, the
+  user unit did not shadow Debian's — investigate before continuing.
+- **Xwayland does not change until a fresh login.** The running one was spawned
+  by the old compositor from the old `compositorPath`. If it is still
+  `/usr/bin/Xwayland`, that is **expected** until Task 7's reboot and should be
+  recorded, not treated as a failure. Its `Accelerated:` line will likewise
+  still read `no`/llvmpipe until then.
+
+- [ ] **Step 8: Exercise the portal end to end, including the part that draws**
 
 ```bash
 xdg-open https://example.invalid/
@@ -636,25 +823,32 @@ Then ask the user to start a screen share — any application that offers one, o
 a browser's "share your screen". Expected: Hyprland's share-picker window
 appears and a source can be chosen.
 
-**This is the check that decides the nixGL question.** The picker is a Qt GUI the
-portal spawns, so it inherits the unit's environment. If it fails to draw — or
-the portal logs `status=6/ABRT` in `journalctl --user -u
-xdg-desktop-portal-hyprland` — the unit needs its `ExecStart` wrapped in
-`nixGLIntel`, exactly as `quickshell.service` and `hyprpolkitagent` are. That is
-a one-line change to `home/services.nix`; make it, rebuild, and re-test before
-continuing to Task 6.
+**This no longer decides the nixGL question — that was settled before the
+switch, by linkage.** The real binary
+(`libexec/.xdg-desktop-portal-hyprland-wrapped`, behind a makeWrapper shim)
+links `libgbm.so.1` from Nix's mesa directly, and `systemctl --user
+show-environment` carries none of `GBM_BACKENDS_PATH`, `LIBGL_DRIVERS_PATH`,
+`__EGL_VENDOR_LIBRARY_FILENAMES` or `LD_LIBRARY_PATH`, so the unwrapped binary
+would fall back to `/run/opengl-driver/lib/gbm`, which Debian does not have.
+`home/services.nix` therefore wraps `ExecStart` in `nixGLIntel` already. This
+step is the functional confirmation of that decision, not the input to it —
+which matters, because the switch replaces the live Debian portal and leaves no
+moment of controlled choice afterwards.
+
+If it *does* fail, check `journalctl --user -u xdg-desktop-portal-hyprland` for
+a GBM or EGL error before assuming the wrapper is at fault.
 
 If screen sharing is not something the user needs, record that it was untested
 rather than recording it as passing.
 
-- [ ] **Step 7: Start the results document**
+- [ ] **Step 9: Start the results document**
 
 Create `docs/2026-08-14-results-suffer-backports-removal.md` with the before
 state, each check above and its result, following the shape of
 `docs/2026-08-14-results-suffer-user-layer.md`. Leave the post-removal and
 post-reboot sections empty.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add docs/2026-08-14-results-suffer-backports-removal.md
@@ -687,13 +881,43 @@ inventory was taken — stop and re-measure rather than proceeding. The list
 should include `xwayland`, `xdg-desktop-portal-hyprland` and
 `calango-desktop-deps`, all of which Tasks 2-4 have now replaced or retired.
 
-- [ ] **Step 2: Remove the packages**
+- [ ] **Step 2: Confirm the session entry that survives the removal exists**
+
+`dpkg -S` puts **both** `/usr/share/wayland-sessions/hyprland.desktop` and
+`hyprland-uwsm.desktop` in apt's `hyprland` package, so step 2 deletes them.
+greetd's greeter reads only
+`--sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions`, so
+after the removal the **only** session entry left on the machine is
+`/usr/local/share/wayland-sessions/hyprland-nix.desktop` — root-owned, not
+apt-managed, created by hand during spec 1, and restored by no Nix module. If
+it were missing, Task 7's reboot would reach a greeter with nothing to launch.
+
+Check it **before** the removal, since afterwards there is nothing to recover
+it from:
+
+```bash
+test -f /usr/local/share/wayland-sessions/hyprland-nix.desktop \
+  && cat /usr/local/share/wayland-sessions/hyprland-nix.desktop \
+  || echo "MISSING -- do not proceed"
+grep -o -- '--sessions [^ ]*' /etc/greetd/config.toml
+E=$(sed -n 's/^Exec=//p' /usr/local/share/wayland-sessions/hyprland-nix.desktop)
+echo "$E"
+test -x "$HOME/.nix-profile/bin/uwsm" && echo "uwsm ok" || echo "uwsm MISSING"
+```
+
+Expected: the file exists, its `Exec` runs `$HOME/.nix-profile/bin/uwsm start
+-e -D Hyprland hyprland-nixgl.desktop`, that binary is executable, and greetd's
+`--sessions` names the directory the file is in. **If any of that is not true,
+stop.** Take a copy of the file somewhere outside `/usr/local` before
+proceeding either way.
+
+- [ ] **Step 3: Remove the packages**
 
 ```bash
 sudo apt remove --autoremove hyprland hypridle hyprlock hyprpolkitagent hyprpaper hyprland-guiutils
 ```
 
-- [ ] **Step 3: Remove the source**
+- [ ] **Step 4: Remove the source**
 
 Delete these two lines from `/etc/apt/sources.list` — delete, not comment out; a
 commented line is a configuration that looks disabled and is one edit from live,
@@ -710,43 +934,72 @@ Then:
 sudo apt update
 ```
 
-- [ ] **Step 4: Confirm what is left**
+- [ ] **Step 5: Confirm what is left**
 
 ```bash
-apt list --installed 2>/dev/null | grep backports
+apt list --installed 2>/dev/null | grep backports | sed 's|/.*||' | sort
 ```
 
-Expected: exactly three — `libxkbcommon0`, `libxkbcommon-x11-0` and
-`libcpptrace1`. These stay because `google-chrome-stable`, `deskflow` and `code`
-link them; removing the source freezes them at their installed versions rather
-than downgrading anything. Any fourth entry needs explaining before continuing.
+Expected: exactly **six**, measured by subtracting the 26 simulated removals
+from the installed backports list:
 
-- [ ] **Step 5: Confirm the session survived**
+```
+libcpptrace1  libxkbcommon0  libxkbcommon-x11-0  quickshell  uwsm  ydotool
+```
+
+Two different reasons, and only the first three are the "frozen library" case:
+
+- `libcpptrace1`, `libxkbcommon0`, `libxkbcommon-x11-0` — reverse-dependencies
+  of `google-chrome-stable`, `deskflow` and `code`, so `--autoremove` cannot
+  take them. Removing the source freezes them at their installed versions
+  rather than downgrading anything.
+- `quickshell`, `uwsm`, `ydotool` — marked **manual**, so `--autoremove` leaves
+  them regardless. `quickshell` is inert (Nix's wins on PATH). `uwsm` is **not**
+  inert: it supplies every `wayland-session*` systemd user template the live
+  session runs on — see the spec's inventory — so it must stay. `ydotool` has no
+  Nix counterpart and nothing invokes it.
+
+A **seventh** entry needs explaining before continuing. Fewer than six is also
+worth stopping for.
+
+- [ ] **Step 6: Confirm the session survived**
 
 ```bash
 hyprctl version | head -2
-which Xwayland hyprlock
+which hyprlock
+W=$(readlink -f ~/.nix-profile/bin/hyprland-nixgl)
+sed -n 's/^export PATH=//p' "$W" | tr ':' '\n' | grep -n xwayland
 systemctl --user --failed --no-pager
 journalctl --user --since "5 minutes ago" 2>/dev/null | grep -ic 'command not found'
 ```
 
-Expected: hyprctl is the Nix build, `Xwayland` and `hyprlock` resolve into
-`/nix/store` or `~/.nix-profile`, no failed units, zero `command not found`.
+Expected: hyprctl is the Nix build, `hyprlock` resolves into `~/.nix-profile`,
+a store path containing `xwayland` appears on the compositor's PATH, no failed
+units, zero `command not found`.
 
-- [ ] **Step 6: Lock and unlock once more**
+**Do not run `which Xwayland` here** — it will find nothing, and that is
+correct. `xwayland` is in `compositorPath` in `home/session.nix` and
+deliberately *not* in `home.packages`: only the compositor needs it, and the
+compositor resolves it from the PATH the `hyprland-nixgl` wrapper exports, not
+from the login shell's. An earlier version of this step expected `which` to
+find it, which would have read as a failure of a working design. Checking the
+compositor's PATH, as above, is the right question. (After Task 7's reboot the
+running Xwayland's `/proc/<pid>/exe` is the stronger check.)
+
+- [ ] **Step 7: Lock and unlock once more**
 
 The fallback is gone now, so this is the moment Task 5's test pays for itself.
 Ask the user to lock the session and unlock it. If it fails, the recovery is
 `apt install hyprlock` — which needs the backports source back, so record that
 in the results document as the rollback.
 
-- [ ] **Step 7: Record and commit**
+- [ ] **Step 8: Record and commit**
 
 Fill in the post-removal section of the results document.
 
 ```bash
 git add docs/2026-08-14-results-suffer-backports-removal.md
-git commit -m "results: trixie-backports removed, three shared libraries frozen"
+git commit -m "results: trixie-backports removed, six packages survive"
 ```
 
 ---
@@ -860,9 +1113,12 @@ git commit -m "flake: retire the nixtest account, its purpose served"
 
 Cover, honestly: what was verified and how; the before/after acceleration
 numbers, because that is a user-visible improvement nobody asked for; every
-defect found and whether it belonged to this spec or an earlier one; the three
-frozen backports libraries and the fact that they will receive no further
-security updates; and what the next spec inherits.
+defect found and whether it belonged to this spec or an earlier one; all **six**
+surviving backports packages — the three frozen libraries plus `quickshell`,
+`uwsm` and `ydotool` — and the fact that none of them will receive further
+security updates; and what the next spec inherits. Name `uwsm` explicitly: apt's
+copy owns the `wayland-session*` systemd user templates the session actually
+runs on, and `ydotool` too, which has no Nix counterpart and no known consumer.
 
 Say explicitly whether the two PAM root causes behaved as the spike predicted,
 and whether the correct-password test passed first time — the spike's own
@@ -891,10 +1147,14 @@ tasks is to prepare commands, read results and write them down — not to run
 `home-manager switch`, `apt`, `userdel`, or anything that locks the screen.
 
 **The ordering is the plan's spine, not a preference.** Task 6 removes the only
-fallback lock screen on the machine. Task 5's authentication test is what makes
-that safe, and Task 5 step 4 runs it from a VT where failure costs nothing.
-Reordering these turns a recoverable failure into a lockout — which has already
-happened once in this project, for exactly this reason.
+fallback lock screen on the machine. Task 5's authentication test (step 2) is
+what makes that safe, and step 3 opens the VT where a failure costs nothing.
+**Both come before the switch**, because the switch itself arms the lock screen:
+`sd-switch` restarts `hypridle.service`, which re-reads `lock_cmd` and starts a
+fresh 300-second idle timer, and the idle timeout, a lid close and `SUPER+M` all
+reach the new lock screen from that moment. Reordering these turns a recoverable
+failure into a lockout — which has already happened once in this project, for
+exactly this reason.
 
 **Two things in this plan are fixes rather than ports**, and their verification
 should be treated as load-bearing rather than ceremonial: Task 3 fixes X11
@@ -902,7 +1162,22 @@ clients running on llvmpipe, and Task 1 fixes authentication that has never
 worked. Both have a measured "before" to beat, and both are stated in the spec
 with the measurement that found them.
 
-**Do not add a nixGL wrapper to the portal speculatively.** Task 4 step 4
-gathers the evidence and Task 5 settles it. Four binaries in this project have
-needed the wrapper and each was established by a crash or a linkage check, never
-by analogy.
+**The portal's nixGL wrapper is established by linkage, not by analogy.** Task 4
+step 4 has the measurement: the real binary behind the makeWrapper shim links
+`libgbm.so.1` directly, and the user manager's environment carries none of the
+driver variables. Five binaries in this project now need the wrapper and each
+was established by a crash or a linkage check — never by "the closure looks
+similar". Task 5 step 8 confirms it functionally; it does not decide it, because
+the switch replaces the live Debian portal and leaves no controlled choice
+afterwards.
+
+**Six backports packages survive the removal, not three.** `libcpptrace1`,
+`libxkbcommon0`, `libxkbcommon-x11-0` (frozen for their dependants) plus
+`quickshell`, `uwsm`, `ydotool` (marked manual). Task 6 step 4 checks for six.
+`uwsm` in particular must stay: apt's copy owns every `wayland-session*` systemd
+user template the live session runs on.
+
+**`/usr/local/share/wayland-sessions/hyprland-nix.desktop` is load-bearing and
+apt-unmanaged.** Task 6 deletes both of apt's session entries, leaving that one
+file as the only thing greetd can launch. Task 6 step 1b checks it exists before
+the removal, because nothing restores it afterwards.
