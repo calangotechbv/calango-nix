@@ -25,7 +25,11 @@ img=${1:-}
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 tool=${WALLPAPER_THEME_TOOL:-auto}
 
-run_matugen() { matugen image "$img" -c "$dir/matugen/config.toml" -m dark --prefer saturation -q; }
+# matugen 4.0.0 dropped --prefer; a scheme is now chosen with -t/--type
+# <scheme-*> (default: scheme-tonal-spot). This used to pass
+# `--prefer saturation`; if you want that back, the successor is
+# `-t scheme-vibrant`, added deliberately rather than by default here.
+run_matugen() { matugen image "$img" -c "$dir/matugen/config.toml" -m dark -q; }
 run_wallust() { wallust run "$img" -d "$dir/wallust" -s -q; }
 
 case "$tool" in
