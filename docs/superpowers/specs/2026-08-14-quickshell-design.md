@@ -158,20 +158,44 @@ working, not a gap in it.
 
 ### 3. The rewrite surface
 
-Seventeen live references, in four languages, across twelve files. Counting
-only the QML would miss seven of them, and each miss is a silent write
-failure rather than an error.
+Thirty references, in three syntactic forms, across sixteen files. They do
+**not** all move the same way: twenty-four follow state, five follow source
+into the store, and one is a comment.
 
 | Form | Count | Where |
 |---|---|---|
-| `$HOME/.config/quickshell` | 13 | 6 QML files, `night-light/{locate,run}.sh` |
-| `~/.config/quickshell` | 4 | `browser/discover.py`, `matugen/config.toml` ×2, `wallust/wallust.toml` |
-| `~/.config/quickshell` in a comment | 1 | `theme-switcher/wallpaper-theme/set.sh` |
+| `$HOME/.config/quickshell` inside a shell string | 13 | 6 QML files, `night-light/{locate,run}.sh` |
+| `Quickshell.env("HOME") +` / `root.home +` concatenation | 12 | 8 QML files |
+| `~/.config/quickshell` | 5 | `browser/discover.py`, `matugen/config.toml` ×2, `wallust/wallust.toml`, and one comment in `set.sh` |
 
-The QML references break down as `theme-switcher/Theme.qml` ×4,
-`notifications/NotificationService.qml` ×2, and one each in
-`bluetooth/BluetoothService.qml`, `common/BarSettings.qml`,
-`common/Screens.qml` and `wallpaper/WallpaperService.qml`.
+The third form is the one that is easy to miss, because it is QML string
+concatenation rather than a shell path, so a grep written for `$HOME/` or `~/`
+does not see it.
+
+**Five of the thirty point at source, not state.** These are files that ship
+in the tree and must therefore resolve into the store:
+
+| Reference | File it wants |
+|---|---|
+| `browser/BrowserService.qml:39` | `browser/discover.py` |
+| `night-light/NightLightService.qml:108` | `night-light/locate.sh` |
+| `theme-switcher/Theme.qml:270` | `theme-switcher/wallpaper-theme/set.sh` |
+| `theme-switcher/Theme.qml:472` | `theme-switcher/themes.json`, 90KB, git-tracked |
+| `matugen/config.toml` `input_path` | `matugen/template.json` |
+
+Sending any of these to `~/.local/state` produces a file that is not there.
+Sending a state write into the store produces a read-only filesystem error.
+The two directions have to be separated by hand, reference by reference; there
+is no single substitution that is correct for all thirty.
+
+**The four QML source references need no build-time machinery.** quickshell
+exposes `Quickshell.shellDir` — the directory of the running `shell.qml`,
+which is the store path — so they become
+`Quickshell.shellDir + "/night-light/locate.sh"` and so on. The API also
+offers `shellPath`, `shellRoot`, `configDir`, `configPath` and `shellId`.
+
+That leaves `matugen/config.toml` as the sole file that cannot be forked,
+because TOML read by a third-party binary cannot call a QML API.
 
 Two of these are not our code's paths at all. `matugen` and `wallust` are
 third-party binaries reading their own TOML, so no amount of QML editing
