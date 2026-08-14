@@ -298,6 +298,40 @@ Incidental, but useful for spec 2: `seahorse` is an apt GTK application and it
 drew correctly inside the Nix session with no wrapper. Only Nix-built GUI
 applications need nixGL. That is the boundary.
 
+## Porting isutton
+
+- Symlinks before `--uninstall`:      24 (at `-maxdepth 4`; a depth-3 search finds 19)
+- Symlinks after:                     1
+- After `systemctl --user disable`:   0
+- Dangling links in systemd/user:     0
+- Clobber errors from home-manager:   none
+- Nix session as isutton:             works, bare desktop as intended
+- apt session as isutton:             works, bare compositor — unless `install.sh` is re-run
+
+No collision occurred, and none was expected: the pre-flight in Task 9 step 0
+named the only candidate in advance, `.config/hypr/hypridle.conf`, and it
+resolved into the calango-desktop checkout through the `~/.config/hypr`
+symlink. Re-running the prediction after step 2 printed nothing, and
+activation then completed with no `checkLinkTargets` failure.
+
+The survivor was a single unit. `install.sh --uninstall` disables
+`quickshell`, `bt-agent` and `night-light`, but not `nm-secret-agent`, though
+all four are in the same `LINK_SRC` list. Disabling it removed the last link
+and took the now-empty `graphical-session.target.wants` directory with it.
+
+### From here, the apt session is bare
+
+Stated plainly because it is the real cost of this task and should not be a
+surprise later: from step 2 onward, `Hyprland (uwsm-managed)` is a stock
+compositor with no calango configuration. Nothing was lost — the checkout is
+untouched — and the full desktop comes back with
+
+```sh
+cd ~/Projects/calango-desktop && ./install.sh
+```
+
+Home Manager generation 1 is the rollback point for the Nix side.
+
 ## The repository copy
 
 `/home/isutton` is 0700, so `nixtest` cannot clone from it. A bare clone at
