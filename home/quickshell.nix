@@ -28,4 +28,16 @@ in
   };
 
   config.calango.quickshellConfig = quickshellConfig;
+
+  # The only thing Home Manager may own under the state directory. A .keep
+  # forces the parent to be created as a real directory; anything more would
+  # make a state file a read-only store symlink, which is the failure this
+  # whole spec exists to avoid.
+  #
+  # The directories must exist before quickshell writes: every write is a bare
+  # `printf > path` with no mkdir, and a missing directory fails silently.
+  config.home.file = {
+    ".local/state/quickshell/.keep".text = "";
+    ".local/state/quickshell/theme-switcher/.keep".text = "";
+  };
 }
