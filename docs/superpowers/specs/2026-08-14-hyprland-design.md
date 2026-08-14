@@ -209,28 +209,53 @@ rely on.
 
 Required method, because decision 7 forbids a table here.
 
-`hyprland.lua` names something in the order of thirty binaries, but an
-unknown number of those appear in prose — its comments discuss `kitty`,
-`rofi`, `waybar` and `nm-applet` as alternatives the config does not use.
-Grepping for binary names alone therefore over-counts, and grepping only
-`exec` lines under-counts, because commands also appear in `bind` dispatchers
-and in `$variable` definitions.
+**No static extractor is trustworthy against this file, and that is a
+finding, not an excuse.** Four attempts were made while writing this spec and
+each was wrong in a different way. They are recorded because the plan must
+not repeat them.
 
-The derivation must:
+Commands reach the compositor through `hl.exec_cmd(...)` at startup and
+`hl.dsp.exec_cmd(...)` in binds — 36 call sites. But the strings handed to
+those calls are assembled from:
 
-1. Extract every command from `exec`, `exec-once`, `exec-shutdown`, `bind`
-   dispatchers and variable definitions — the actual call sites, not free
-   text.
-2. Resolve each against the compositor's real environment, and record which
-   ones were checked rather than assumed.
-3. State explicitly, for each name found in prose only, why it is excluded.
+- ordinary `"..."` literals,
+- Lua long-bracket `[[...]]` literals,
+- `..` concatenation across several lines,
+- and **function parameters**, so the command never appears at the call site
+  at all.
 
-Two are already known not to be plain packages: `~/.cargo/bin/wl-clip-persist`
-is `wl-clip-persist` 0.5.0 in nixpkgs — another cargo install Nix absorbs —
-and `~/.local/bin/apply-gtk-theme` is spec 4's shim and will not resolve until
-then. The plan records that gap rather than papering over it.
+The last one is decisive. `slurp` — plainly a real dependency — appears only
+as `[[g=$(slurp) || exit 0; ]]`, an argument passed into a local `shot()`
+helper that assembles the pipeline. An extractor reading `"..."` literals at
+`exec_cmd` sites cannot see it. One reading every literal in the file still
+cannot, unless it also reads long brackets. And a naive grep for binary names
+over-counts badly, because the comments discuss `kitty`, `rofi`, `waybar`,
+`nm-applet`, `brightnessctl` and `hyprlock` as alternatives or history rather
+than as anything the config runs.
 
-Availability confirmed while writing this spec: `wl-clip-persist` 0.5.0,
+The derivation is therefore **two gates, not one**:
+
+1. **Static, deliberately over-inclusive.** Take the union of: every token in
+   command position across all four string forms, and a plain binary-name
+   grep. Over-inclusion is nearly free — an unused package on `PATH` costs a
+   little closure — while omission is what killed four bar widgets in spec 2.
+2. **Runtime, and this is the real gate.** Exercise every bind and every
+   startup exec on the live session, then read the journal for
+   `command not found`. A static list is a hypothesis; the journal is
+   evidence. Spec 2's closure passed every static check it was given and was
+   still missing six packages.
+
+For every candidate the plan excludes, it must say why, and "not found by the
+extractor" is not a reason.
+
+**One correction this exercise produced:** `wl-clip-persist` is **not** a
+dependency. An earlier draft of this spec listed it, having found
+`~/.cargo/bin/wl-clip-persist` in the file. Reading the surrounding comment
+shows it "was tried here and removed", with the path noted only in case the
+decision is revisited. It is packaged in nixpkgs at 0.5.0 and is still not
+wanted. `apply-gtk-theme` is likewise comment-only in `hyprland.lua`.
+
+Availability confirmed while writing this spec, for candidates that survive:
 `grim` 1.5.0, `slurp` 1.5.0, `playerctl` 2.4.1, `wireplumber` 0.5.14 (for
 `wpctl`), `cliphist` 0.7.0, `foot` 1.27.0.
 
@@ -265,5 +290,7 @@ does nothing.
 - **Whether Hyprland prefers `.lua` over `.conf` when both exist** is
   unverified. The plan deletes the `.conf` rather than depending on the
   answer, but the answer is worth recording when observed.
-- **`apply-gtk-theme` will not resolve until spec 4.** A keybind or exec that
-  calls it fails until then; the plan records which.
+- **`apply-gtk-theme` is comment-only in `hyprland.lua`.** It is referenced
+  in prose at line 291 as the thing that keeps GTK keys in step, but no
+  `exec_cmd` calls it. If the runtime gate proves otherwise, it will not
+  resolve until spec 4 ships the shim, and the plan records that.
