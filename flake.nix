@@ -79,24 +79,26 @@
         overlays = [ nixgl.overlays.default debianPolkit ];
       };
 
-      mkHome = username: home-manager.lib.homeManagerConfiguration {
+      mkHome = username: hostname: home-manager.lib.homeManagerConfiguration {
         inherit pkgs;
         modules = [
           ./home/default.nix
           ./home/session.nix
           ./home/quickshell.nix
+          ./home/hyprland.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";
             home.stateVersion = "26.05";
+            calango.host = hostname;
           }
         ];
       };
     in
     {
       homeConfigurations = {
-        "nixtest@suffer" = mkHome "nixtest";
-        "isutton@suffer" = mkHome "isutton";
+        "nixtest@suffer" = mkHome "nixtest" "suffer";
+        "isutton@suffer" = mkHome "isutton" "suffer";
       };
     };
 }
