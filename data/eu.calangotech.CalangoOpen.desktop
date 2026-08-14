@@ -34,7 +34,7 @@ Comment=Ask the quickshell panel which browser opens this link
 # checks it the way the portal resolves it -- by name, under the portal's PATH
 # -- and will say so if it ever stops. Do not reintroduce quoting here: no
 # amount of it survives open_generic.
-Exec=calango-open %u
+Exec=@calangoOpen@ %u
 Icon=web-browser
 Terminal=false
 Categories=Network;WebBrowser;

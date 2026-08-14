@@ -19,7 +19,7 @@
 Name=Visual Studio Code
 Comment=Code Editing. Redefined.
 GenericName=Text Editor
-Exec=code %F
+Exec=@codeShim@ %F
 Icon=vscode
 Type=Application
 StartupNotify=false
@@ -31,5 +31,5 @@ Keywords=vscode;
 
 [Desktop Action new-empty-window]
 Name=New Empty Window
-Exec=code --new-window %F
+Exec=@codeShim@ --new-window %F
 Icon=vscode

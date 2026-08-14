@@ -11,7 +11,7 @@ set -euo pipefail
 url=${1:-}
 [ -n "$url" ] || { printf 'usage: %s URL\n' "${0##*/}" >&2; exit 2; }
 
-discover="$HOME/.config/quickshell/browser/discover.py"
+discover="@quickshellSource@/browser/discover.py"
 
 # `qs ipc call` exits 0 and prints "Target not found." when the handler is
 # missing, and exits 0 for an unknown function too -- only *no running

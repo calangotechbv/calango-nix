@@ -89,6 +89,7 @@
           ./home/foot.nix
           ./home/lf.nix
           ./home/gtk.nix
+          ./home/apps.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";
