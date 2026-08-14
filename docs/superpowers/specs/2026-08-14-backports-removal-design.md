@@ -141,14 +141,28 @@ see Non-goals.
    apt's hyprland goes; the Nix Hyprland that spawns it is invisible to apt.
    `sudo apt-mark manual xwayland` before the removal is the whole fix.
 
-   The Nix alternative was evaluated and rejected on evidence.
-   `pkgs.xwayland` links `mesa-libgbm` out of the Nix store, which is the
-   `/run/opengl-driver/lib` trap that produced nixGL in spec 1 — the very first
-   bug this project hit. Debian's links `/lib/x86_64-linux-gnu/libgbm.so.1`, the
-   system Mesa that matches the system GPU drivers. Using Nix's would mean a
-   fifth nixGL wrapper, around a long-running server every X11 client depends
-   on, spawned by name from inside the compositor — for no benefit, since
-   Xwayland is not a backports package and removing it was never a goal.
+   **Nix's `xwayland` would also work**, and an earlier draft of this decision
+   said otherwise on a false premise. It claimed Debian's Xwayland uses "the
+   system Mesa that matches the system GPU drivers" and Nix's would not.
+   Measured, that is wrong twice over. nixGL does not use Debian's Mesa at all:
+   it exports `LIBGL_DRIVERS_PATH`, `GBM_BACKENDS_PATH` and `LD_LIBRARY_PATH`
+   pointing at Nix's `mesa-26.1.5`, which is what drives this machine's AMD
+   Phoenix3 today. And those variables are inherited, so Debian's Xwayland —
+   a child of the compositor — has already loaded
+   `…mesa-26.1.5/lib/dri/libdril_dri.so`. The Nix DRI driver is in use either
+   way; only the `libgbm.so.1` it links differs.
+
+   That inheritance is also why Nix's Xwayland would need no wrapper. The
+   distinction that actually governs nixGL in this project is **compositor
+   child versus systemd unit**: children (foot, lf, Xwayland, anything a keybind
+   spawns) inherit the wrapper's environment; units (quickshell,
+   hyprpolkitagent, and hyprlock via hypridle) do not, which is why exactly
+   those needed wrapping.
+
+   So the choice is genuinely free, and Debian's wins on cost alone: `xwayland`
+   is not a backports package, removing it was never a goal, and keeping it is
+   one `apt-mark` against a package swap plus a `compositorPath` entry. Nothing
+   about hardware or drivers argues either way.
 
    Getting this wrong breaks every X11 client: Chrome, VS Code, deskflow, and
    `apply-gtk-theme`'s `xrdb` step.
@@ -351,3 +365,24 @@ works from a fresh login.
 - **`/etc/pam.d/hyprlock` remains on the machine**, now unused, since hyprlock
   is told to use `common-auth` instead. Harmless, and removing a root-owned file
   to tidy up is not worth a root action.
+
+- **nixGL may be removable entirely, and that deserves its own spec.** Working
+  out decision 4 surfaced it. nixGL exists because Nix's Mesa has
+  `/run/opengl-driver/lib` compiled in as its driver search path and that
+  directory exists only on NixOS. The project's answer so far has been a
+  per-consumer wrapper, one per binary that does not inherit the environment —
+  four so far (`hyprland-nixgl`, `quickshell-nixgl`, `hyprpolkitagent-nixgl`,
+  and hyprlock's, added by this spec).
+
+  Creating `/run/opengl-driver` as a symlink to Nix's Mesa would satisfy the
+  compiled-in path directly and make every wrapper unnecessary, including for
+  systemd units, which are precisely the cases the inheritance trick does not
+  cover. It would also let the flake drop its `nixgl` input — which spec 3
+  already noted as "the tidier end state" when it found `start-hyprland`'s
+  `--force-nixgl`, and deliberately did not take.
+
+  Explicitly **not** in this spec's scope: it is GL plumbing, not backports
+  removal, it introduces a new root-owned path on a machine where this project
+  has worked hard to keep root's surface small, and it wants its own
+  verification. Recorded here so the next spec starts from the observation
+  rather than rediscovering it.
