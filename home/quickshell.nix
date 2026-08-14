@@ -97,10 +97,33 @@ in
 
   config.calango.quickshellConfig = quickshellConfig;
 
-  # So `qs ipc call ...` (shell.qml, set.sh's header comment, and the next
-  # spec's keybinds) is reachable from an interactive terminal, not just from
-  # inside the wrapped quickshell.service ExecStart above.
+  # So `qs ipc call ...` (shell.qml, set.sh's header comment, and hyprland.lua's
+  # keybinds) is reachable from an interactive terminal, not just from inside
+  # the wrapped quickshell.service ExecStart above.
   config.home.packages = [ pkgs.quickshell ];
+
+  # The stable path both halves of the IPC handshake resolve through, and the
+  # reason quickshell.service passes no -p.
+  #
+  # It used to run with `-p <store path>`, and home/session.nix exported the
+  # matching QS_CONFIG_PATH so the compositor's `qs ipc call` binds could find
+  # it. That handshake was correct only for as long as the store path did not
+  # change -- and it changes on any edit to the quickshell tree. The compositor
+  # exports the variable once, at session start; the service restarts on the new
+  # hash at the next `home-manager switch`. The two then name different paths,
+  # `qs ipc call` reports "No running instances for <old path>/shell.qml", and
+  # all fifteen IPC binds die silently until the user logs out. Measured, not
+  # theorised: a one-line change to theme-switcher/Theme.qml did exactly this.
+  #
+  # A name resolves that: quickshell reads ~/.config/quickshell/shell.qml with no
+  # arguments at all, so both the unit and every `qs` invocation go through this
+  # symlink, and a switch retargets it atomically for both at once. There is no
+  # environment variable left to go stale.
+  #
+  # Safe as a read-only store symlink because nothing writes here -- the shell's
+  # runtime state lives under ~/.local/state/quickshell (see home.file below).
+  # That was not true when spec 2 chose the store path, which is why it chose it.
+  config.xdg.configFile."quickshell".source = quickshellConfig;
 
   # The only thing Home Manager may own under the state directory. A .keep
   # forces the parent to be created as a real directory; anything more would
@@ -127,7 +150,10 @@ in
     };
     Service = {
       Type = "simple";
-      ExecStart = "${quickshell-nixgl} -p ${config.calango.quickshellConfig}";
+      # No -p. quickshell finds ~/.config/quickshell/shell.qml on its own, and
+      # that path is the xdg.configFile symlink below. See its comment for why
+      # a store path here was actively harmful.
+      ExecStart = "${quickshell-nixgl}";
       Environment = [
         "PATH=${lib.makeBinPath runtimeDeps}"
         # Without this, the theme switcher's `gsettings set

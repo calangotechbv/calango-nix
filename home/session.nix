@@ -53,17 +53,23 @@ let
   # Prepended, not appended: apt's Hyprland, hyprctl and hyprlock are all
   # still installed under /usr/bin, and an appended path would let them win.
   #
-  # QS_CONFIG_PATH looks removable and is not. `qs` with no -p/-c targets
-  # the "default" config, and quickshell.service (home/quickshell.nix) is
-  # launched with -p <store path>, so there is no "default" instance to
-  # find -- every one of the 15 `qs ipc call ...` binds in hyprland.lua
-  # (session menu, layout switcher, brightness keys, and every other panel
-  # toggle) would otherwise fail with "Could not find 'default' config
-  # directory or shell.qml in any valid config path." quickshell documents
-  # this variable as the environment fallback for --path, so exporting it
-  # here makes every `qs` the compositor spawns find the same running
-  # instance quickshell.service started with -p, with no edit to
-  # hyprland.lua and no coupling of hyprland.lua to quickshell's store path.
+  # No QS_CONFIG_PATH here any more, and its absence is deliberate.
+  #
+  # This wrapper used to export it, pointing at quickshell's store path, so
+  # that the 15 `qs ipc call ...` binds in hyprland.lua could reach the
+  # instance quickshell.service was started with under `-p <store path>`.
+  # That worked until the store path changed. The wrapper runs once, at
+  # session start, so the compositor holds whatever hash was current then;
+  # the service picks up the new one at the next `home-manager switch`. From
+  # that moment the binds ask for a path with nothing running and fail
+  # silently -- session menu, layout switcher, brightness keys, every panel
+  # toggle -- until the user logs out. One edit to a QML file was enough.
+  #
+  # quickshell.service now runs with no -p and reads
+  # ~/.config/quickshell/shell.qml, which home/quickshell.nix points at the
+  # store. A bare `qs` resolves the same symlink, so both ends agree by
+  # construction and a switch retargets them together. Nothing needs an
+  # environment variable, so nothing can hold a stale one.
   #
   # start-hyprland is a watchdog around the compositor binary, not an
   # alternative session manager to uwsm -- apt's own chain ran both
@@ -82,7 +88,6 @@ let
   # is unproven here and deliberately not taken now.
   hyprland-nixgl = pkgs.writeShellScriptBin "hyprland-nixgl" ''
     export PATH=${compositorPath}''${PATH:+:$PATH}
-    export QS_CONFIG_PATH=${config.calango.quickshellConfig}
     exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
       ${pkgs.hyprland}/bin/start-hyprland --no-nixgl -- \
       --config ${config.calango.hyprConfig}/hyprland.lua "$@"

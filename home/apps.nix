@@ -55,15 +55,20 @@ let
     fi
   '';
 
-  # QS_CONFIG_PATH is not optional. quickshell.service is launched with
-  # `-p <store path>`, so there is no "default" config for a bare `qs` to
-  # find, and `qs ipc call browser open` fails with "Could not find 'default'
-  # config directory". That is the defect that left every IPC bind dead from
-  # spec 2 until spec 3 found it. A shim the portal launches does not inherit
-  # the compositor's environment, so it cannot assume the variable is set.
+  # No QS_CONFIG_PATH. This shim is launched by xdg-desktop-portal and inherits
+  # nothing from the compositor, so it once had to name quickshell's config
+  # itself or `qs ipc call browser open` would fail with "Could not find
+  # 'default' config directory" -- the defect that left every IPC bind dead
+  # from spec 2 until spec 3 found it.
+  #
+  # It no longer has to. quickshell.service reads ~/.config/quickshell/shell.qml
+  # (see home/quickshell.nix), which IS the default a bare `qs` looks for, so
+  # this shim needs no more environment than any other caller. Naming the store
+  # path here would reintroduce the staleness that killed the compositor's
+  # binds: this wrapper is rebuilt on every switch, but a long-lived portal
+  # process that spawned before one would still hold the old path.
   calangoOpen = pkgs.writeShellScriptBin "calango-open" ''
     export PATH=${calangoOpenPath}''${PATH:+:$PATH}
-    export QS_CONFIG_PATH=${config.calango.quickshellConfig}
     exec ${binConfig}/calango-open "$@"
   '';
 
