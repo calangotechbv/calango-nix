@@ -46,10 +46,14 @@ let
     exec ${config.calango.hyprConfig}/idle-sleep.sh "$@"
   '';
 
-  # hyprlock's static configuration. The palette is deliberately not here: the
-  # quickshell theme switcher rewrites it on every theme change, so it lives in
-  # state and is pulled in by the `source` below. Same split as foot -- store
-  # config, state palette, store file naming the state file.
+  # hyprlock's static configuration -- and the split is lopsided, so read the
+  # sizes rather than assuming symmetry with foot. This store file carries
+  # exactly one thing: the `auth` block below. The ENTIRE visual configuration
+  # -- `general`, `animations`, `background`, `input-field` and two `label`
+  # blocks, 66 lines as measured -- lives in the state file named by the `source` at the bottom, because
+  # the quickshell theme switcher rewrites all of it on every theme change and
+  # the store is read-only. So: store file = the PAM service name, state file =
+  # everything the user actually sees.
   #
   # auth:pam:module is the whole reason this file exists. hyprlock's default
   # service is "hyprlock", whose /etc/pam.d/hyprlock is `auth include login`,
@@ -75,7 +79,27 @@ let
   # compositor's nixGL wrapper. Spec 3 found this the hard way: unwrapped, Nix's
   # hyprlock draws nothing and dies with
   #   CRIT: Hyprlock threw: EGL_EXT_platform_base not supported
-  # Named `hyprlock` so lock_cmd's `pidof hyprlock` guard still matches.
+  #
+  # The name matters, but not for the reason an earlier draft of this comment
+  # gave. It is NOT what makes lock_cmd's `pidof hyprlock` guard match: this
+  # script execs away immediately, so it is never a process pidof can see --
+  # the guard matches because pidof sees the final exec'd real hyprlock, which
+  # is named `hyprlock` whatever this wrapper is called. What the name does do
+  # is put `hyprlock` on ~/.nix-profile/bin, via writeShellScriptBin plus the
+  # home.packages entry below, so an interactive `hyprlock` and the session
+  # menu's Lock both reach the wrapped build rather than a bare one.
+  #
+  # And a bare `hyprlock`, with no --config, is a trap. Its default PAM
+  # service is "hyprlock" -> /etc/pam.d/hyprlock -> `auth include login` ->
+  # /etc/pam.d/login, which reaches pam_unix only through
+  # `@include common-auth`. @include is a Debian extension Nix's libpam does
+  # not implement (measured: zero of four @include lines attempted), so
+  # pam_unix never loads and EVERY password is rejected -- an unlock-proof
+  # lock screen. That is survivable today only because no hyprlock config
+  # exists at any XDG path, so hyprlock falls back to built-in defaults and
+  # there is nothing to make the bare invocation look supported. Do not create
+  # ~/.config/hypr/hyprlock.conf; the store config named by --config below is
+  # the only one that carries the working PAM service.
   hyprlock-nixgl = pkgs.writeShellScriptBin "hyprlock" ''
     exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${pkgs.hyprlock}/bin/hyprlock "$@"
   '';
@@ -100,10 +124,15 @@ in
   # four of these files at runtime.
   config.home.file.".local/state/hypr/.keep".text = "";
 
-  # Absolute store paths, never bare names, EXCEPT lock_cmd below -- see its
-  # comment. hypridle.service has no explicit PATH, so a bare command name
-  # resolves against the default unit PATH, which is exactly what lock_cmd
-  # is now deliberately relying on.
+  # Absolute store paths, never bare names -- no exceptions. hypridle.service
+  # has no explicit PATH, so a bare command name resolves against the default
+  # unit PATH and silently picks up whatever apt happens to have installed, or
+  # nothing at all.
+  #
+  # lock_cmd looks like a counterexample and is not: `pidof`, `hyprlock` and
+  # the config are all ${...} store paths there, and the one bare `hyprlock`
+  # token is pidof's ARGUMENT -- a process-name to match, not a command to
+  # resolve. Nothing in this file relies on the default unit PATH.
   config.services.hypridle = {
     enable = true;
     settings = {
@@ -141,19 +170,38 @@ in
 
   config.home.packages = [ hyprlock-nixgl ];
 
-  # hyprlock's `source` treats a missing target as an error, so this file must
-  # exist before the first lock. The theme switcher creates it on its first
-  # theme apply, which is not soon enough on a fresh machine.
+  # Seeds the state file hyprlockConfig's `source` names, for the fresh-machine
+  # case where the theme switcher has not yet written it.
   #
-  # Deliberately NOT suffixed with `|| true`, matching home/foot.nix's
-  # equivalent hook and for the same reason: if this cannot run, the screen
-  # will not lock, and a switch that fails loudly leaves the previous
-  # generation working.
+  # This is cosmetic, and the earlier version of this comment claimed otherwise
+  # on two counts, both measured false:
+  #
+  #   1. It is NOT true that a missing `source` target stops the screen
+  #      locking. hyprlock 0.9.5 against a config whose source target is absent
+  #      logs `source= globbing error: found no match`, then `Config has errors
+  #      ... Proceeding ignoring faulty entries`, and carries on. An error
+  #      MESSAGE, not a fatal error. Without this file the screen still locks,
+  #      just from hyprlock's built-in defaults.
+  #   2. It is NOT true that a loud failure here leaves the previous generation
+  #      working. The generated activate order is writeBoundary ->
+  #      linkGeneration -> desktopDatabase -> defaultBrowser -> footThemeColors
+  #      -> gtkAppearance -> hyprlockConf -> installPackages -> reloadSystemd.
+  #      This hook runs AFTER linkGeneration, so aborting here leaves config
+  #      symlinks already swapped, the profile not installed and systemd not
+  #      reloaded -- a half-applied state, which is worse than either end.
+  #
+  # The hook stays, because hyprlock's built-in defaults render no input field
+  # and an empty state file beats that. But it is `|| warnEcho`, not fatal:
+  # home/foot.nix's hook is fatal for a reason that genuinely holds there
+  # (foot's `include=` really does refuse to start on a missing target); that
+  # reason does not hold here, and a cosmetic step must not be able to abort a
+  # switch mid-linkGeneration.
   config.home.activation.hyprlockConf =
     lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       if [ ! -e ${lib.escapeShellArg "${hyprState}/hyprlock.conf"} ]; then
-        run mkdir -p ${lib.escapeShellArg hyprState}
-        run touch ${lib.escapeShellArg "${hyprState}/hyprlock.conf"}
+        run mkdir -p ${lib.escapeShellArg hyprState} \
+          && run touch ${lib.escapeShellArg "${hyprState}/hyprlock.conf"} \
+          || warnEcho "could not seed ${hyprState}/hyprlock.conf; the lock screen will render from hyprlock's built-in defaults until the theme switcher writes it"
       fi
     '';
 }

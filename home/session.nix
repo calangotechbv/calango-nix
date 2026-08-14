@@ -14,7 +14,15 @@ let
   # (unlike hypridle.service, which has none either -- see idleSleepPath in
   # home/hyprland.nix), so a missing entry here is a keybind or startup exec
   # that does nothing and logs nothing.
-  # xwayland is in this list to FIX something, not merely to replace apt's.
+  #
+  # xwayland is the one entry that is NOT there for the reason above. Nothing
+  # in hyprland.lua invokes `Xwayland` by name -- the compositor spawns it from
+  # its own code, on demand, when the first X11 client connects, and it finds
+  # it on the PATH it was started with, which is this one. So the list is
+  # "everything hyprland.lua invokes by bare name, plus Xwayland, which the
+  # compositor itself resolves the same way".
+  #
+  # And xwayland is in this list to FIX something, not merely to replace apt's.
   # Debian's Xwayland is a child of this nixGL-wrapped compositor, so it
   # inherits LIBGL_DRIVERS_PATH and GBM_BACKENDS_PATH pointing into Nix's mesa
   # while linking Debian's libgbm. Glamor needs a matching GBM/DRI pair, gets a
