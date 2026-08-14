@@ -76,6 +76,33 @@ in
     Install.WantedBy = [ "graphical-session.target" ];
   };
 
+  # Debian's /usr/lib/systemd/user/xdg-desktop-portal-hyprland.service names
+  # /usr/libexec/xdg-desktop-portal-hyprland absolutely, so removing apt's
+  # package takes the running implementation with it. A user unit of the same
+  # name shadows the system one.
+  #
+  # Nix's .portal file already wins on its own: ~/.nix-profile/share is first in
+  # the session's XDG_DATA_DIRS, so no XDG work is needed here.
+  #
+  # Type=dbus and BusName are copied from Debian's unit deliberately. The portal
+  # frontend activates this over D-Bus, and Type=simple would let systemd report
+  # it started before it owns the name.
+  config.systemd.user.services.xdg-desktop-portal-hyprland = {
+    Unit = {
+      Description = "Portal service (Hyprland implementation)";
+      PartOf = [ "graphical-session.target" ];
+      After = [ "graphical-session.target" ];
+      ConditionEnvironment = "WAYLAND_DISPLAY";
+    };
+    Service = {
+      Type = "dbus";
+      BusName = "org.freedesktop.impl.portal.desktop.hyprland";
+      ExecStart = "${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland";
+      Restart = "on-failure";
+      Slice = "session.slice";
+    };
+  };
+
   config.systemd.user.services.nm-secret-agent = {
     Unit = {
       Description = "NetworkManager secret agent (login keyring)";
