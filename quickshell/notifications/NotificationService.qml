@@ -163,7 +163,7 @@ Singleton {
     // way, or saving stays disabled forever on a fresh install.
     Process {
         id: historyLoadProc
-        command: ["sh", "-c", "cat $HOME/.config/quickshell/notification-history.json 2>/dev/null"]
+        command: ["sh", "-c", "cat ${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/notification-history.json 2>/dev/null"]
         running: true
         stdout: StdioCollector {
             onStreamFinished: {
@@ -208,7 +208,7 @@ Singleton {
                 };
             }));
             historySaveProc.command = ["sh", "-c",
-                'printf "%s" "$1" > "$HOME/.config/quickshell/notification-history.json"',
+                'printf "%s" "$1" > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/notification-history.json"',
                 "sh", payload];
             historySaveProc.running = true;
         }

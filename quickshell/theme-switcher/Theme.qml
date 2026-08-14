@@ -211,7 +211,7 @@ Singleton {
         // The wallpaper path is resolved in the shell rather than in QML so this
         // does not have to reach across into the wallpaper module for one string.
         hyprlockProc.command = ["sh", "-c",
-            'wp=$(cat "$HOME/.config/quickshell/wallpaper.conf" 2>/dev/null); ' +
+            'wp=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/wallpaper.conf" 2>/dev/null); ' +
             '[ -n "$wp" ] && [ -f "$wp" ] || wp=""; ' +
             'printf "%s" "$1" | sed "s|^    path = WALLPAPER_PATH$|    path = $wp|" ' +
             '> "$HOME/.config/hypr/hyprlock.conf"',
@@ -244,7 +244,7 @@ Singleton {
         if (index >= 0 && index < themes.length) {
             wallpaperMode = false;
             currentIndex = index;
-            saveProc.command = ["sh", "-c", 'printf "%s" "$1" > "$HOME/.config/quickshell/theme.conf"', "sh", String(index)];
+            saveProc.command = ["sh", "-c", 'printf "%s" "$1" > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/theme.conf"', "sh", String(index)];
             saveProc.running = true;
             applyTheme(themes[index]);
         }
@@ -254,7 +254,7 @@ Singleton {
         if (!wallpaperFeatureEnabled)
             return;
         wallpaperMode = true;
-        saveProc.command = ["sh", "-c", 'printf "%s" wallpaper > "$HOME/.config/quickshell/theme.conf"'];
+        saveProc.command = ["sh", "-c", 'printf "%s" wallpaper > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/theme.conf"'];
         saveProc.running = true;
         if (wallpaperTheme && wallpaperTheme.bgBase)
             applyTheme(wallpaperTheme);
@@ -267,7 +267,7 @@ Singleton {
         if (!wallpaperFeatureEnabled)
             return;
         if (img && img.length > 0) {
-            generateProc.command = ["sh", Quickshell.env("HOME") + "/.config/quickshell/theme-switcher/wallpaper-theme/set.sh", img];
+            generateProc.command = ["sh", Paths.sourceDir + "/theme-switcher/wallpaper-theme/set.sh", img];
             generateProc.running = true;
         }
         setWallpaperMode();
@@ -406,7 +406,7 @@ Singleton {
 
     Process {
         id: loadProc
-        command: ["sh", "-c", "cat $HOME/.config/quickshell/theme.conf 2>/dev/null"]
+        command: ["sh", "-c", "cat ${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/theme.conf 2>/dev/null"]
         running: false
         stdout: StdioCollector {
             onStreamFinished: {
@@ -441,7 +441,7 @@ Singleton {
     // wallpaper (and a fresh wallpaper-theme.json) repaints the shell instantly.
     FileView {
         id: wallpaperThemeFile
-        path: Quickshell.env("HOME") + "/.config/quickshell/theme-switcher/wallpaper-theme.json"
+        path: Paths.stateDir + "/theme-switcher/wallpaper-theme.json"
         watchChanges: true
 
         // True only for live, on-disk rewrites (set.sh executed) — not the initial
@@ -469,7 +469,7 @@ Singleton {
 
     FileView {
         id: themesFile
-        path: Quickshell.env("HOME") + "/.config/quickshell/theme-switcher/themes.json"
+        path: Paths.sourceDir + "/theme-switcher/themes.json"
         onTextChanged: {
             const raw = themesFile.text();
             if (!raw) return;

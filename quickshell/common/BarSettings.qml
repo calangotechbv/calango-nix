@@ -3,6 +3,7 @@ pragma Singleton
 import Quickshell
 import Quickshell.Io
 import QtQuick
+import "."
 
 // How the bar looks, kept outside Bar.qml so the settings panel can drive it
 // without reaching across the shell for the Bar instance.
@@ -71,7 +72,7 @@ Singleton {
     onTriggered: {
       if (saveProc.running) { saveDebounce.restart(); return; }
       saveProc.command = ["sh", "-c",
-                          'printf "%s" "$1" > "$HOME/.config/quickshell/bar.conf"',
+                          'printf "%s" "$1" > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/bar.conf"',
                           "sh",
                           "opacity=" + root.barOpacity
                           + "\npill-opacity=" + root.pillOpacity
@@ -91,7 +92,7 @@ Singleton {
   // apply the default before the file is parsed.
   FileView {
     id: pref
-    path: Quickshell.env("HOME") + "/.config/quickshell/bar.conf"
+    path: Paths.stateDir + "/bar.conf"
     printErrors: false
     onTextChanged: {
       for (const line of pref.text().split("\n")) {

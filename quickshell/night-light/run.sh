@@ -19,8 +19,8 @@
 # so tests/night-light.sh can fake all of it.
 set -u
 
-CONF=${NIGHT_LIGHT_CONF:-$HOME/.config/quickshell/night-light.conf}
-LOCATION=${NIGHT_LIGHT_LOCATION:-$HOME/.config/quickshell/night-light-location.conf}
+CONF=${NIGHT_LIGHT_CONF:-${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/night-light.conf}
+LOCATION=${NIGHT_LIGHT_LOCATION:-${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/night-light-location.conf}
 DRY_RUN=${NIGHT_LIGHT_DRY_RUN:-0}
 
 # Not a knob. auto's daytime half means "do not touch the screen", and 6500K is

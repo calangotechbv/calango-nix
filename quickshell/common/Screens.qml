@@ -3,6 +3,7 @@ pragma Singleton
 import Quickshell
 import Quickshell.Io
 import QtQuick
+import "."
 
 // Which display counts as "the main one".
 //
@@ -48,7 +49,7 @@ Singleton {
     if (!name || name === root.primaryName) return;
     root.primaryName = String(name);
     saveProc.command = ["sh", "-c",
-                        'printf "%s" "$1" > "$HOME/.config/quickshell/main-monitor.conf"',
+                        'printf "%s" "$1" > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/main-monitor.conf"',
                         "sh", root.primaryName];
     saveProc.running = true;
   }
@@ -60,7 +61,7 @@ Singleton {
   // is the state on every machine that has never chosen.
   FileView {
     id: pref
-    path: Quickshell.env("HOME") + "/.config/quickshell/main-monitor.conf"
+    path: Paths.stateDir + "/main-monitor.conf"
     printErrors: false
     onTextChanged: {
       const saved = pref.text().trim();

@@ -3,6 +3,7 @@ pragma Singleton
 import Quickshell
 import Quickshell.Io
 import QtQuick
+import "../common"
 
 // The night light's mode, and nothing else. gammastep itself is held by
 // hypr/systemd/night-light.service; this writes the conf that unit reads and
@@ -44,7 +45,7 @@ Singleton {
                           : "Night light on a schedule, but there is no location yet"
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property string confPath: root.home + "/.config/quickshell/night-light.conf"
+  readonly property string confPath: Paths.stateDir + "/night-light.conf"
 
   function setMode(m) {
     if (root.modes.indexOf(m) < 0) return;
@@ -105,7 +106,7 @@ Singleton {
   Process {
     id: locateProc
     running: false
-    command: [root.home + "/.config/quickshell/night-light/locate.sh"]
+    command: [Paths.sourceDir + "/night-light/locate.sh"]
   }
 
   // mode and temp. Two writers, and that is the documented design: this
@@ -162,7 +163,7 @@ Singleton {
   // notification: a new fix lands here, this fires, and the unit picks it up.
   FileView {
     id: location
-    path: root.home + "/.config/quickshell/night-light-location.conf"
+    path: Paths.stateDir + "/night-light-location.conf"
     printErrors: false
     watchChanges: true
 

@@ -3,6 +3,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "../common"
 
 Singleton {
   id: root
@@ -82,7 +83,7 @@ exec swww img "$1" --transition-type grow --transition-pos center --transition-d
   // Load saved wallpaper path
   FileView {
     id: configFile
-    path: Quickshell.env("HOME") + "/.config/quickshell/wallpaper.conf"
+    path: Paths.stateDir + "/wallpaper.conf"
     onTextChanged: {
       const saved = configFile.text().trim();
       if (saved !== "") root.currentWallpaper = saved;
@@ -131,7 +132,7 @@ exec swww img "$1" --transition-type grow --transition-pos center --transition-d
     }
 
     // Save to config
-    saveProcess.command = ["sh", "-c", 'printf "%s" "$1" > "$HOME/.config/quickshell/wallpaper.conf"', "sh", path];
+    saveProcess.command = ["sh", "-c", 'printf "%s" "$1" > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/wallpaper.conf"', "sh", path];
     saveProcess.running = true;
   }
 

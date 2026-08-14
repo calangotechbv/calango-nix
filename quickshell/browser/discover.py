@@ -106,7 +106,9 @@ def firefox_profiles(ini_text):
         out.append((path, parser[section].get("Name") or path))
     return out
 
-CONFIG_PATH = os.path.expanduser("~/.config/quickshell/browser.json")
+CONFIG_PATH = os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+    "quickshell", "browser.json")
 
 # our own handler, skipped so the picker cannot offer to open a url with
 # itself. browser-selector-vala's ids are here too: it may still be installed

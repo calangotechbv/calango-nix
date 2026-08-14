@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Bluetooth
 import Quickshell.Io
 import QtQuick
+import "../common"
 
 // BlueZ state, via Quickshell's built-in Bluetooth module rather than driving
 // bluetoothctl. Everything is event-driven over D-Bus, the same way
@@ -65,7 +66,7 @@ Singleton {
     if (!a) return;
     root.preferredAdapterId = String(a.adapterId);
     saveProc.command = ["sh", "-c",
-                        'printf "%s" "$1" > "$HOME/.config/quickshell/bluetooth-adapter.conf"',
+                        'printf "%s" "$1" > "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/bluetooth-adapter.conf"',
                         "sh", root.preferredAdapterId];
     saveProc.running = true;
   }
@@ -76,7 +77,7 @@ Singleton {
   // reload picks it up anyway.
   FileView {
     id: adapterPref
-    path: Quickshell.env("HOME") + "/.config/quickshell/bluetooth-adapter.conf"
+    path: Paths.stateDir + "/bluetooth-adapter.conf"
     onTextChanged: root.preferredAdapterId = adapterPref.text().trim()
   }
 

@@ -13,7 +13,7 @@
 # of accuracy is about one minute of sunset.
 set -u
 
-LOCATION=${NIGHT_LIGHT_LOCATION:-$HOME/.config/quickshell/night-light-location.conf}
+LOCATION=${NIGHT_LIGHT_LOCATION:-${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/night-light-location.conf}
 URL=${NIGHT_LIGHT_URL:-https://api.beacondb.net/v1/geolocate}
 
 report() {

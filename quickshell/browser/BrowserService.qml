@@ -29,14 +29,13 @@ Singleton {
   property bool loaded: false
 
   readonly property string configPath:
-    Quickshell.env("HOME") + "/.config/quickshell/browser.json"
+    Paths.stateDir + "/browser.json"
 
   function reload() { discoverProc.running = true; }
 
   Process {
     id: discoverProc
-    command: ["python3", Quickshell.env("HOME")
-                         + "/.config/quickshell/browser/discover.py"]
+    command: ["python3", Paths.sourceDir + "/browser/discover.py"]
     running: true
     stdout: StdioCollector {
       onStreamFinished: {
