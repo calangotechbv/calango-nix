@@ -74,9 +74,41 @@
           };
         };
 
+      # nixpkgs patches pam_unix's privileged helper to /run/wrappers/bin,
+      # NixOS's setuid-wrapper directory, because the store copy cannot carry
+      # the setgid bit -- see the comment at pkgs/by-name/li/linux-pam/package.nix.
+      # That directory exists on no Debian machine, so pam_unix could never
+      # verify a password here: strace shows
+      #   execve("/run/wrappers/bin/unix_chkpwd", ...) = -1 ENOENT
+      # against Debian's /usr/sbin/unix_chkpwd, which is -rwxr-sr-x root shadow
+      # and is the right target. With this patch the same trace reads
+      #   execve("/usr/sbin/unix_chkpwd", ...) = 0
+      #
+      # Third instance of the same failure as debianPolkit above and nixGL
+      # before it. Scoped to hyprlock for the same reason: pam is a dependency
+      # of systemd, and replacing it set-wide rebuilds most of the closure.
+      # Measured -- scoped, this is 2 derivations, and `systemd` keeps its
+      # stock store path.
+      #
+      # --replace-fail matches nixpkgs' own substituted output, so an upstream
+      # change to that line fails the build rather than silently restoring the
+      # NixOS path.
+      debianPam = final: prev:
+        let
+          patched = prev.pam.overrideAttrs (old: {
+            postPatch = (old.postPatch or "") + ''
+              substituteInPlace modules/module-meson.build \
+                --replace-fail "'/run/wrappers/bin/unix_chkpwd'" "'/usr/sbin/unix_chkpwd'"
+            '';
+          });
+        in
+        {
+          hyprlock = prev.hyprlock.override { pam = patched; };
+        };
+
       pkgs = import nixpkgs {
         inherit system;
-        overlays = [ nixgl.overlays.default debianPolkit ];
+        overlays = [ nixgl.overlays.default debianPolkit debianPam ];
       };
 
       mkHome = username: hostname: home-manager.lib.homeManagerConfiguration {
