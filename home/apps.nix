@@ -128,8 +128,17 @@ in
 
   # Without this the entry above is present but not discoverable, so the
   # default-browser hook below would set a handler nothing can resolve.
+  #
+  # entryAfter "linkGeneration", not "writeBoundary": linkGeneration is what
+  # actually creates ~/.local/share/applications/eu.calangotech.CalangoOpen.desktop
+  # (the xdg.dataFile above), and Home Manager's generated activate sorts it
+  # dead last -- after writeBoundary, gtkAppearance, installPackages, and this
+  # hook's old position. On a first switch, running this before linkGeneration
+  # would rebuild mimeinfo.cache from a directory that does not yet contain the
+  # entry, silently omitting CalangoOpen with nothing on stderr, and the
+  # defaultBrowser hook below would then fail to resolve it too.
   config.home.activation.desktopDatabase =
-    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    lib.hm.dag.entryAfter [ "linkGeneration" ] ''
       run ${pkgs.desktop-file-utils}/bin/update-desktop-database \
         ${lib.escapeShellArg "${config.xdg.dataHome}/applications"} \
         || echo "update-desktop-database failed; the browser handler may not resolve" >&2

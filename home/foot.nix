@@ -59,9 +59,13 @@ in
 
   config.xdg.configFile."foot".source = footConfig;
 
-  # A .keep forces the parent to be created as a real directory. The palette
-  # file itself must NOT be a home.file: that would make it a store symlink,
-  # and Theme.qml writes it with `printf >`, which fails on a read-only store
+  # A .keep forces the parent to be created as a real directory when
+  # linkGeneration runs -- but on a first switch footThemeColors below runs
+  # first (entryAfter "writeBoundary", well before linkGeneration) and its own
+  # `mkdir -p` already creates ~/.local/state/foot, so in practice this .keep
+  # is redundant on that path. It stays anyway: the palette file itself must
+  # NOT be a home.file, because that would make it a store symlink, and
+  # Theme.qml writes it with `printf >`, which fails on a read-only store
   # path. This is the distinction spec 2's .keep pattern does not carry --
   # nothing ever writes to a .keep.
   config.home.file.".local/state/foot/.keep".text = "";
