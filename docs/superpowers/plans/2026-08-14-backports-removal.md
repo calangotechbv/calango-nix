@@ -486,21 +486,42 @@ E=$(sed -n 's/^ExecStart=//p' "$OUT/home-files/.config/systemd/user/xdg-desktop-
 test -x "$E" && echo "ok $E" || echo "MISSING $E"
 ```
 
-- [ ] **Step 4: Check whether it needs nixGL**
+- [ ] **Step 4: Gather the nixGL evidence — but do NOT add the wrapper**
 
 Spec 1 established that a systemd unit runs exactly what `ExecStart` names, so a
-Qt/GL binary aborts on first draw unless wrapped. Determine whether this one
-draws:
+Qt/GL binary aborts on first draw unless wrapped. Whether this one draws needs
+evidence rather than a guess.
+
+**`ldd` on the main binary does not answer this.** Qt loads its platform and GL
+plugins with `dlopen`, so they never appear in `ldd` output. Measured: `ldd` finds
+zero GL libraries in `quickshell` too, and quickshell demonstrably needs the
+wrapper — it reaches "active (running)" and then aborts with `status=6/ABRT` the
+moment the bar tries to map. Any check built on `ldd` here is a false negative.
+
+Compare closures instead, and look at what the portal spawns:
 
 ```bash
-ldd "$E" | grep -icE 'libEGL|libGL\.so|Qt6Gui|libwayland-egl'
+P=$(sed -n 's/^ExecStart=//p' "$OUT/home-files/.config/systemd/user/xdg-desktop-portal-hyprland.service")
+PKG=$(echo "$P" | sed 's|/libexec/.*||')
+for pat in qtbase qtwayland mesa libglvnd; do
+  printf '%-12s portal=%s quickshell=%s\n' "$pat" \
+    "$(sg nix-users -c "nix path-info --recursive $PKG" 2>/dev/null | grep -c $pat)" \
+    "$(sg nix-users -c 'nix path-info --recursive /nix/store/ij0frm7iyv9m71y99gvz79sy22qvg7x5-quickshell-0.3.0' 2>/dev/null | grep -c $pat)"
+done
+ls "$PKG/bin"
 ```
 
-Report the result in your task report either way. A non-zero count means the
-portal links a GL or Qt GUI stack and the unit probably needs the same
-`nixGLIntel` wrapper `quickshell.service` and `hyprpolkitagent` use; zero means
-it does not. **Do not add the wrapper speculatively** — Task 5 starts the unit
-and reads its journal, which settles it with evidence.
+Recorded when the plan was written, so you have something to compare against: the
+two closures are identical in shape — `qtbase 2, qtwayland 1, mesa 1, libglvnd 1`
+— and the portal package ships `bin/hyprland-share-picker`, a Qt GUI it launches
+for the screen-share dialog. A child of a systemd unit inherits that unit's
+environment, so an unwrapped portal would hand the picker no GL setup either.
+
+The evidence therefore points at needing the wrapper. **Do not add it anyway.**
+Every one of the four wrappers in this project was established by a crash or a
+runtime failure, never by analogy, and "the closure looks similar" is analogy.
+Task 5 starts the unit and exercises screen sharing, which settles it with the
+only evidence that counts. Report your findings so Task 5 knows what to expect.
 
 - [ ] **Step 5: Commit**
 
@@ -600,11 +621,31 @@ changes at a fresh login — the running one was started by the old compositor �
 so if it is still `/usr/bin/Xwayland`, that is expected until Task 7's reboot,
 and should be recorded rather than treated as a failure.
 
-- [ ] **Step 6: Exercise the portal end to end**
+- [ ] **Step 6: Exercise the portal end to end, including the part that draws**
 
-Ask the user to click a link from a non-Nix application, or run `xdg-open
-https://example.invalid/`. Expected: the browser picker appears. That path goes
-through the portal, so it tests the new unit rather than just its status line.
+Two different paths, and the second is the one Task 4 could not settle:
+
+```bash
+xdg-open https://example.invalid/
+```
+
+Expected: the browser picker appears. That goes through the portal, so it tests
+the unit rather than its status line.
+
+Then ask the user to start a screen share — any application that offers one, or
+a browser's "share your screen". Expected: Hyprland's share-picker window
+appears and a source can be chosen.
+
+**This is the check that decides the nixGL question.** The picker is a Qt GUI the
+portal spawns, so it inherits the unit's environment. If it fails to draw — or
+the portal logs `status=6/ABRT` in `journalctl --user -u
+xdg-desktop-portal-hyprland` — the unit needs its `ExecStart` wrapped in
+`nixGLIntel`, exactly as `quickshell.service` and `hyprpolkitagent` are. That is
+a one-line change to `home/services.nix`; make it, rebuild, and re-test before
+continuing to Task 6.
+
+If screen sharing is not something the user needs, record that it was untested
+rather than recording it as passing.
 
 - [ ] **Step 7: Start the results document**
 
