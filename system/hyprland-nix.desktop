@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Hyprland (Nix)
+Comment=calango-nix
+Type=Application
+DesktopNames=Hyprland
+Exec=/bin/sh -lc 'export XDG_DATA_DIRS="$HOME/.nix-profile/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"; exec "$HOME/.nix-profile/bin/uwsm" start -e -D Hyprland hyprland-nixgl.desktop'
