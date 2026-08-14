@@ -101,14 +101,107 @@ Debian's is currently giving X11 clients software rendering. Decision 4.
 **Removed, and correct to remove:** `calango-desktop-deps`, the old
 repository's dependency metapackage. Nothing in calango-nix references it.
 
-**NOT removed, and this is the important part.** `libxkbcommon0`,
-`libxkbcommon-x11-0` and `libcpptrace1` came from backports but are
-reverse-dependencies of `google-chrome-stable`, `deskflow` and `code`. apt
-leaves them installed, and removing the *source* does not downgrade anything —
-packages stay at the version already installed. So "nothing from backports
-remains on the machine" is not achievable without downgrading shared libraries
-that three unrelated applications link against. This spec does not attempt it;
-see Non-goals.
+### The load-bearing file the removal exposes
+
+`dpkg -S` puts **both** `/usr/share/wayland-sessions/hyprland.desktop` and
+`/usr/share/wayland-sessions/hyprland-uwsm.desktop` in apt's `hyprland`
+package, so the removal in section 4 deletes them. greetd's greeter is
+launched as:
+
+```
+tuigreet --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions ...
+```
+
+— those two directories and nothing else. So after the removal the **only**
+session entry on the machine is:
+
+```
+/usr/local/share/wayland-sessions/hyprland-nix.desktop
+```
+
+It is root-owned, **not apt-managed** (`dpkg -S` finds no owner), and was
+created by hand during spec 1. Its `Exec` runs
+`$HOME/.nix-profile/bin/uwsm start -e -D Hyprland hyprland-nixgl.desktop`.
+
+This makes it load-bearing in a way nothing has written down: if that file
+were ever missing, or its `Exec` broken, the reboot in the verification
+section would reach a greeter with **no session to launch** — on a machine
+whose only fallback lock screen has just been removed. It is not covered by
+any Nix module (`home/session.nix` builds `hyprland-nixgl.desktop` into
+`~/.nix-profile/share/wayland-sessions`, which greetd does not read), so a
+Home Manager rollback would not restore it either. Its existence is checked
+before the removal, not after.
+
+**NOT removed, and this is the important part. There are six survivors, not
+three.** Measured by subtracting the simulation's 26 removals from
+`apt list --installed | grep backports`:
+
+```
+libcpptrace1  libxkbcommon0  libxkbcommon-x11-0  quickshell  uwsm  ydotool
+```
+
+They survive for two different reasons, and the difference matters:
+
+- `libxkbcommon0`, `libxkbcommon-x11-0` and `libcpptrace1` are
+  reverse-dependencies of `google-chrome-stable`, `deskflow` and `code`, so
+  `--autoremove` cannot take them.
+- `quickshell`, `uwsm` and `ydotool` are marked **manual**, so `--autoremove`
+  leaves them regardless of whether anything needs them. `quickshell` and
+  `uwsm` are shadowed by Nix copies on `~/.nix-profile/bin`, so apt's are
+  inert. **`ydotool` is not** — there is no Nix `ydotool` in this
+  configuration; `home/default.nix` defers it to spec 3 as `dev` tier and
+  nothing at runtime invokes it. It stays as an apt package with no Nix
+  counterpart, and it is the one survivor that is neither frozen-for-a-
+  dependant nor shadowed. Removing it is out of scope here; recorded so a
+  later spec does not rediscover it.
+
+Removing the *source* does not downgrade anything — packages stay at the
+version already installed. So "nothing from backports remains on the machine"
+is not achievable without downgrading shared libraries that three unrelated
+applications link against. This spec does not attempt it; see Non-goals.
+
+**A live dependency on Debian's `uwsm`, which five specs have not surfaced.**
+The running session contains:
+
+```
+/usr/bin/python3 /usr/bin/uwsm aux waitpid 65275
+```
+
+That is **Debian's** uwsm, executing right now, even though the session was
+launched through `$HOME/.nix-profile/bin/uwsm` (see
+`/usr/local/share/wayland-sessions/hyprland-nix.desktop`) and PID 65275 it is
+waiting on is Nix's `libexec/uwsm/signal-handler.sh`. Traced to its cause:
+
+| unit | `FragmentPath` |
+|---|---|
+| `wayland-session-bindpid@65275.service` | `/usr/lib/systemd/user/wayland-session-bindpid@.service` |
+| `wayland-wm@hyprland-nixgl.desktop.service` | `/usr/lib/systemd/user/wayland-wm@.service` |
+| `wayland-wm-env@hyprland-nixgl.desktop.service` | `/usr/lib/systemd/user/wayland-wm-env@.service` |
+| `wayland-session@hyprland-nixgl.desktop.target` | `/usr/lib/systemd/user/wayland-session@.target` |
+| `wayland-session-envelope@hyprland-nixgl.desktop.target` | `/usr/lib/systemd/user/wayland-session-envelope@.target` |
+
+`dpkg -S` puts every one of those in apt's `uwsm` package. **The entire uwsm
+session scaffolding is Debian's, not Nix's.** Nix's `uwsm-0.26.4` does ship
+the same templates in `share/systemd/user/`, and
+`~/.nix-profile/share/systemd/user` does exist — but it is **not** on
+`systemctl --user show -p UnitPath`, so systemd never looks there. Nix's uwsm
+asks for a unit by name and Debian's template is what answers.
+
+Most of those templates then re-resolve to Nix at runtime, because they name
+`uwsm` by bare word and `~/.nix-profile/bin` is first on the session PATH —
+`wayland-wm@.service`'s live `ExecStart` is the `/nix/store/...-uwsm-0.26.4`
+binary. `wayland-session-bindpid@.service` is the exception: its `ExecStart`
+hardcodes `/usr/bin/uwsm` inside a `sh -c` fallback, which is the process
+above. And that unit carries `OnSuccess=wayland-session-shutdown.target`, so
+it is not incidental — it is what binds the session's lifetime to the
+compositor.
+
+Nothing in this spec removes apt's `uwsm`: it is marked manual, so
+`--autoremove` leaves it, and the session is therefore safe. That is luck
+rather than design. The recorded assumption that "the Nix copy shadows apt's,
+therefore apt's is inert" is **false for `uwsm`**, and any future spec that
+proposes removing it must first move these templates onto a directory systemd
+actually searches. Recorded here so that spec starts from the measurement.
 
 ## Decisions
 
@@ -194,6 +287,15 @@ see Non-goals.
   satisfy a bookkeeping definition of "no backports packages" would risk real
   breakage for no functional gain. They stay, frozen, and this spec's results
   document names them.
+- **Removing apt's `quickshell`, `uwsm` or `ydotool`**, the other three
+  backports survivors. All three are marked manual, so `--autoremove` leaves
+  them and this spec does not have to argue about them. `quickshell` is inert
+  (Nix's wins on PATH). `uwsm` is **not** inert — it supplies every
+  `wayland-session*` systemd user template the live session runs on, per the
+  inventory above, so removing it needs its own spec. `ydotool` has no Nix
+  counterpart at all and nothing in this configuration invokes it;
+  `home/default.nix` defers it as `dev` tier. Six survivors, not three, and
+  the results document should name all six.
 - **Patching `@include` support into nixpkgs' linux-pam.** Decision 2.
 - **Removing apt's `xdg-desktop-portal` or `xdg-desktop-portal-gtk`.** Both come
   from trixie, not backports, and the GTK portal is what serves file choosers.
@@ -289,11 +391,33 @@ This is the one part of the port that can be verified *before* any apt change an
 inherited environment and running `glxinfo -B` against it — which is how the
 defect was found.
 
-`xdg-desktop-portal-hyprland` gets a `systemd.user.services` entry with the
-Nix binary's absolute path, shadowing `/usr/lib/systemd/user/`'s. It needs the
-same treatment `hyprpolkitagent` got in spec 1 if it draws: check whether it
-needs the nixGL wrapper before assuming it does not. Its `.portal` file is
-already discoverable, so no `XDG_DATA_DIRS` work is needed.
+`xdg-desktop-portal-hyprland` gets a `systemd.user.services` entry shadowing
+`/usr/lib/systemd/user/`'s. Its `.portal` file is already discoverable, so no
+`XDG_DATA_DIRS` work is needed.
+
+**It does need the nixGL wrapper, and this was settled by linkage, not by
+analogy.** `libexec/xdg-desktop-portal-hyprland` is a makeWrapper shim whose
+only job is to prepend the package's own `bin` to `PATH` (that is how the
+portal finds `hyprland-share-picker`); the real binary is
+`libexec/.xdg-desktop-portal-hyprland-wrapped`, and plain `ldd` on *that* shows
+
+```
+libgbm.so.1 => /nix/store/…-mesa-libgbm-26.0.3/lib/libgbm.so.1
+```
+
+a direct, non-`dlopen` dependency — so the "`ldd` is a false negative for Qt's
+`dlopen`'d plugins" caveat does not apply. Meanwhile
+`systemctl --user show-environment` contains none of `GBM_BACKENDS_PATH`,
+`LIBGL_DRIVERS_PATH`, `__EGL_VENDOR_LIBRARY_FILENAMES` or `LD_LIBRARY_PATH`,
+so Nix's libgbm would fall back to its compiled-in `/run/opengl-driver/lib/gbm`
+— the same NixOS-only path nixGL exists for, and one Debian does not have.
+
+`ExecStart` is therefore a nixGL wrapper around the shim, in the shape
+`quickshell.service` and `hyprpolkitagent` already use. Wrapping *outside* the
+shim keeps the shim's `PATH` work intact and hands the share-picker the GL
+environment too, since it is a child of this unit. This is not a "try it and
+see" — the switch replaces the live Debian portal with this one, so there is no
+later moment of controlled choice.
 
 ### 4. The apt removal
 
@@ -348,8 +472,13 @@ The order is the point: each step must pass before the irreversible one.
 - The lock screen still unlocks — the fallback is gone now, so this is the
   moment the earlier test pays for itself.
 - X11 clients, screen sharing and the browser picker all still work.
-- `apt list --installed | grep backports` lists only the three shared libraries
-  named in the inventory.
+- `apt list --installed | grep backports` lists exactly the **six** survivors
+  named in the inventory — `libcpptrace1`, `libxkbcommon0`,
+  `libxkbcommon-x11-0`, `quickshell`, `uwsm`, `ydotool` — and nothing else.
+- `/usr/local/share/wayland-sessions/hyprland-nix.desktop` still exists. It is
+  now the only session entry greetd can see, and the reboot below depends on
+  it. This is checked *before* the removal too, since afterwards there is
+  nothing to restore it from.
 - Zero failed units and no `command not found` in the journal after real use.
 
 **After a reboot**, because the last four specs each found something only a cold
@@ -360,11 +489,19 @@ works from a fresh login.
 
 - **`hyprpaper` is being removed as unused.** Verified only by knowing the
   session uses `swaybg`. If something references it, the removal surfaces it.
-- **The three frozen backports libraries** receive no further updates. Worth a
-  note in the results document so a future security update is not a surprise.
-- **`xdg-desktop-portal-hyprland` and nixGL** is unresolved until tested. Spec 1
-  found that a systemd unit runs exactly what `ExecStart` names, so an unwrapped
-  Qt/GL binary aborts on first draw. The portal may not draw at all.
+- **All six surviving backports packages** receive no further updates once the
+  source is gone — the three frozen libraries and `quickshell`, `uwsm`,
+  `ydotool` alike. Worth a note in the results document so a future security
+  update is not a surprise.
+- **`ydotool` is a survivor with no Nix counterpart and no known consumer.** It
+  is out of scope here. Either give it a Nix build or remove it; leaving an
+  unowned backports package is the state this project has been trying to leave.
+- ~~**`xdg-desktop-portal-hyprland` and nixGL** is unresolved until tested.~~
+  **Resolved before the switch**, by a linkage check rather than by running it:
+  the real binary links `libgbm.so.1` directly and the user manager's
+  environment carries none of the driver variables. See section 3. It is
+  wrapped. Screen sharing still wants exercising, but as a functional check,
+  not as the thing that decides the wrapper.
 - **`/etc/pam.d/hyprlock` remains on the machine**, now unused, since hyprlock
   is told to use `common-auth` instead. Harmless, and removing a root-owned file
   to tidy up is not worth a root action.
