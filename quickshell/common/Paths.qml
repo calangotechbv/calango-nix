@@ -25,4 +25,15 @@ Singleton {
   // write where the compositor never reads.
   readonly property string hyprStateDir:
     Quickshell.env("HOME") + "/.local/state/hypr"
+
+  // foot's state, not quickshell's. home/foot.nix bakes this same path into
+  // foot.ini's `include=` at build time, and foot treats a missing include
+  // target as fatal.
+  //
+  // Deliberately does NOT honour XDG_STATE_HOME, for the same reason
+  // hyprStateDir above does not: the reader's path is fixed at build time
+  // with no way to consult an environment variable, so honouring the variable
+  // here would make quickshell write where foot never reads.
+  readonly property string footStateDir:
+    Quickshell.env("HOME") + "/.local/state/foot"
 }

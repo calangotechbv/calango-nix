@@ -18,13 +18,6 @@ Singleton {
     property bool wallpaperFeatureEnabled: true
     property bool wallpaperMode: false
     property var wallpaperTheme: ({})
-    onPreviewIndexChanged: {
-        if (previewIndex >= 0 && previewIndex < themes.length) {
-            applyKittyTheme(themes[previewIndex]);
-        } else {
-            applyKittyTheme(current);
-        }
-    }
     readonly property var current: {
         if (previewIndex >= 0 && previewIndex < themes.length)
             return themes[previewIndex];
@@ -233,7 +226,6 @@ Singleton {
     }
 
     function applyTheme(t) {
-        applyKittyTheme(t);
         applyFootTheme(t);
         applySystemColorScheme(!isLightColor(t.bgBase));
         applyHyprlandBorders(t);
@@ -271,72 +263,6 @@ Singleton {
             generateProc.running = true;
         }
         setWallpaperMode();
-    }
-
-    function applyKittyTheme(t) {
-        var colorsConf = [
-            "foreground " + t.textPrimary,
-            "background " + t.bgBase,
-            "cursor " + t.accentPrimary,
-            "cursor_text_color " + t.bgBase,
-            "selection_foreground " + t.textPrimary,
-            "selection_background " + t.bgSelected,
-            "active_tab_foreground " + t.textPrimary,
-            "active_tab_background " + t.bgSurface,
-            "inactive_tab_foreground " + t.textMuted,
-            "inactive_tab_background " + t.bgBase,
-            "color0 " + t.bgSurface,
-            "color1 " + t.accentRed,
-            "color2 " + t.accentGreen,
-            "color3 " + t.accentOrange,
-            "color4 " + t.accentPrimary,
-            "color5 " + t.accentPrimary,
-            "color6 " + t.accentCyan,
-            "color7 " + t.textSecondary,
-            "color8 " + t.textMuted,
-            "color9 " + t.accentRed,
-            "color10 " + t.accentGreen,
-            "color11 " + t.accentOrange,
-            "color12 " + t.accentPrimary,
-            "color13 " + t.accentPrimary,
-            "color14 " + t.accentCyan,
-            "color15 " + t.textPrimary
-        ].join("\n");
-        var colorsArgs = [
-            "foreground=" + t.textPrimary,
-            "background=" + t.bgBase,
-            "cursor=" + t.accentPrimary,
-            "cursor_text_color=" + t.bgBase,
-            "selection_foreground=" + t.textPrimary,
-            "selection_background=" + t.bgSelected,
-            "active_tab_foreground=" + t.textPrimary,
-            "active_tab_background=" + t.bgSurface,
-            "inactive_tab_foreground=" + t.textMuted,
-            "inactive_tab_background=" + t.bgBase,
-            "color0=" + t.bgSurface,
-            "color1=" + t.accentRed,
-            "color2=" + t.accentGreen,
-            "color3=" + t.accentOrange,
-            "color4=" + t.accentPrimary,
-            "color5=" + t.accentPrimary,
-            "color6=" + t.accentCyan,
-            "color7=" + t.textSecondary,
-            "color8=" + t.textMuted,
-            "color9=" + t.accentRed,
-            "color10=" + t.accentGreen,
-            "color11=" + t.accentOrange,
-            "color12=" + t.accentPrimary,
-            "color13=" + t.accentPrimary,
-            "color14=" + t.accentCyan,
-            "color15=" + t.textPrimary
-        ].join(" ");
-        kittyProc.command = ["sh", "-c",
-            "printf '%s\\n' '" + colorsConf + "' > $HOME/.config/kitty/theme-colors.conf; " +
-            "for sock in /tmp/kitty-*; do " +
-            "[ -S \"$sock\" ] && kitty @ --to \"unix:$sock\" set-colors --all --configured " + colorsArgs + "; " +
-            "done"
-        ];
-        kittyProc.running = true;
     }
 
     // The same palette in foot's spelling, written to foot/theme-colors.ini,
@@ -391,14 +317,13 @@ Singleton {
             // palette written above on its own.
         ].join("\n");
         footProc.command = ["sh", "-c",
-            "printf '%s\\n' '" + footConf + "' > $HOME/.config/foot/theme-colors.ini"
+            "printf '%s\\n' '" + footConf + "' > '" + Paths.footStateDir + "/theme-colors.ini'"
         ];
         footProc.running = true;
     }
 
     Process { id: saveProc; running: false }
     Process { id: generateProc; running: false }
-    Process { id: kittyProc; running: false }
     Process { id: footProc; running: false }
     Process { id: colorSchemeProc; running: false }
     Process { id: hyprlandProc; running: false }
