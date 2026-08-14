@@ -101,6 +101,22 @@ in
 {
   config.home.packages = [ calangoOpen codeShim ];
 
+  # uwsm sources this from `uwsm aux prepare-env` before the compositor
+  # starts. There is no flag for its location; it must be at this path.
+  config.xdg.configFile."uwsm/env".source = ./../uwsm/env;
+
+  # Individual files, NOT the trees. ~/.config/autostart holds five entries
+  # this repository does not own (1password, bitwarden, deskflow,
+  # syncthingtray, displaycal) and pipewire-pulse.conf.d is a drop-in
+  # directory distribution packages also write into. Linking either directory
+  # would replace it with a symlink and hide everything already there.
+  config.xdg.configFile."autostart/im-launch.desktop".source =
+    ./../autostart/im-launch.desktop;
+  config.xdg.configFile."autostart/org.kde.xwaylandvideobridge.desktop".source =
+    ./../autostart/org.kde.xwaylandvideobridge.desktop;
+  config.xdg.configFile."pipewire/pipewire-pulse.conf.d/20-block-source-volume.conf".source =
+    ./../pipewire/20-block-source-volume.conf;
+
   # ~/.local/share/applications, not the profile's share tree. Spec 1 proved
   # XDG_DATA_DIRS works for wayland-sessions, but MIME handling needs a
   # mimeinfo.cache in the same directory as the entry, and Home Manager builds

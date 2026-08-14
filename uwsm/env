@@ -2,47 +2,15 @@
 #
 # Sourced by `uwsm aux prepare-env` (via /usr/libexec/uwsm/prepare-env.sh)
 # before the compositor starts. systemd does not read this file and neither does
-# your shell; ../install.sh symlinks this directory to ~/.config/uwsm, which is
-# where uwsm looks. POSIX sh, not bash -- prepare-env.sh runs /bin/sh.
+# your shell; home/apps.nix places this file at ~/.config/uwsm/env via
+# xdg.configFile, which is where uwsm looks. POSIX sh, not bash -- prepare-env.sh
+# runs /bin/sh.
 #
-# ~/.local/bin on PATH.
-#
-# install.sh puts calango-open and apply-gtk-theme there, and two things must
-# find them: programs Hyprland spawns directly (a terminal from SUPER+Q), and
-# xdg-desktop-portal, which launches the browser handler for every flatpak link.
-# The portal reads the systemd user manager's environment, and uwsm fills that
-# from this file's result -- before either consumer exists. So one place serves
-# both, which is what the block this replaced in hyprland.lua was reaching for.
-#
-# Why it is not in hyprland.lua any more: `uwsm finalize` exports
-# WAYLAND_DISPLAY, DISPLAY and the names in UWSM_FINALIZE_VARNAMES, and PATH is
-# not one of them. A PATH set inside the compositor would reach a terminal and
-# never reach the portal -- the exact split this file exists to close. (The
-# cursor variables hyprland.lua still sets with hl.env ARE covered: the plugin
-# at /usr/share/uwsm/plugins/hyprland.sh names XCURSOR_THEME, XCURSOR_SIZE and
-# HYPRCURSOR_SIZE among six. Verified present on Fedora 44 too.)
-#
-# uwsm also sources /etc/profile and ~/.profile, and Debian's ~/.profile already
-# adds this directory. Fedora ships no ~/.profile at all, and the ~/.local/bin it
-# does add sits in ~/.bashrc, which uwsm never reads -- so on that machine this
-# file is the only thing that does the job. The guard below is what lets one
-# file serve both: prepend only when missing, so Debian collects no duplicate.
-#
-# Note the profile is NOT loaded by the `-e` in the session entry's Exec line.
-# That flag is desktop_names_exclusive -- "use the names from -D and discard
-# other sources". Profile loading is gated on __LOAD_PROFILE__, which
-# prepare-env.sh takes from have_env_login: true when `uwsm start` saved a login
-# environment, which is what a display manager launching it produces. Read in
-# the installed source on both machines, 0.26.4 and 0.26.1.
-#
-# The colon padding makes the match exact -- without it, a PATH holding
-# ~/.local/binx would satisfy the test. The quotes around "$HOME/.local/bin"
-# keep it a literal, so a $HOME containing a glob character cannot turn the
-# pattern into a wildcard.
-case ":$PATH:" in
-  *:"$HOME/.local/bin":*) ;;
-  *) PATH="$HOME/.local/bin:$PATH"; export PATH ;;
-esac
+# The PATH block that used to be here put ~/.local/bin on the systemd user
+# manager's environment, so that xdg-desktop-portal could resolve the browser
+# handler's `Exec=calango-open`. Both .desktop entries now carry absolute
+# store paths (home/apps.nix) and the shims live in ~/.nix-profile/bin, so
+# there is nothing left for it to serve.
 
 # Do not point GTK and Qt at an ibus that is not running.
 #
