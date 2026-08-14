@@ -19,6 +19,35 @@ let
     output_path = '~/.local/state/quickshell/theme-switcher/wallpaper-theme.json'
     EOF
   '';
+
+  # Everything the QML invokes by bare name. A systemd user unit gets a
+  # minimal PATH and nothing on this machine adds the Nix profile to it, so
+  # each of these is a runtime failure if omitted -- and a silent one: the
+  # feature simply stops working, with no error anywhere.
+  runtimeDeps = with pkgs; [
+    brightnessctl                                 # OSD, brightness keys
+    cliphist                                      # clipboard picker
+    wl-clipboard                                  # clipboard picker
+    swaybg                                        # wallpaper
+    glib                                          # gsettings
+    libnotify                                     # notifications
+    jq                                            # theme switcher, night light
+    matugen                                       # wallpaper-derived theming
+    wallust                                       # the matugen fallback
+    curl                                          # night-light geolocation
+    hyprland                                      # hyprctl
+    systemd                                       # systemctl
+    bash coreutils                                # sh, cat
+    (python3.withPackages (ps: [ ps.pillow ]))    # wallpaper/generate-abstract.py
+  ];
+
+  # Qt Quick builds its scenegraph on first window show. Unwrapped, this unit
+  # would reach "active (running)" and then abort with status=6/ABRT the
+  # moment the bar tried to map -- exactly what hyprpolkitagent did in spec 1.
+  quickshell-nixgl = pkgs.writeShellScript "quickshell-nixgl" ''
+    exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
+      ${pkgs.quickshell}/bin/quickshell "$@"
+  '';
 in
 {
   options.calango.quickshellConfig = lib.mkOption {
@@ -39,5 +68,27 @@ in
   config.home.file = {
     ".local/state/quickshell/.keep".text = "";
     ".local/state/quickshell/theme-switcher/.keep".text = "";
+  };
+
+  config.systemd.user.services.quickshell = {
+    Unit = {
+      Description = "Quickshell shell";
+      Documentation = "https://quickshell.outfoxxed.me";
+      PartOf = [ "graphical-session.target" ];
+      After = [ "graphical-session.target" ];
+      # Carried over from calango-desktop's unit. Under uwsm the race this
+      # once guarded cannot happen, and it stays as a statement of what the
+      # unit needs rather than as a guard.
+      ConditionEnvironment = "WAYLAND_DISPLAY";
+    };
+    Service = {
+      Type = "simple";
+      ExecStart = "${quickshell-nixgl} -p ${config.calango.quickshellConfig}";
+      Environment = [ "PATH=${lib.makeBinPath runtimeDeps}" ];
+      Restart = "on-failure";
+      RestartSec = 2;
+      Slice = "app.slice";
+    };
+    Install.WantedBy = [ "graphical-session.target" ];
   };
 }
