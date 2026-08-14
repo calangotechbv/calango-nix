@@ -61,25 +61,6 @@ in
   # both Nix and Debian applications find them.
   fonts.fontconfig.enable = true;
 
-  # A user unit that is WantedBy=graphical-session.target. Its only job in
-  # spec 1 is to prove that uwsm built the target and that a unit inherited a
-  # usable environment.
-  services.hypridle = {
-    enable = true;
-    settings = {
-      general = {
-        lock_cmd = "pidof hyprlock || hyprlock";
-        before_sleep_cmd = "loginctl lock-session";
-      };
-      listener = [
-        {
-          timeout = 900;
-          on-timeout = "loginctl lock-session";
-        }
-      ];
-    };
-  };
-
   # Qt6, and so the cheapest proof that quickshell will draw in spec 2.
   services.hyprpolkitagent = {
     enable = true;
