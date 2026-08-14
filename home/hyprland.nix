@@ -39,18 +39,6 @@ let
     export PATH=${idleSleepPath}''${PATH:+:$PATH}
     exec ${config.calango.hyprConfig}/idle-sleep.sh "$@"
   '';
-
-  # hypridle's lock_cmd needs two things a bare `hyprlock` does not get:
-  # --config, because hyprlock only searches $HOME/.config/hypr,
-  # $XDG_CONFIG_HOME, $XDG_CONFIG_DIRS and /etc/hypr, while hyprlock.conf
-  # lives in the state directory because quickshell's theme switcher
-  # rewrites it there at runtime; and nixGLIntel, because hyprlock is a Nix
-  # GUI binary and nixpkgs' Mesa looks for /run/opengl-driver/lib, which
-  # exists on NixOS and nowhere on this Debian machine -- unwrapped, it
-  # throws "EGL_EXT_platform_base not supported" and never draws. Every Nix
-  # GUI application here needs the same wrapper; the compositor and
-  # hyprpolkitagent get their own copy of it in home/default.nix.
-  hyprlockCmd = "${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${pkgs.hyprlock}/bin/hyprlock --config ${hyprState}/hyprlock.conf";
 in
 {
   options.calango = {
@@ -72,19 +60,40 @@ in
   # four of these files at runtime.
   config.home.file.".local/state/hypr/.keep".text = "";
 
-  # Absolute store paths, never bare names. hypridle.service has no explicit
-  # PATH, so a bare `hyprlock` resolves against the default unit PATH and
-  # finds Debian's /usr/bin/hyprlock -- which disappears when spec 6 removes
-  # trixie-backports, taking the lock screen with it and saying nothing.
+  # Absolute store paths, never bare names, EXCEPT lock_cmd below -- see its
+  # comment. hypridle.service has no explicit PATH, so a bare command name
+  # resolves against the default unit PATH, which is exactly what lock_cmd
+  # is now deliberately relying on.
   config.services.hypridle = {
     enable = true;
     settings = {
       general = {
-        # See hyprlockCmd above for why this is not a plain hyprlock
-        # invocation. The pidof guard still matches: nixGLIntel execs into
-        # hyprlock rather than staying resident, so the process name it
-        # searches for is unchanged.
-        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || ${hyprlockCmd}";
+        # TEMPORARY REVERT to Debian's hyprlock, not Nix's. Nix's hyprlock
+        # links Nix's libpam, whose module directory is compiled in as
+        # /nix/store/...-linux-pam-1.7.2/lib/security. That pam_unix.so
+        # calls Nix's own unix_chkpwd helper to verify the password, and
+        # that helper ships as -r-xr-xr-x root root -- no setuid, no setgid
+        # -- so it cannot read /etc/shadow. Debian's unix_chkpwd is
+        # -rwxr-sr-x root shadow, and only NixOS's /run/wrappers provides an
+        # equivalent privileged copy for Nix's; nothing on Debian does.
+        # Every password is therefore rejected and hyprlock asserts and
+        # crashes, locking the user out until they kill the session.
+        #
+        # So this points at /usr/bin/hyprlock -- Debian's build, absolute
+        # and explicit so it reads as deliberate rather than a leftover bare
+        # name -- with no --config and no nixGLIntel: Debian's hyprlock
+        # finds ~/.config/hypr/hyprlock.conf on its own and runs against
+        # Debian's Mesa, so neither is wanted here.
+        #
+        # This BLOCKS removing trixie-backports: deleting Debian's hyprlock
+        # with nothing that can authenticate in its place leaves no working
+        # lock screen at all. The likely real fix is the same shape as this
+        # project's hyprpolkitagent-nixgl fix in home/default.nix: override
+        # nixpkgs' linux-pam so its module directory is Debian's
+        # /lib/x86_64-linux-gnu/security, scoped to hyprlock's closure only,
+        # so Nix's pam_unix.so calls Debian's setgid unix_chkpwd instead of
+        # its own.
+        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || /usr/bin/hyprlock";
         before_sleep_cmd = "${pkgs.systemd}/bin/loginctl lock-session";
         after_sleep_cmd = "${pkgs.hyprland}/bin/hyprctl dispatch dpms on";
       };
