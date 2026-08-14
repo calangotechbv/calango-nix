@@ -66,14 +66,31 @@ let
 
     # dbus-update-activation-environment :547 -- but only as a `command -v`
     # presence guard. The command actually executed inside that guarded
-    # block (:548) is `systemctl --user set-environment`, not
-    # dbus-update-activation-environment itself. systemd is deliberately NOT
-    # added here: that call talks to *this host's* systemd --user manager,
-    # so the correct systemctl is Debian's own, found via the inherited
-    # PATH this script's PATH= line appends -- not a separate Nix systemd
-    # pointed at the same socket. dbus is included so the guard itself
-    # doesn't depend on that same inherited-PATH luck.
+    # block (:548) is `systemctl --user set-environment`, covered by the
+    # systemd entry below. dbus is included so the guard itself doesn't
+    # depend on inherited-PATH luck.
     dbus
+
+    # systemctl :548 (`systemctl --user set-environment XCURSOR_THEME=...
+    # XCURSOR_SIZE=...`, propagating the cursor to the compositor). Nix's
+    # systemd is fine here, unlike the reasoning that used to exclude it:
+    # `systemctl --user` is a thin client over
+    # $XDG_RUNTIME_DIR/systemd/private, and a Nix build answers identically
+    # to Debian's own -- home/quickshell.nix already relies on that same fact
+    # for its own `systemctl --user` call. What actually breaks this call is
+    # PATH, not which systemd built it: Home Manager's activate script
+    # exports a PATH of its own (bash, coreutils, diffutils, findutils,
+    # gettext, gnugrep, gnused, jq, ncurses, nix-env's directory) with no
+    # /usr/bin on it, so during activation this line has nothing to resolve
+    # against unless it is on applyPath -- and the call is wrapped in
+    # `2>/dev/null || true`, so a missing systemctl fails silently rather
+    # than being noticed. ldconfig (:453, gtk2 detection) and python3 (:372,
+    # the `import gi` typelib check) stay deliberately excluded: both are
+    # genuine probes of *this host's* own state -- ldconfig of Debian's
+    # multiarch filesystem layout, python3 of the host's own GI typelibs --
+    # and are reached through the inherited PATH this script's PATH= line
+    # appends onto, not a Nix stand-in for either.
+    systemd
   ]);
 
   gtkConfig = pkgs.runCommand "gtk-config" { } ''
