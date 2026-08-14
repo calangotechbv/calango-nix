@@ -274,21 +274,27 @@ Singleton {
     // injecting OSC 4/10/11 into every foot's pts, which would interleave with
     // whatever is running in it.
     //
-    // [colors], not [colors-dark], and not one section per light/dark either.
-    // This writes one palette at a time -- whichever theme is selected -- so a
-    // dark/light split was never carrying information; the light themes went
-    // into [colors-dark] too, on the grounds that it is the active section
-    // unless initial-color-theme=light is set.
+    // [colors-dark], and one section rather than one per light/dark. This
+    // writes one palette at a time -- whichever theme is selected -- so a
+    // dark/light split would not be carrying information. colors-dark is the
+    // section foot uses unless initial-color-theme=light is set, and nothing
+    // here sets it or binds foot's light/dark toggle, so the selected palette
+    // is always the one in effect.
     //
-    // What forced the change is that the split is a newer foot feature. foot
-    // 1.21, which Debian 13 ships, rejects "[colors-dark]" as an invalid
-    // section name and then refuses the whole config, so every foot window on
-    // that machine came up with no theme at all. [colors] is the base section
-    // and every version understands it.
+    // This said [colors] until the Nix port. That was correct while Debian's
+    // foot 1.21 was the one reading it: 1.21 rejects "[colors-dark]" as an
+    // invalid section name and then refuses the whole config, so every window
+    // came up unthemed. foot 1.27 inverted it -- [colors] still works but is
+    // deprecated, and warns once per section entry on every start, which was
+    // 22 lines of stderr per foot launch here.
+    //
+    // The version that reads this file now comes from the flake, so it cannot
+    // be older than the flake's pin. Keep that in mind before copying this
+    // section back to a tree whose foot comes from apt.
     function applyFootTheme(t) {
         function h(c) { return String(c).replace("#", ""); }
         var footConf = [
-            "[colors]",
+            "[colors-dark]",
             "foreground=" + h(t.textPrimary),
             "background=" + h(t.bgBase),
             "selection-foreground=" + h(t.textPrimary),
