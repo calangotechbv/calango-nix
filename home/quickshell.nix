@@ -125,6 +125,10 @@ in
       Restart = "on-failure";
       RestartSec = 2;
       Slice = "app.slice";
+      # Was hypr/systemd/quickshell.service.d/killmode.conf in calango-desktop.
+      # A drop-in exists to patch a unit you do not control; Home Manager
+      # generates this one, so the setting belongs on it directly.
+      KillMode = "process";
     };
     Install.WantedBy = [ "graphical-session.target" ];
   };
