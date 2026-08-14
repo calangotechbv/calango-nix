@@ -119,6 +119,9 @@ The five `dev-*.qml` files are not ported. They are development probes, they
 are `dev` tier in calango-desktop's own terms, and nothing at runtime loads
 them.
 
+`common/gen-icons.js` is ported but never runs here — see the open items. It
+generates `common/Icons.qml`, which ships as a committed file.
+
 ### 2. The state contract
 
 Eleven files, of which seven exist today. Home Manager manages **none** of
@@ -304,10 +307,17 @@ recognised as boundaries rather than diagnosed as bugs.
 
 ## Open items
 
-- **`common/gen-icons.js` needs `nodejs`.** Whether it runs at build time or
-  runtime is not yet established. If runtime, `nodejs` 24.18.1 joins the
-  closure; if build time, its output is generated into the derivation and
-  `nodejs` does not ship.
+- ~~`common/gen-icons.js` needs `nodejs`.~~ **Closed.** Neither build nor
+  runtime: it is a developer tool run by hand, `node gen-icons.js >
+  common/Icons.qml`, and its 146-line output is committed under a "Generated,
+  do not hand-edit" header. The only references to it anywhere are its own
+  comment and that header. `nodejs` does not join the closure.
+
+  The script is still ported, because it is the source of truth for
+  `Icons.qml` and dropping it would make the icon set unregenerable. It needs
+  `@mdi/svg` 7.4.47 to run, which is not vendored — regenerating means
+  fetching that package and `nix run nixpkgs#nodejs`. That is a development
+  concern and deliberately not part of the closure.
 - **`geoclue`** appears in `night-light/locate.sh` alongside `curl`. Which
   path is actually taken on `suffer` is unknown, and matters only when spec 5
   makes the schedule run.
