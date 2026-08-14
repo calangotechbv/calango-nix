@@ -33,45 +33,11 @@
 -- further down read those names, so the *policy* (1-5 here, 6-10 there) stays
 -- in this file and shared, while the *hardware* stays per host.
 --
--- Read from /etc/hostname rather than an environment variable: HOSTNAME is a
--- shell variable and is not exported, so it is empty in the environment
--- Hyprland is started with.
--- Everything here is inside a pcall, and deliberately so: this runs at config
--- load, where an uncaught error does not merely skip the hostname -- it
--- abandons the rest of this file, so the compositor comes up with no binds, no
--- rules and no look-and-feel. Two ways that could happen, neither of them
--- hypothetical across two distros running different builds:
---
---   * `io` absent from the config sandbox, making io.open a nil index. It is
---     present on Hyprland 0.55.2, which is what this was written against, but
---     that is a fact about one build and not a promise.
---   * /etc/hostname unreadable, or holding something unexpected.
---
--- The fallbacks are ordered by how much they can be trusted: the file first,
--- then the environment, which Hyprland may or may not have inherited.
-local function thisHost()
-    local ok, name = pcall(function()
-        local f = io and io.open and io.open("/etc/hostname")
-        if f then
-            local line = f:read("l")
-            f:close()
-            if line and line ~= "" then return line end
-        end
-        if os and os.getenv then
-            return os.getenv("HOSTNAME") or os.getenv("HOST")
-        end
-        return nil
-    end)
-    if not ok or type(name) ~= "string" then return nil end
-    name = name:match("^%s*(.-)%s*$")
-    -- Strip any domain: a machine whose /etc/hostname reads "epiphany.lan"
-    -- still wants hosts/epiphany.lua, and would otherwise silently match
-    -- nothing and come up with no monitors declared.
-    return name:match("^([^.]+)") or name
-end
-
-local host = thisHost()
-local loaded, hostCfg = pcall(require, "hosts." .. (host or ""))
+-- The host is chosen at build time: home/hyprland.nix substitutes @host@ from
+-- the flake's mkHome argument. The old /etc/hostname lookup, its domain
+-- stripping, its pcall and its fail-loud banner are gone -- an unknown host is
+-- now an evaluation error, which is the earlier and louder failure.
+local loaded, hostCfg = pcall(dofile, "@hyprSource@/hosts/@host@.lua")
 if not loaded or type(hostCfg) ~= "table" then
     -- No file for this machine: no monitor declarations, which leaves Hyprland
     -- to light up whatever it finds at its preferred mode, and no primary,
@@ -90,7 +56,9 @@ end
 -- The panel greps this very line to decide whether to offer persistence at all;
 -- without it, it applies to the running session and says so, and the file it
 -- writes is never read back. Same mechanism workspace-layouts.lua uses below.
-pcall(require, "monitors")
+-- State, not source: quickshell writes this. pcall stays because the file does
+-- not exist until the monitor panel has been used once, and dofile raises.
+pcall(dofile, "@hyprState@/monitors.lua")
 
 
 ---------------------
@@ -330,7 +298,7 @@ local function themeBorders()
     local active   = { colors = { "rgba(33ccffee)", "rgba(00ff99ee)" }, angle = 45 }
     local inactive = "rgba(595959aa)"
 
-    local f = io.open(os.getenv("HOME") .. "/.config/hypr/theme-borders.conf", "r")
+    local f = io.open("@hyprState@/theme-borders.conf", "r")
     if not f then return active, inactive end
 
     for line in f:lines() do
@@ -560,7 +528,9 @@ end
 -- pcall because the file does not exist until a layout has been chosen, and a
 -- missing module is a raised error rather than a nil return. Delete the file to
 -- go back to the defaults above.
-pcall(require, "workspace-layouts")
+-- Same as monitors above: written by quickshell's layout switcher, absent
+-- until first use.
+pcall(dofile, "@hyprState@/workspace-layouts.lua")
 
 -- Send every VSCode window to that workspace. `silent` means opening a new one
 -- (or a new project window) does not drag focus off whatever you are on.
@@ -1138,7 +1108,9 @@ hl.window_rule({
 -- it belongs with. The panel applies it live with `hyprctl eval`; reading it
 -- back here is what survives a reload, exactly like theme-borders.conf above.
 local function barBlur()
-    local f = io.open(os.getenv("HOME") .. "/.config/quickshell/bar.conf", "r")
+    -- quickshell's state, moved there by spec 2. This read still pointed at the
+    -- old ~/.config path, which spec 2 emptied.
+    local f = io.open("@quickshellState@/bar.conf", "r")
     if not f then return true end
 
     local blur = true
