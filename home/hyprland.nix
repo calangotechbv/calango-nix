@@ -45,6 +45,40 @@ let
     export PATH=${idleSleepPath}''${PATH:+:$PATH}
     exec ${config.calango.hyprConfig}/idle-sleep.sh "$@"
   '';
+
+  # hyprlock's static configuration. The palette is deliberately not here: the
+  # quickshell theme switcher rewrites it on every theme change, so it lives in
+  # state and is pulled in by the `source` below. Same split as foot -- store
+  # config, state palette, store file naming the state file.
+  #
+  # auth:pam:module is the whole reason this file exists. hyprlock's default
+  # service is "hyprlock", whose /etc/pam.d/hyprlock is `auth include login`,
+  # and /etc/pam.d/login reaches pam_unix only through `@include common-auth`.
+  # @include is a Debian extension that Nix's libpam does not implement --
+  # measured: given /etc/pam.d/other, four @include lines and nothing else,
+  # Nix's libpam attempted zero of them. Naming common-auth directly reaches
+  # pam_unix through a plain `auth` line, which upstream libpam does parse.
+  # Safe because hyprlock calls only pam_start and pam_authenticate
+  # (src/auth/Pam.cpp:119-127) -- no pam_acct_mgmt -- so an auth-only service
+  # is complete for it.
+  hyprlockConfig = pkgs.writeText "hyprlock.conf" ''
+    auth {
+        pam {
+            module = common-auth
+        }
+    }
+
+    source = ${hyprState}/hyprlock.conf
+  '';
+
+  # hypridle is a systemd unit, so what it spawns inherits nothing from the
+  # compositor's nixGL wrapper. Spec 3 found this the hard way: unwrapped, Nix's
+  # hyprlock draws nothing and dies with
+  #   CRIT: Hyprlock threw: EGL_EXT_platform_base not supported
+  # Named `hyprlock` so lock_cmd's `pidof hyprlock` guard still matches.
+  hyprlock-nixgl = pkgs.writeShellScriptBin "hyprlock" ''
+    exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${pkgs.hyprlock}/bin/hyprlock "$@"
+  '';
 in
 {
   options.calango = {
@@ -74,43 +108,15 @@ in
     enable = true;
     settings = {
       general = {
-        # TEMPORARY REVERT to Debian's hyprlock, not Nix's. Nix's hyprlock
-        # links Nix's libpam, whose module directory is compiled in as
-        # /nix/store/...-linux-pam-1.7.2/lib/security. That pam_unix.so
-        # calls Nix's own unix_chkpwd helper to verify the password, and
-        # that helper ships as -r-xr-xr-x root root -- no setuid, no setgid
-        # -- so it cannot read /etc/shadow. Debian's unix_chkpwd is
-        # -rwxr-sr-x root shadow, and only NixOS's /run/wrappers provides an
-        # equivalent privileged copy for Nix's; nothing on Debian does.
-        # Every password is therefore rejected and hyprlock asserts and
-        # crashes, locking the user out until they kill the session.
+        # Nix's hyprlock, wrapped, with the store-side config that names the PAM
+        # service. The revert to /usr/bin/hyprlock that stood here since spec 3
+        # is gone: flake.nix's debianPam overlay makes Nix's pam_unix call
+        # Debian's setgid unix_chkpwd, so authentication works.
         #
-        # So this points at /usr/bin/hyprlock -- Debian's build, absolute
-        # and explicit so it reads as deliberate rather than a leftover bare
-        # name -- with no nixGLIntel: Debian's hyprlock runs against
-        # Debian's Mesa, so that wrapper is not wanted here.
-        #
-        # --config IS wanted, though. hyprlock searches only the XDG config
-        # locations (HOME, XDG_CONFIG_HOME, XDG_CONFIG_DIRS, /etc/hypr), and
-        # hyprlock.conf deliberately lives under hyprState instead: the theme
-        # switcher (quickshell/theme-switcher/Theme.qml) rewrites it on every
-        # theme change, and that state directory is the one place Home
-        # Manager and quickshell agree writers may touch. Without --config
-        # there is nothing at any of hyprlock's search paths, it exits with
-        # "CRIT: Config path error", and the machine silently never locks.
-        # Pointing --config at hyprState keeps that directory the single
-        # canonical copy, so no second, unmanaged file has to be kept in
-        # sync with it by hand.
-        #
-        # This BLOCKS removing trixie-backports: deleting Debian's hyprlock
-        # with nothing that can authenticate in its place leaves no working
-        # lock screen at all. The likely real fix is the same shape as this
-        # project's hyprpolkitagent-nixgl fix in home/default.nix: override
-        # nixpkgs' linux-pam so its module directory is Debian's
-        # /lib/x86_64-linux-gnu/security, scoped to hyprlock's closure only,
-        # so Nix's pam_unix.so calls Debian's setgid unix_chkpwd instead of
-        # its own.
-        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || /usr/bin/hyprlock --config ${hyprState}/hyprlock.conf";
+        # The `pidof hyprlock` guard stays -- it stops a second instance when
+        # the lock is already up, and matches by process name, which the wrapper
+        # preserves.
+        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || ${hyprlock-nixgl}/bin/hyprlock --config ${hyprlockConfig}";
         before_sleep_cmd = "${pkgs.systemd}/bin/loginctl lock-session";
         after_sleep_cmd = "${pkgs.hyprland}/bin/hyprctl dispatch dpms on";
       };
@@ -132,4 +138,22 @@ in
       ];
     };
   };
+
+  config.home.packages = [ hyprlock-nixgl ];
+
+  # hyprlock's `source` treats a missing target as an error, so this file must
+  # exist before the first lock. The theme switcher creates it on its first
+  # theme apply, which is not soon enough on a fresh machine.
+  #
+  # Deliberately NOT suffixed with `|| true`, matching home/foot.nix's
+  # equivalent hook and for the same reason: if this cannot run, the screen
+  # will not lock, and a switch that fails loudly leaves the previous
+  # generation working.
+  config.home.activation.hyprlockConf =
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      if [ ! -e ${lib.escapeShellArg "${hyprState}/hyprlock.conf"} ]; then
+        run mkdir -p ${lib.escapeShellArg hyprState}
+        run touch ${lib.escapeShellArg "${hyprState}/hyprlock.conf"}
+      fi
+    '';
 }
