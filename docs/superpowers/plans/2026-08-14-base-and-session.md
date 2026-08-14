@@ -232,6 +232,11 @@ nix flake lock
 
 This writes `flake.lock` and downloads nothing else.
 
+`git add` the three new files first. A flake in a git repository is read
+through git, and an untracked `flake.nix` is invisible to it: the failure is
+`error: path '/nix/store/...-source/flake.nix' does not exist`, which does
+not mention git at all. Staging is enough; the commit comes in step 6.
+
 - [ ] **Step 4: Run the check that proves the follows**
 
 This is the one check in the plan that catches Global Constraint 3, and it
@@ -243,16 +248,31 @@ nix flake metadata --json \
   | python3 -c '
 import json,sys
 d = json.load(sys.stdin)["locks"]["nodes"]
-root = d["root"]["inputs"]
-ours = root["nixpkgs"]
-theirs = d[root["nixgl"]]["inputs"]["nixpkgs"]
-print("nixpkgs      :", ours)
-print("nixgl.nixpkgs:", theirs)
-print("PASS" if ours == theirs else "FAIL -- nixGL has its own nixpkgs")
+
+def resolve(ref, frm="root"):
+    # A node input is either a node name (a string) or a follows path (a list
+    # of input names, walked from the root node). Comparing the two forms
+    # directly always reports a difference, even when the follows is correct.
+    if isinstance(ref, str):
+        return ref
+    node = "root"
+    for seg in ref:
+        node = resolve(d[node]["inputs"][seg], node)
+    return node
+
+ours   = resolve(d["root"]["inputs"]["nixpkgs"])
+nixgl  = resolve(d["root"]["inputs"]["nixgl"])
+theirs = resolve(d[nixgl]["inputs"]["nixpkgs"])
+hm     = resolve(d["root"]["inputs"]["home-manager"])
+hmnp   = resolve(d[hm]["inputs"]["nixpkgs"])
+print("nixpkgs             :", ours)
+print("nixgl.nixpkgs       :", theirs)
+print("home-manager.nixpkgs:", hmnp)
+print("PASS" if ours == theirs == hmnp else "FAIL -- an input has its own nixpkgs")
 '
 ```
 
-Expected: the last line is `PASS`, and the two node names are identical.
+Expected: the last line is `PASS`, and all three node names are identical.
 
 If it prints `FAIL`, the `inputs.nixpkgs.follows` line is missing or
 misspelled. Fix it, delete `flake.lock`, and repeat step 3.
