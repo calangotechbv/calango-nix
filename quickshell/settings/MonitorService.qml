@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 import QtQuick
+import "../common"
 
 Singleton {
   id: root
@@ -105,7 +106,7 @@ Singleton {
     const content = buildFileContent(edits);
     writeProc.command = [
       "python3", "-c",
-      `import os; open(os.path.expanduser('~/.config/hypr/monitors.lua'), 'w').write(${JSON.stringify(content)})`
+      `open(${JSON.stringify(Paths.hyprStateDir + "/monitors.lua")}, 'w').write(${JSON.stringify(content)})`
     ];
     writeProc.running = true;
   }
@@ -150,14 +151,18 @@ Singleton {
     onTriggered: root._doRefresh()
   }
 
-  // Check persistence availability on startup. Looks in hyprland.lua, not the
-  // hyprland.conf this used to grep -- that file does not exist under the Lua
-  // config, so the check failed on every reload and logged a grep error while
-  // reporting persistence unavailable no matter what.
+  // Check persistence availability on startup. Used to grep hyprland.lua's
+  // source text for the old loader call, but hyprland.lua switched that
+  // loader from `require` to `dofile`, so the old pattern stopped matching
+  // and the check silently reported unavailable on every reload. What
+  // persistence actually depends on is this directory existing to write
+  // monitors.lua into and for hyprland.lua to dofile it back in -- so that
+  // is what gets tested, and the next rewording of hyprland.lua's loader
+  // can't break it again.
   Process {
     id: sourceCheck
     command: ["sh", "-c",
-      "grep -q 'require.*monitors' \"$HOME/.config/hypr/hyprland.lua\" && echo yes || echo no"]
+      "test -d \"$1\" && echo yes || echo no", "sh", Paths.hyprStateDir]
     running: true
     stdout: StdioCollector {
       onStreamFinished: {

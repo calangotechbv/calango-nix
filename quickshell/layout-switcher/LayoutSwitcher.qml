@@ -33,7 +33,7 @@ Scope {
   // them -- which covers a login, a `hyprctl reload`, and the reload Hyprland
   // does to itself when the config file changes.
   readonly property string storePath:
-    Quickshell.env("HOME") + "/.config/hypr/workspace-layouts.lua"
+    Paths.hyprStateDir + "/workspace-layouts.lua"
 
   // Workspace name -> layout key, for every workspace ever chosen through here.
   // The file is rewritten whole on each choice, so this has to hold all of them,

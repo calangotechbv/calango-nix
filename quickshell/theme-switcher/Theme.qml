@@ -106,7 +106,7 @@ Singleton {
         // quoting.
         hyprlandProc.command = ["sh", "-c",
             'printf "general {\\n    col.active_border = %s\\n    col.inactive_border = %s\\n}\\n"' +
-            ' "$1" "$2" > "$HOME/.config/hypr/theme-borders.conf"; ' +
+            ' "$1" "$2" > "' + Paths.hyprStateDir + '/theme-borders.conf"; ' +
             'hyprctl eval "$3" >/dev/null',
             "sh", active, inactive, lua
         ];
@@ -214,7 +214,7 @@ Singleton {
             'wp=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/quickshell/wallpaper.conf" 2>/dev/null); ' +
             '[ -n "$wp" ] && [ -f "$wp" ] || wp=""; ' +
             'printf "%s" "$1" | sed "s|^    path = WALLPAPER_PATH$|    path = $wp|" ' +
-            '> "$HOME/.config/hypr/hyprlock.conf"',
+            '> "' + Paths.hyprStateDir + '/hyprlock.conf"',
             "sh", conf
         ];
         hyprlockProc.running = true;
