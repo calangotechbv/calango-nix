@@ -87,6 +87,7 @@
           ./home/quickshell.nix
           ./home/hyprland.nix
           ./home/foot.nix
+          ./home/lf.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";

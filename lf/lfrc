@@ -39,7 +39,7 @@ set period 1
 # file the same way, but these two lines cannot: ~ is $HOME and nothing else. A
 # machine that sets XDG_CONFIG_HOME elsewhere gets an lf that reads this file
 # and then previews nothing, silently. Neither machine here does that.
-set previewer ~/.config/lf/preview
+set previewer @lfPreview@
 
 # Sixel is the one graphics format lf carries through its own output, so this is
 # what lets lf/preview hand it a picture and have lf place it. Harmless on a

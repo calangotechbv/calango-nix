@@ -23,7 +23,7 @@ let
     grim          # screenshot capture, all three Print binds via shot()
     hyprland      # bare hyprctl in exec_cmd strings (notify, the two Print binds)
     jq            # -r queries against `hyprctl -j` in the two Print binds
-    lf            # fileManager's file manager, passed to foot as an argument
+    config.calango.lf # fileManager's file manager, passed to foot as an argument
     playerctl     # the four XF86Audio{Next,Pause,Play,Prev} binds
     procps        # pgrep -f, guarding both clipboard watchers against duplicates
     quickshell    # qs ipc call ... -- menu, switchWindow, and every panel toggle bind
