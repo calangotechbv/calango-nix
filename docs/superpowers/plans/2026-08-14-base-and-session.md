@@ -1024,6 +1024,40 @@ Read `~/Projects/calango-desktop/install.sh:99-150` for the exact map.
 five of which are systemd user units in `~/.config/systemd/user`. Home
 Manager writes its own units to that same directory.
 
+- [ ] **Step 0: Predict the collisions before changing anything**
+
+The clobber in step 4 is the only part of this task that cannot simply be
+undone, so find it in advance. This is read-only and needs no session.
+
+```bash
+cd ~/Projects/calango-nix
+nix build --out-link result-isutton .#homeConfigurations."isutton@suffer".activationPackage
+find -L result-isutton/home-files \( -type f -o -type l \) | sed 's|result-isutton/home-files/||' |
+  while read -r f; do
+    t="$HOME/$f"
+    [ -e "$t" ] || [ -L "$t" ] || continue
+    if [ -L "$t" ]; then printf '%-56s SYMLINK -> %s\n' "$f" "$(readlink "$t")"
+    else printf '%-56s REGULAR FILE\n' "$f"; fi
+  done
+```
+
+`home-files/` is the exact tree Home Manager will link into `$HOME`, so
+anything this prints is a file activation would refuse to overwrite.
+
+On `suffer` it printed one line, `.config/hypr/hypridle.conf`, and that one
+is not a real collision: `~/.config/hypr` is a symlink into the
+calango-desktop checkout, so `readlink -f` resolves the file to
+`~/Projects/calango-desktop/hypr/hypridle.conf` and step 2 removes the path
+along with the symlink. Run this again after step 2 and it should print
+nothing.
+
+Note also that calango-desktop's compositor config is `hyprland.lua`, not
+`hyprland.conf`, so `home/session.nix` does not collide with it either.
+
+This step exists because `nixtest` cannot stand in for it. A throwaway account
+has none of the dotfiles that make step 4 risky, so rehearsing there proves
+nothing about the collision surface. Predicting it does.
+
 - [ ] **Step 1: Record what is linked now**
 
 ```bash
