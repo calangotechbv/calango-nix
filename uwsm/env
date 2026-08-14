@@ -6,11 +6,45 @@
 # xdg.configFile, which is where uwsm looks. POSIX sh, not bash -- prepare-env.sh
 # runs /bin/sh.
 #
-# The PATH block that used to be here put ~/.local/bin on the systemd user
-# manager's environment, so that xdg-desktop-portal could resolve the browser
-# handler's `Exec=calango-open`. Both .desktop entries now carry absolute
-# store paths (home/apps.nix) and the shims live in ~/.nix-profile/bin, so
-# there is nothing left for it to serve.
+# ~/.nix-profile/bin on PATH.
+#
+# This block used to name ~/.local/bin, because that is where the old install.sh
+# symlinked calango-open, code and apply-gtk-theme. Home Manager puts them in
+# ~/.nix-profile/bin instead, and the job moved with them rather than going away
+# -- which is not how it looked at first. Both .desktop entries now carry
+# absolute store paths, so the portal no longer needs PATH to find the browser
+# handler; that much was right. What it missed is that two of the three shims
+# are meant to be *typed*.
+#
+# Nothing else puts the Nix profile on PATH on this machine. There is no
+# /etc/profile.d/nix.sh here, and nothing sources
+# ~/.nix-profile/etc/profile.d/hm-session-vars.sh, so without this block the
+# login PATH is ~/.cargo/bin:~/.local/bin:/usr/local/bin:/usr/bin and the
+# compositor prepends only home/session.nix's compositorPath on top of it.
+# Measured, after a switch that did not have this block:
+#
+#   foot, lf, qs      -> the Nix builds      (compositorPath)
+#   code              -> /usr/bin/code       WRONG, no --use-angle=vulkan
+#   calango-open      -> not found
+#   apply-gtk-theme   -> not found
+#
+# `code` is the one that matters: bin/code exists precisely so a terminal launch
+# and a launcher launch land on the same renderer, and without this block they
+# diverge silently -- one window on radv, another on radeonsi, with nothing
+# anywhere saying so. That is the bug that shim was written to kill.
+#
+# Prepended, so the shims win over /usr/bin/code. The guard makes re-sourcing
+# idempotent; the colon padding makes the match exact, so a PATH already holding
+# ~/.nix-profile/binx cannot satisfy it; and the quotes keep the pattern literal,
+# so a $HOME containing a glob character cannot turn it into a wildcard.
+#
+# This reaches the systemd user manager too -- prepare-env.sh ends with
+# `exec env -0`, and uwsm imports the result -- which is what puts the shims in
+# reach of anything the portal or a user unit spawns later.
+case ":$PATH:" in
+  *:"$HOME/.nix-profile/bin":*) ;;
+  *) PATH="$HOME/.nix-profile/bin:$PATH"; export PATH ;;
+esac
 
 # Do not point GTK and Qt at an ibus that is not running.
 #

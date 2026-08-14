@@ -62,7 +62,7 @@ let
     # DISPLAY in this session). Included for the same reason as hyprctl:
     # optional, but reachable now, so make it reachable on purpose rather
     # than by accident of the inherited PATH.
-    xorg.xrdb
+    xrdb
 
     # dbus-update-activation-environment :547 -- but only as a `command -v`
     # presence guard. The command actually executed inside that guarded
