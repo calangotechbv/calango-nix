@@ -496,7 +496,7 @@ fi
 # XCURSOR_THEME has to exist in the environment before clients start, so it
 # belongs in hyprland.lua. Report rather than edit: that file is hand-maintained
 # and a script rewriting it is how configs get corrupted.
-hypr_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua"
+hypr_cfg="@hyprSource@/hyprland.lua"
 if [ -f "$hypr_cfg" ] && ! grep -q 'XCURSOR_THEME' "$hypr_cfg"; then
     warn "XCURSOR_THEME is not set in $hypr_cfg"
     warn "add:  hl.env(\"XCURSOR_THEME\", \"$cursor_real\")"
