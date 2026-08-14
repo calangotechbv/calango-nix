@@ -25,11 +25,27 @@ img=${1:-}
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 tool=${WALLPAPER_THEME_TOOL:-auto}
 
-# matugen 4.0.0 dropped --prefer; a scheme is now chosen with -t/--type
-# <scheme-*> (default: scheme-tonal-spot). This used to pass
-# `--prefer saturation`; if you want that back, the successor is
-# `-t scheme-vibrant`, added deliberately rather than by default here.
-run_matugen() { matugen image "$img" -c "$dir/matugen/config.toml" -m dark -q; }
+# Two deliberate deviations from calango-desktop's matugen invocation, both
+# forced by matugen 4.0.0:
+#
+# - `--prefer saturation` is gone; a scheme is now chosen with -t/--type
+#   <scheme-*> (default: scheme-tonal-spot). No --type is passed here: that
+#   picks an aesthetic on the user's behalf, and the working, reversible
+#   default is left alone. If you want saturation-leaning colors back, the
+#   successor is `-t scheme-vibrant`, added deliberately, not by default.
+#
+# - `--source-color-index 0` IS added, and is load-bearing, not
+#   cosmetic: do not "clean it up". set.sh is invoked by quickshell as a
+#   systemd-managed Process with no controlling tty. When source-color
+#   extraction finds more than one candidate colour, matugen either asks
+#   an interactive terminal to pick one or, with none available, fails
+#   outright with "IO error: not a terminal" -- every time, in production,
+#   not just under test. --source-color-index picks a candidate by index
+#   instead of prompting; 0 is the first/dominant one, which is what any
+#   headless run has to assume. This is mechanical, not aesthetic -- pick
+#   a different index if a particular wallpaper's dominant candidate is
+#   wrong, but the flag itself must stay for matugen to run at all here.
+run_matugen() { matugen image "$img" -c "$dir/matugen/config.toml" -m dark -q --source-color-index 0; }
 run_wallust() { wallust run "$img" -d "$dir/wallust" -s -q; }
 
 case "$tool" in
