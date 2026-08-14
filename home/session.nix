@@ -62,11 +62,27 @@ let
   # here makes every `qs` the compositor spawns find the same running
   # instance quickshell.service started with -p, with no edit to
   # hyprland.lua and no coupling of hyprland.lua to quickshell's store path.
+  # start-hyprland is a watchdog around the compositor binary, not an
+  # alternative session manager to uwsm -- apt's own chain ran both
+  # together (uwsm -> hyprland.desktop -> start-hyprland -> Hyprland), and
+  # execing Hyprland directly, as this wrapper used to, dropped that inner
+  # launcher and left the compositor logging
+  # "WARNING: Hyprland is being launched without start-hyprland" on every
+  # start. Restoring it makes start-hyprland the parent again.
+  #
+  # start-hyprland has its own nixGL handling (--no-nixgl / --force-nixgl),
+  # but nixGLIntel wrapping it from the outside is kept instead: that path
+  # is the one verified across three specs on this machine, and this is the
+  # user's only session -- not where to re-open a question an earlier spec
+  # already closed. --force-nixgl, letting start-hyprland do it and
+  # dropping the flake's nixgl input entirely, is the tidier end state but
+  # is unproven here and deliberately not taken now.
   hyprland-nixgl = pkgs.writeShellScriptBin "hyprland-nixgl" ''
     export PATH=${compositorPath}''${PATH:+:$PATH}
     export QS_CONFIG_PATH=${config.calango.quickshellConfig}
     exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
-      ${pkgs.hyprland}/bin/Hyprland --config ${config.calango.hyprConfig}/hyprland.lua "$@"
+      ${pkgs.hyprland}/bin/start-hyprland --no-nixgl -- \
+      --config ${config.calango.hyprConfig}/hyprland.lua "$@"
   '';
 
   # uwsm resolves a compositor by desktop entry, and hyprland's own
