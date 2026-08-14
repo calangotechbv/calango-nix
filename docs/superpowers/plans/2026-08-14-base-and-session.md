@@ -665,6 +665,23 @@ nix run home-manager/release-26.05 -- switch --flake .#nixtest@suffer
 repository across with `sudo`, or push it to a path both accounts can read.
 Record which you did.
 
+Before any of that, give `nixtest` its own flakes setting. Task 1 step 4 wrote
+`~/.config/nix/nix.conf`, and that file is per-user: without it the first
+command here fails with `experimental Nix feature 'nix-command' is disabled`.
+
+```bash
+mkdir -p ~/.config/nix
+printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
+```
+
+This stays a hand-written file rather than becoming `nix.settings` in
+`home/default.nix`, and deliberately. Home Manager is invoked *through* a
+flake, so the setting has to exist before Home Manager can run at all —
+managing it from inside would be circular. It would also collide on the way
+in: Home Manager refuses to overwrite a file it does not own, so a machine
+that already has the hand-written copy would fail activation with
+`Existing file '/home/…/.config/nix/nix.conf' would be clobbered`.
+
 Expected: `Activating ...` lines, ending without error.
 
 - [ ] **Step 2: Check the profile carries what it should**
