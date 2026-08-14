@@ -13,9 +13,10 @@ let
                  # limiter), du and cut (the binary-file fallback's size
                  # line), mktemp and rm (the pdf branch's scratch dir and its
                  # EXIT trap)
-    file         # 18 call sites: the `file --mime-type` dispatch the whole
-                 # case statement is built on, plus every `file -Lb` fallback
-                 # line printed when a preferred tool is missing
+    file         # 5 call sites (lf/preview:77,116,129,144,156): the
+                 # `file --mime-type` dispatch the whole case statement is
+                 # built on, plus every `file -Lb` fallback line printed when
+                 # a preferred tool is missing
     chafa        # as_image's sixel and symbols renderers
     poppler-utils # pdftoppm, the application/pdf branch's page-1 rasterizer
     jq           # the application/json branch's colourised, height-limited dump

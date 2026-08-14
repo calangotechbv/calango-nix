@@ -36,6 +36,8 @@ let
   '';
 in
 {
+  config.home.packages = [ nmSecretAgent ];
+
   config.systemd.user.services.bt-agent = {
     Unit = {
       Description = "Bluetooth pairing agent";
@@ -60,7 +62,7 @@ in
     Unit = {
       Description = "Night light (gammastep)";
       Documentation =
-        "file://${config.home.homeDirectory}/Projects/calango-nix/docs/superpowers/specs/2026-08-14-user-layer-design.md";
+        "file://${./../docs/superpowers/specs/2026-08-14-user-layer-design.md}";
       PartOf = [ "graphical-session.target" ];
       After = [ "graphical-session.target" ];
       ConditionEnvironment = "WAYLAND_DISPLAY";
@@ -74,13 +76,11 @@ in
     Install.WantedBy = [ "graphical-session.target" ];
   };
 
-  config.home.packages = [ nmSecretAgent ];
-
   config.systemd.user.services.nm-secret-agent = {
     Unit = {
       Description = "NetworkManager secret agent (login keyring)";
       Documentation =
-        "file://${config.home.homeDirectory}/Projects/calango-nix/docs/superpowers/specs/2026-08-14-user-layer-design.md";
+        "file://${./../docs/superpowers/specs/2026-08-14-user-layer-design.md}";
       PartOf = [ "graphical-session.target" ];
       After = [ "graphical-session.target" "NetworkManager.service" ];
       StartLimitIntervalSec = 60;
