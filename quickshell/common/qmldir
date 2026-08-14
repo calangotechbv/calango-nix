@@ -1,1 +1,10 @@
+singleton AppLaunch 1.0 AppLaunch.qml
+singleton BarSettings 1.0 BarSettings.qml
+CloseButton 1.0 CloseButton.qml
+Icon 1.0 Icon.qml
+singleton Icons 1.0 Icons.qml
+singleton PanelGroup 1.0 PanelGroup.qml
 singleton Paths 1.0 Paths.qml
+singleton ScreencastService 1.0 ScreencastService.qml
+singleton Screens 1.0 Screens.qml
+Scrim 1.0 Scrim.qml
