@@ -277,20 +277,11 @@ echo "binary: $HL"
 WAYLAND_DISPLAY=definitely-not-a-display "$HL" --config "$CFG" 2>&1 | head -5
 ```
 
-While you have `$HL`, close out Task 1 step 3's deferred check:
-
-```bash
-ldd "$(readlink -f "$HL" | sed 's/-nixgl.*//')" 2>/dev/null | grep libpam || \
-  sg nix-users -c "nix path-info --recursive $HL" 2>/dev/null | grep linux-pam
-```
-
-Expected: the linux-pam path hyprlock resolves is the patched one — its
-`pam_unix.so` contains `/usr/sbin/unix_chkpwd`.
-
 Expected: it reads the config and then fails to reach a display. A config error
-would name the offending line instead. **Do not run it with a valid
-`WAYLAND_DISPLAY`** — that locks the screen, and until Task 5 proves
-authentication works, unlocking is not guaranteed.
+would name the offending line instead.
+
+**Do not run it with a valid `WAYLAND_DISPLAY`** — that locks the screen, and
+until Task 5 proves authentication works, unlocking is not guaranteed.
 
 **If `source =` turns out not to work**, the spec's stated fallback is to emit
 the `auth` block from `applyHyprlockTheme` in
@@ -301,7 +292,25 @@ to work. Its one sharp edge is already handled — a missing target is an *error
 not a silent skip (`ConfigManager.cpp:562`), which is what step 3's activation
 hook exists for.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Confirm the wrapper resolves the PATCHED pam**
+
+Task 1 step 3 proved a patched hyprlock exists. This proves the one `lock_cmd`
+actually names is that build and not the stock one — a different question, and
+the one that matters at lock time.
+
+```bash
+for p in $(sg nix-users -c "nix path-info --recursive $HL" 2>/dev/null | grep linux-pam); do
+  echo "== $p"
+  strings "$p/lib/security/pam_unix.so" 2>/dev/null | grep chkpwd | head -2
+done
+```
+
+Expected: `/usr/sbin/unix_chkpwd`, and no `/run/wrappers/bin/unix_chkpwd`. If
+the stock path appears here while Task 1 step 3 was clean, `lock_cmd` is
+pointing at an unpatched hyprlock — check that `hyprlock-nixgl` wraps
+`pkgs.hyprlock` and not something re-imported from a different package set.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git commit -m "hypr: lock with Nix's hyprlock, authenticating through common-auth"
