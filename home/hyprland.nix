@@ -68,7 +68,13 @@ in
     enable = true;
     settings = {
       general = {
-        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || ${pkgs.hyprlock}/bin/hyprlock";
+        # hyprlock only searches $HOME/.config/hypr, $XDG_CONFIG_HOME,
+        # $XDG_CONFIG_DIRS and /etc/hypr for its config. hyprlock.conf lives
+        # in the state directory instead, because quickshell's theme switcher
+        # rewrites it at runtime -- without --config here, hyprlock starts,
+        # finds no config anywhere it looks, and exits, and the lock silently
+        # never happens.
+        lock_cmd = "${pkgs.procps}/bin/pidof hyprlock || ${pkgs.hyprlock}/bin/hyprlock --config ${hyprState}/hyprlock.conf";
         before_sleep_cmd = "${pkgs.systemd}/bin/loginctl lock-session";
         after_sleep_cmd = "${pkgs.hyprland}/bin/hyprctl dispatch dpms on";
       };
