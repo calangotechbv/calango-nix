@@ -41,4 +41,9 @@ in
   };
 
   config.calango.hyprConfig = hyprConfig;
+
+  # The only thing Home Manager may own under the state directory. Anything
+  # more would become a read-only store symlink, and quickshell writes all
+  # four of these files at runtime.
+  config.home.file.".local/state/hypr/.keep".text = "";
 }
