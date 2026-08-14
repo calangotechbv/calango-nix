@@ -72,13 +72,17 @@ would cost the unit model that spec 2 depends on.
 
 **5. `nixGL` provides the GL stack, and it can stay pure.** Both machines are
 AMD, so Mesa `radeonsi`. The nixGL README describes `nixGLIntel` as the "Mesa
-OpenGL implementation (intel, amd, nouveau, ...)". That wrapper is not under
-the `auto.` prefix, so it needs no hardware detection and no `--impure`. The
-`auto.*` wrappers exist for the proprietary NVIDIA case, which does not apply
-here. This is an inference from the README rather than a measurement, and
-phase 2 confirms it. A pure build was not a requirement — impurity was
-accepted up front — so if the inference is wrong, `auto.nixGLDefault` with
-`--impure` is the fallback and nothing else in this spec changes.
+OpenGL implementation (intel, amd, nouveau, ...)".
+
+Confirmed from `nixGL/flake.nix` rather than from the README alone. The flake
+exposes `nixGLDefault`, `nixGLNvidia`, `nixGLNvidiaBumblebee` and
+`nixVulkanNvidia` as `pkgs.auto.*`, and `nixGLIntel` and `nixVulkanIntel` as
+plain `pkgs.*`. Only the `auto.*` set reads hardware, so only that set needs
+`--impure`. Impurity was accepted up front and is simply not needed.
+
+The same file shows the overlay attribute is `overlays.default`, and that the
+bare `overlay` is a deprecated alias. It exposes the wrappers under
+`pkgs.nixgl.*`.
 
 **6. nixGL is pinned to the same nixpkgs as everything else.** The nixGL
 README reports a `GLIBC_2.34 not found` failure and names the cause: "a
