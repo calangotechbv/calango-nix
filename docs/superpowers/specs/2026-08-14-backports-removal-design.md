@@ -1,9 +1,9 @@
 # calango-nix spec 5: removing trixie-backports
 
-Makes Nix's hyprlock authenticate on Debian, replaces the last four things apt
-still provides to the session, and removes `trixie-backports` — the source and
-every package of it that can go. Finishes the migration the first four specs
-began.
+Makes Nix's hyprlock authenticate on Debian, moves the last two things apt still
+provides to the session — the lock screen and the Hyprland portal — onto Nix,
+and removes `trixie-backports`: the source, and every package of it that can go.
+Finishes the migration the first four specs began.
 
 ## What the spike established
 
@@ -88,8 +88,14 @@ neither the package list nor the earlier specs would have revealed.
 **Removed, and unused:** `hyprpaper` — the session draws wallpaper with
 `swaybg`.
 
-**Removed, and this spec must replace:** `hyprlock`, `xwayland`,
-`xdg-desktop-portal-hyprland`. See Design.
+**Removed, and this spec must replace:** `hyprlock` and
+`xdg-desktop-portal-hyprland` — both from backports, both currently serving the
+session. See Design.
+
+**Removed, and must be PROTECTED rather than replaced:** `xwayland`. It is
+`2:24.1.6-1` from trixie/main, not a backports package at all; `--autoremove`
+takes it only because apt cannot see that the Nix compositor spawns it. One
+`apt-mark manual` keeps it. Decision 4.
 
 **Removed, and correct to remove:** `calango-desktop-deps`, the old
 repository's dependency metapackage. Nothing in calango-nix references it.
@@ -128,11 +134,30 @@ see Non-goals.
    authentication config in a theme generator and would not take effect until
    the next theme switch.
 
-4. **`xwayland` comes from nixpkgs and goes on the compositor's PATH.** The
-   running `Xwayland` is `/usr/bin/Xwayland`; Nix's hyprland does not bundle one
-   (zero matches in its closure) and `compositorPath` does not carry one. Remove
-   apt's without this and every X11 client breaks — including Chrome, VS Code,
-   deskflow, and `apply-gtk-theme`'s `xrdb` step.
+4. **Xwayland stays Debian's, and is protected from `--autoremove` rather than
+   replaced.** It appears in the removal list, but `apt policy` shows
+   `2:24.1.6-1` from **trixie/main at priority 500** — it is not a backports
+   package. It is swept up only because `--autoremove` sees it orphaned once
+   apt's hyprland goes; the Nix Hyprland that spawns it is invisible to apt.
+   `sudo apt-mark manual xwayland` before the removal is the whole fix.
+
+   The Nix alternative was evaluated and rejected on evidence.
+   `pkgs.xwayland` links `mesa-libgbm` out of the Nix store, which is the
+   `/run/opengl-driver/lib` trap that produced nixGL in spec 1 — the very first
+   bug this project hit. Debian's links `/lib/x86_64-linux-gnu/libgbm.so.1`, the
+   system Mesa that matches the system GPU drivers. Using Nix's would mean a
+   fifth nixGL wrapper, around a long-running server every X11 client depends
+   on, spawned by name from inside the compositor — for no benefit, since
+   Xwayland is not a backports package and removing it was never a goal.
+
+   Getting this wrong breaks every X11 client: Chrome, VS Code, deskflow, and
+   `apply-gtk-theme`'s `xrdb` step.
+
+   The other trixie-sourced packages in the removal list — `libseat1`,
+   `libiniparser4`, `libmuparser2v5`, `libsdbus-c++2`, `libxcb-errors0` — are
+   genuinely orphaned. They were dependencies of apt's hypr packages, Nix's
+   builds carry their own, and nothing in the session invokes them by name.
+   They go.
 
 5. **`xdg-desktop-portal-hyprland` gets a Home Manager user unit.** Nix's binary
    is already in the profile and its `.portal` file already shadows Debian's
@@ -241,8 +266,11 @@ fails, decision 3's fallback is to emit the `auth` block from
 
 ### 3. Xwayland and the portal
 
-`pkgs.xwayland` joins `compositorPath` in `home/session.nix`, with a comment
-naming what needs it. The compositor spawns `Xwayland` by bare name.
+Xwayland needs no Nix work at all — decision 4. The only action is
+`sudo apt-mark manual xwayland` in section 4, *before* the removal, so
+`--autoremove` leaves Debian's in place. Nothing changes in `compositorPath`:
+the compositor spawns `Xwayland` by bare name and finds `/usr/bin/Xwayland`
+through the inherited PATH, exactly as it does today.
 
 `xdg-desktop-portal-hyprland` gets a `systemd.user.services` entry with the
 Nix binary's absolute path, shadowing `/usr/lib/systemd/user/`'s. It needs the
@@ -254,12 +282,19 @@ already discoverable, so no `XDG_DATA_DIRS` work is needed.
 
 Three root actions, in this order, each run by the user:
 
-1. `sudo apt remove --autoremove hyprland hypridle hyprlock hyprpolkitagent hyprpaper hyprland-guiutils`
-2. remove the two `trixie-backports` lines from `/etc/apt/sources.list`
-3. `sudo apt update`
+1. `sudo apt-mark manual xwayland` — decision 4, and it must come first, or
+   step 2 removes it
+2. `sudo apt remove --autoremove hyprland hypridle hyprlock hyprpolkitagent hyprpaper hyprland-guiutils`
+3. remove the two `trixie-backports` lines from `/etc/apt/sources.list`
+4. `sudo apt update`
 
-The order matters: removing the source first would leave apt unable to resolve
-the packages it is about to remove.
+The order matters twice over: `apt-mark` must precede the removal or Xwayland
+goes with it, and removing the source before the packages would leave apt unable
+to resolve what it is about to remove.
+
+A `--dry-run` of step 2 after step 1 must show **25** removals, not 26, with
+`xwayland` absent from the list. If it still names `xwayland`, stop — the
+`apt-mark` did not take.
 
 **This is the irreversible step and the one with no undo inside Nix.** It must
 come *after* the lock screen, Xwayland and the portal are all verified working
@@ -285,8 +320,8 @@ The order is the point: each step must pass before the irreversible one.
 - Nix's hyprlock locks and **unlocks** — run from a spare VT as `nixtest`, so a
   failure costs a VT switch rather than a killed session. Spec 3's lockout
   happened because this test was run on the live session.
-- `Xwayland` resolves to the Nix build on the compositor's PATH, and an X11
-  client still starts.
+- `apt-mark showmanual | grep -x xwayland` returns it, and the step-2 dry run
+  shows 25 removals without `xwayland`.
 - The Nix portal unit is active and a portal-mediated action works — opening a
   link through the browser picker exercises it end to end.
 
