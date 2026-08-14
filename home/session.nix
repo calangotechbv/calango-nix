@@ -12,9 +12,32 @@ let
   hyprland-nixgl = pkgs.writeShellScriptBin "hyprland-nixgl" ''
     exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${pkgs.hyprland}/bin/Hyprland "$@"
   '';
+
+  # uwsm resolves a compositor by desktop entry, and hyprland's own
+  # hyprland.desktop runs bin/start-hyprland -- unwrapped. On a foreign
+  # distribution that entry cannot work: Task 6 rung 1 showed the unwrapped
+  # binary dying with
+  #     MESA-LOADER: failed to open dri: /run/opengl-driver/lib/gbm/dri_gbm.so
+  #     CBackend::create() failed!
+  # because Nix's Mesa looks in /run/opengl-driver/lib, a path that exists on
+  # NixOS and nowhere else. So the session needs an entry of its own whose
+  # Exec is the wrapper. It is added beside hyprland.desktop rather than
+  # replacing it, so the unwrapped entry stays available for comparison.
+  hyprland-nixgl-session = pkgs.runCommand "hyprland-nixgl-session" { } ''
+    mkdir -p "$out/share/wayland-sessions"
+    cat > "$out/share/wayland-sessions/hyprland-nixgl.desktop" <<EOF
+    [Desktop Entry]
+    Name=Hyprland (Nix)
+    Comment=calango-nix, wrapped in nixGLIntel
+    Exec=${hyprland-nixgl}/bin/hyprland-nixgl
+    TryExec=${hyprland-nixgl}/bin/hyprland-nixgl
+    DesktopNames=Hyprland
+    Type=Application
+    EOF
+  '';
 in
 {
-  home.packages = [ hyprland-nixgl ];
+  home.packages = [ hyprland-nixgl hyprland-nixgl-session ];
 
   # Minimal, deliberately. The real configuration is spec 2.
   home.file.".config/hypr/hyprland.conf".text = ''
