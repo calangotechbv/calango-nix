@@ -992,11 +992,32 @@ Manager writes its own units to that same directory.
 - [ ] **Step 1: Record what is linked now**
 
 ```bash
-find ~/.config ~/.local/share/applications ~/.local/bin -maxdepth 3 -type l \
+find ~/.config ~/.local/share/applications ~/.local/bin -maxdepth 4 -type l \
   -lname '*calango-desktop*' 2>/dev/null | sort | tee ~/pre-port-links.txt | wc -l
 ```
 
-Expected: 20 lines. Keep the file; step 4 compares against it.
+Expected: 24 lines. Keep the file; step 4 compares against it.
+
+`-maxdepth 4`, not 3. Two of install.sh's 20 destinations sit four levels
+below `~/.config` — `systemd/user/quickshell.service.d/killmode.conf` and
+`pipewire/pipewire-pulse.conf.d/20-block-source-volume.conf` — so a depth-3
+search finds 19 and reads as a missing link when nothing is missing.
+
+The other four are not install.sh's at all, and they are the reason this step
+matters. `systemctl --user enable` wrote them:
+
+```
+~/.config/systemd/user/graphical-session.target.wants/
+  bt-agent.service        -> ~/Projects/calango-desktop/hypr/systemd/bt-agent.service
+  night-light.service     -> ~/Projects/calango-desktop/hypr/systemd/night-light.service
+  nm-secret-agent.service -> ~/Projects/calango-desktop/hypr/systemd/nm-secret-agent.service
+  quickshell.service      -> ~/Projects/calango-desktop/hypr/systemd/quickshell.service
+```
+
+They point *absolutely into the calango-desktop checkout*, bypassing the
+links in `~/.config/systemd/user` entirely. `install.sh --uninstall` does not
+know about them, so it will not remove them, and because the checkout stays
+they will not dangle either. See step 3.
 
 - [ ] **Step 2: Unlink calango-desktop**
 
@@ -1012,14 +1033,33 @@ lost.
 - [ ] **Step 3: Check nothing is left behind**
 
 ```bash
-find ~/.config ~/.local/share/applications ~/.local/bin -maxdepth 3 -type l \
-  -lname '*calango-desktop*' 2>/dev/null | wc -l
+find ~/.config ~/.local/share/applications ~/.local/bin -maxdepth 4 -type l \
+  -lname '*calango-desktop*' 2>/dev/null
 find ~/.config/systemd/user -xtype l 2>/dev/null
 ```
 
-Expected: `0`, then no output. The second command finds dangling symlinks,
-which is the failure mode that would make `home-manager switch` fail in a
-confusing way.
+Expected: the four `graphical-session.target.wants` links and nothing else,
+then no output. The second command finds dangling symlinks, which is the
+failure mode that would make `home-manager switch` fail in a confusing way.
+
+Then disable the four, which is what actually removes them:
+
+```bash
+systemctl --user disable quickshell.service night-light.service \
+  nm-secret-agent.service bt-agent.service
+find ~/.config ~/.local/share/applications ~/.local/bin -maxdepth 4 -type l \
+  -lname '*calango-desktop*' 2>/dev/null | wc -l
+```
+
+Expected: `0`.
+
+Do not skip this. `graphical-session.target` is the target `uwsm` creates, so
+leaving the four enabled means the Nix session starts calango-desktop's
+quickshell, night-light, nm-secret-agent and bt-agent out of the old checkout
+— which is precisely the "no calango-desktop QML, no theme, no bar" that
+Global Constraint 8 rules out of spec 1, and it would arrive looking like a
+half-working desktop rather than a mistake. `--uninstall` does not do it,
+because it never created these links.
 
 - [ ] **Step 4: Activate Home Manager for `isutton`**
 
