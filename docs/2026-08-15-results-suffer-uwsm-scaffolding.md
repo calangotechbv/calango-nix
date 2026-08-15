@@ -425,3 +425,161 @@ orphaned; only `libnotify-bin` is load-bearing.
 No failed units. `quickshell`, `hypridle`, `hyprpolkitagent`,
 `xdg-desktop-portal-hyprland` and `fumon` all active, with the session still
 running from before the removal.
+
+## Phase 4: what the second reboot found
+
+The reboot at 17:35 came up with a failed unit.
+
+```
+$ systemctl --user list-units --state=failed
+● fumon.service  loaded failed failed  User unit failure monitor
+
+$ journalctl --user -u fumon.service -b
+fumon.service: Unable to locate executable 'fumon': No such file or directory
+fumon.service: Failed at step EXEC spawning fumon: No such file or directory
+fumon.service: Main process exited, code=exited, status=203/EXEC
+... (five restarts) ...
+fumon.service: Start request repeated too quickly.
+```
+
+Not the `libnotify-bin` landmine recorded above: `/usr/bin/notify-send` was
+present and the `ExecCondition` exited 0. The failure is `ExecStart`.
+
+### systemd does not use the manager's PATH
+
+`fumon.service` is the one unit in uwsm's set whose `ExecStart` is a bare
+name. The comment written into `home/uwsm.nix` in Task 1 claimed that bare
+name resolves against the user manager's `PATH`, and that since uwsm's store
+`bin` is on that `PATH`, the name would reach Nix's copy. Both halves of the
+premise were true. The conclusion was wrong, because the premise is not the
+rule systemd applies.
+
+systemd resolves a relative `ExecStart` against a search path fixed **when
+systemd was compiled** — on Debian, `/usr/local/bin:/usr/bin:/bin` and the
+`sbin` variants. The manager's `PATH` does not enter into it. No `/nix/store`
+path can appear in a compile-time constant, so no amount of environment
+arrangement could have made the bare name work here.
+
+The bug is invisible on NixOS, whose systemd is patched to search the system
+profile. It was invisible on this machine too, for as long as apt's uwsm
+supplied `/usr/bin/fumon`.
+
+### What that means about the Phase 2 gate
+
+For the whole of Phase 1 and Phase 2, `fumon.service` was **Nix's unit file
+running Debian's binary.**
+
+The Phase 2 gate did not catch it. It could not: it compared
+`FragmentPath` for every session unit and confirmed each one resolved under
+`~/.config/systemd/user`. Every unit did. The gate measured where the unit
+*files* came from and never asked where their *executables* resolved to, so a
+unit half-migrated read as fully migrated.
+
+That is the defect this project keeps producing — cataloguing by one
+syntactic form and missing the rest — appearing this time in the verification
+layer rather than in the thing being verified. Phase 3 was authorised by a
+gate with a hole in it. The removal happened to be safe anyway, but it was not
+*shown* to be safe.
+
+### The fix
+
+Enumerating all fourteen units first, rather than patching the one that
+failed:
+
+```
+$ grep -nE '^(ExecStart|ExecStop|ExecCondition|ExecStartPre|ExecStartPost)=' \
+    /nix/store/mafjfhm7pyzjk2ry1sp9xxz4lf07q7n3-uwsm-0.26.4/share/systemd/user/*
+wayland-session-waitenv.service:15:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux waitenv
+wayland-wm-app-daemon.service:11:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux app-daemon
+wayland-session-bindpid@.service:13:ExecStart=/bin/sh -c "... /nix/store/...-util-linux-2.42.2-bin/bin/waitpid ..."
+fumon.service:9:ExecCondition=/bin/sh -c "command -v notify-send > /dev/null"
+fumon.service:10:ExecStart=fumon
+wayland-wm-env@.service:21:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux prepare-env -- "%I"
+wayland-wm@.service:22:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux exec -- %I
+```
+
+Thirteen of fourteen carry a fully substituted store path. `fumon.service` is
+the only relative `Exec` line in the set — a single miss in nixpkgs'
+substitution, invisible on the platform nixpkgs targets.
+
+`home/uwsm.nix` now patches it inside the `uwsmUnits` derivation:
+
+```nix
+substituteInPlace "$out/fumon.service" \
+  --replace-fail 'ExecStart=fumon' 'ExecStart=${pkgs.uwsm}/bin/fumon'
+```
+
+`--replace-fail` rather than `--replace`, so that upstream substituting the
+path itself becomes a build error here instead of a stale patch that silently
+does nothing. Same contract as the unit-set check beside it: the build is
+required to tell us when its input moves. The guard was verified by mutating
+the pattern to one that does not occur — the build fails, as intended.
+
+### The gate, re-run on a clean boot
+
+Boot at 17:46, after the fix.
+
+```
+$ systemctl --user list-units --state=failed
+0 loaded units listed.
+
+$ systemctl --user show fumon.service -p MainPID -p NRestarts -p ExecStart
+MainPID=3465
+NRestarts=0
+ExecStart={ path=/nix/store/...-uwsm-0.26.4/bin/fumon ; ... }
+
+$ tr '\0' ' ' < /proc/3465/cmdline
+/nix/store/...-bash-interactive-5.3p9/bin/sh /nix/store/...-uwsm-0.26.4/bin/.fumon-wrapped
+
+$ grep -c '/usr/' /proc/3465/maps
+0
+```
+
+`NRestarts=0` matters: it started on the first attempt at boot, which a warm
+`systemctl start` after the switch could not have demonstrated. Zero `/usr/`
+mappings in the running process is the executable-provenance check the Phase 2
+gate should have made.
+
+Twelve units resolve under `~/.config/systemd/user`.
+`graphical-session.target` and `graphical-session-pre.target` remain
+`/usr/lib/systemd/user`, which is correct — they belong to systemd, not to
+uwsm. Neither `/usr/bin/uwsm` nor `/usr/bin/fumon` exists. All five services
+active.
+
+### Two more checks that could not have failed
+
+Running Phase 4 as written turned up two further checks that do not test what
+they claim.
+
+```
+$ dpkg-query -W -f='${Version}' uwsm
+0.26.4+ds-2~bpo13+1
+$ echo $?
+0
+```
+
+The plan's survivor count used `dpkg-query -W -f='${Version}'` and treated a
+non-zero exit as `GONE`. For a package in `rc` state — removed, conffiles
+retained, which is exactly what `apt remove` leaves — `dpkg-query` prints the
+version and exits 0. The check would have counted `uwsm` among the survivors
+and reported six. Asking for the status field instead:
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev}' uwsm
+rc
+```
+
+Five installed, one `rc`, and `dpkg -L uwsm` lists no file that still exists
+on disk.
+
+The second: `pgrep -x fumon`, the plan's bare-name resolution check, matches
+nothing at all. Nix wraps the binary, so the process is `.fumon-wrapped`. The
+check printed an empty result during the failure and would have printed the
+same empty result on success. It was incapable of distinguishing the two
+states it existed to distinguish.
+
+Three checks in this spec's own verification — the Phase 2 gate, the survivor
+count, and the bare-name resolution — were unable to detect the condition they
+were written to detect. All three failed the same way: they measured a proxy
+that was easier to reach than the property, and the proxy held while the
+property did not.
