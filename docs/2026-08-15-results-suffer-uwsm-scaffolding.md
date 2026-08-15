@@ -583,3 +583,227 @@ count, and the bare-name resolution — were unable to detect the condition they
 were written to detect. All three failed the same way: they measured a proxy
 that was easier to reach than the property, and the proxy held while the
 property did not.
+
+## Did it work?
+
+| Question | Before | After |
+|---|---|---|
+| What supplies the session's unit templates? | `/usr/lib/systemd/user` (apt's uwsm), position 15 | `~/.config/systemd/user` (the flake), position 5 |
+| What does `wayland-wm@` execute? | `/usr/bin/uwsm` (Debian) | `/nix/store/…-uwsm-0.26.4/bin/uwsm` |
+| What does `wayland-session-bindpid@` execute? | Debian's Python shim, `uwsm aux waitpid` | `/nix/store/…-util-linux-2.42.2-bin/bin/waitpid -e` |
+| What does `fumon.service` execute? | `/usr/bin/fumon` (Debian) — while its unit file was already Nix's | `/nix/store/…-uwsm-0.26.4/bin/fumon` |
+| `uwsm` package state | `ii 0.26.4+ds-2~bpo13+1` | `rc` — removed, and `dpkg -L` reports no file left on disk |
+| backports packages installed | 6 | 5 |
+| Two copies of uwsm able to drift apart? | yes — Debian's units calling Debian's binary, Nix's binary on `PATH` | no — one copy, pinned by the flake |
+
+Six rows are wins. The fourth is the interesting one, and it was not a win
+until the last reboot of the spec: for the whole of Phase 1 and Phase 2 that
+row read *Nix's unit file, Debian's binary*, and nothing in the plan was
+capable of noticing.
+
+## Every defect, and who owns it
+
+### The spec asserted `home.file` units sit outside sd-switch's set. False.
+
+**Owner: the spec's first draft. Caught before implementation.**
+
+The draft argued that because the units are installed through `home.file`
+rather than `systemd.user.services`, Home Manager's `sd-switch` integration
+would not see them, so activation could not disturb a running session.
+
+Reading the generated activation script disproved it:
+
+```
+sd-switch --old-units $oldGenPath/home-files/.config/systemd/user \
+          --new-units $newGenPath/home-files/.config/systemd/user
+```
+
+`sd-switch` runs against **directories**, not against Home Manager's list of
+module-declared units — and `home-files/.config/systemd/user` is precisely
+where `home.file` entries land. All fourteen would be seen as newly added.
+
+Cost if it had shipped: a `home-manager switch` run from inside the desktop
+session, restarting the compositor unit out from under it. The correction
+added Phase 0 (read the dry run) and Phase 1 (switch from a TTY), which is
+what made the rest of the spec safe.
+
+### The same spec named the wrong mechanism for the hazard it correctly predicted.
+
+**Owner: the spec. Caught by Task 2's dry run.**
+
+Having identified the risk, the spec attributed it to
+`wayland-session-shutdown.target` and its `Conflicts=graphical-session.target`.
+The actual dry-run plan does not mention that target at all. The real
+mechanism is an ordinary stop-then-start of
+`wayland-wm@hyprland\x2dnixgl.desktop.service`.
+
+Right risk class, wrong mechanism. Worth recording because the mitigation the
+flawed reasoning produced — sequence the first switch from a TTY — was
+correct for the real mechanism too. The plan was saved by a precaution
+derived from a wrong premise, which is luck, not method.
+
+### `home/uwsm.nix` documented a rule systemd does not have.
+
+**Owner: Task 1. Caught by Task 6, after the irreversible step.**
+
+Covered in full under Phase 4 above. The comment asserted that a bare
+`ExecStart` resolves against the service manager's `PATH`. It does not; it
+resolves against a path fixed when systemd was compiled. The premise was
+checked and true, the conclusion was false, and the two were connected by a
+rule that was never verified.
+
+This is the only defect in the spec that reached a reboot, and it reached one
+because it was written into a comment as though it were a measurement.
+
+### Three of this spec's own checks could not detect what they tested for.
+
+**Owner: the plan. Two caught in Task 6, one only in hindsight.**
+
+| Check | Claimed to establish | What it actually did |
+|---|---|---|
+| The Phase 2 gate | the session runs on Nix | compared `FragmentPath` only — passed a unit whose binary was Debian's |
+| `dpkg-query -W -f='${Version}'` | `uwsm` is gone | prints a version and exits 0 for `rc` packages; would have reported six survivors |
+| `pgrep -x fumon` | fumon resolves into the store | matches nothing ever — Nix wraps it as `.fumon-wrapped`; empty output in both states |
+
+The first is the serious one. Phase 3's removal is not reversible through
+apt, and it was authorised by a gate that could not see the condition that
+later failed. The removal was safe, but that was not established at the time
+it was taken.
+
+### A landmine the plan did not anticipate
+
+Recorded in full under Phase 3 above: removing `uwsm` orphaned
+`libnotify-bin`, which provides `notify-send`, which is `fumon.service`'s
+`ExecCondition`. `apt autoremove` would stop `fumon` starting without
+producing a failed unit. Still unfixed, deliberately — it is a scope
+decision, not session scaffolding.
+
+## The recurring defect, counted
+
+Spec 5's results document named this project's signature defect: cataloguing
+by one syntactic form and missing the rest. Spec 6 produced three more
+instances, and the shape has shifted.
+
+1. `home/uwsm.nix` guards against it directly — the hardcoded unit list is
+   cross-checked against the real directory at build time, so a stale list is
+   a build error. That guard worked; the unit *set* never drifted.
+2. But the guard checked the set of unit **names** and nothing about their
+   **contents**. `ExecStart=fumon` sat inside a file the check had already
+   approved.
+3. The fix enumerated all fourteen units' `Exec*` lines before patching the
+   one that failed, and found that thirteen were already absolute. That
+   enumeration is what makes the patch defensible as minimal rather than
+   lucky.
+
+The pattern across all three: **a check that measures a proxy because the
+proxy is easier to reach than the property.** File names instead of file
+contents. Unit paths instead of executable paths. Exit codes instead of
+package states. Each proxy held while the property it stood for did not.
+
+## What is still true
+
+### Five backports packages remain, and none of them is pinned by anything
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' …
+ii  libcpptrace1        1.0.4-2~bpo13+1
+ii  libxkbcommon0       1.13.1-1~bpo13+1
+ii  libxkbcommon-x11-0  1.13.1-1~bpo13+1
+ii  quickshell          0.3.0-1~bpo13+1
+ii  ydotool             1.0.4-2~bpo13+1
+rc  uwsm                0.26.4+ds-2~bpo13+1
+```
+
+The backports suite is not in `sources.list` or `sources.list.d` — spec 5
+removed it. `apt-cache policy` shows what that means for each survivor:
+`libcpptrace1`, `quickshell` and `ydotool` have **no downloadable source at
+all**, existing only in `/var/lib/dpkg/status` at priority 100. They are
+frozen in the same sense `uwsm` was: unremovable-and-restorable only via
+`dpkg-repack`.
+
+**Correction to the record.** Spec 5's results document said the xkbcommon
+pins were held by three packages; this plan's Task 7 brief said four, naming
+`google-chrome-stable`, `deskflow`, `kwin-x11` and `code`. Both are wrong,
+and wrong in kind rather than in count:
+
+```
+$ # installed (ii) packages depending on libxkbcommon0 or -x11-0
+42
+$ # the highest version constraint any of them expresses
+1.0.0    kitty, kdeconnect, fuzzel, foot, deskflow
+0.7.0~   kwin-x11
+```
+
+Forty-two installed packages depend on these libraries, and the strongest
+constraint among them is `>= 1.0.0`. Trixie's own `libxkbcommon0` is
+`1.7.0-2`, which satisfies every one of them. **Nothing requires the
+backport.** The earlier documents counted packages that depend on the
+*package* and described them as holding the *backport version* — a third
+instance of the proxy problem, in the record rather than in a script.
+
+What this means practically is left for a later spec: these two are the only
+survivors that could be returned to trixie's own version rather than frozen,
+and whether that is worth a downgrade is a question this spec did not ask.
+
+### Debian's Hyprland stack is fully gone
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' hyprlock hyprland
+dpkg-query: no packages found matching hyprland
+rc  hyprlock
+```
+
+`hyprland` is not present in any state; `hyprlock` is `rc`. This confirms the
+correction made to `home/session.nix:73` in Task 1 — the comment there had
+justified prepending to `PATH` on the premise that apt's Hyprland, `hyprctl`
+and `hyprlock` were all still installed under `/usr/bin`, and that premise had
+expired. Note that `hyprlock` being `rc` is why it still appears in raw
+`dpkg-query` dependency scans; filtering to `ii` is required to get an honest
+answer, which is how the 42-package count above was produced.
+
+### One file outside `$HOME`
+
+```
+$ ls -l /usr/local/share/wayland-sessions/
+-rw-r--r-- 1 root root 288 Aug 14 03:25 hyprland-nix.desktop
+```
+
+Still the only thing this project installs outside the home directory, and
+still necessary — greetd reads session desktop files from system paths.
+
+## What the next spec inherits
+
+**`ydotool` is a loose end, and a small one.** No consumer anywhere in the
+flake: the single hit is a comment in `home/default.nix:41` saying it belongs
+to spec 3. `ydotoold` is running — as **one** process, `3048 /usr/bin/ydotoold`,
+correcting the "two processes" figure carried in this plan's brief. There is
+no `ydotool` in `~/.nix-profile/bin`. Probably one commit, not a spec: decide
+whether anything wants it, then either package it or remove it.
+
+**The rollback rule is permanently inverted.** Before this spec, a previous
+Home Manager generation was always a safe recovery path. It is not any more.
+Apt's uwsm units are gone and only the current generation supplies
+replacements, so rolling back produces a system with no session scaffolding
+at all. Recovery is now: fix forward with `home-manager switch` from tty1, or
+`sudo dpkg -i /root/pkg-archive/uwsm_0.26.4+ds-2~bpo13+1_amd64.deb`. Note the
+repack lives in **root's** home, not `~isutton`.
+
+**`ttyautolock` and `wait-tray` are not on the system** — neither is on
+`PATH` after the removal. This document does not assert they came from
+`uwsm`: verifying that requires reading the repacked `.deb`, which needs root,
+and it was not done. If either turns out to be wanted, note that Nix's
+`pkgs.uwsm` ships neither — its `bin/` is `fumon`, `uuctl`, `uwsm`,
+`uwsm-app`, `uwsm-terminal`, `uwsm-terminal-scope`, `uwsm-terminal-service`.
+
+**`/run/opengl-driver` is still open and still demoted.** `mesa-26.1.5`
+carries no `/run/opengl-driver` reference, so only libglvnd's EGL vendor
+lookup is covered by the symlink. The claim that it retires all five nixGL
+wrappers is not established. See the amended bullet in spec 5's results
+document.
+
+**The verification lesson is the one worth carrying.** Every check this spec
+wrote that compared a path or an exit code passed while the thing it stood
+for was false. Checks that read a running process — `/proc/PID/cmdline`,
+`/proc/PID/maps`, `NRestarts` — did not. A gate that authorises an
+irreversible step should measure the running system, not the files that are
+supposed to describe it.
