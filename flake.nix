@@ -140,6 +140,7 @@
           ./home/gtk.nix
           ./home/apps.nix
           ./home/services.nix
+          ./home/uwsm.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";
