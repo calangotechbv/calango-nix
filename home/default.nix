@@ -62,6 +62,17 @@ in
     # ~/.nix-profile/bin precedes /usr/bin.
     libnotify
 
+    # inotifywait and inotifywatch, as an interactive tool. Orphaned out of
+    # Debian by the same uwsm removal, but on a different footing from
+    # libnotify above: nothing depends on it. No installed package, and no
+    # call anywhere in this repo, ~/.config or ~/.local/bin. Kept because it
+    # is wanted on hand, not because anything breaks without it -- so if a
+    # later cleanup wonders why this line exists, that is the whole reason.
+    #
+    # Note this only reaches shells that inherit the graphical session's
+    # environment. A bare TTY or ssh login does not get ~/.nix-profile/bin.
+    inotify-tools
+
     # The GL stack. nixGLIntel is the Mesa wrapper and covers AMD; it sits
     # outside nixGL's auto.* set, so it needs no --impure.
     pkgs.nixgl.nixGLIntel
