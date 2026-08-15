@@ -55,9 +55,14 @@ let
     actual="$(cd ${pkgs.uwsm}/share/systemd/user && LC_ALL=C ls -1 | LC_ALL=C sort | tr '\n' ' ')"
     actual="''${actual% }"
     if [ "$expected" != "$actual" ]; then
+      # Print only the difference. Two 14-item lines exceed Nix's default log
+      # tail and leave the reader to diff them by eye; the added and removed
+      # names are what the fix actually needs.
       echo "uwsm's unit set has changed." >&2
-      echo "  expected: $expected" >&2
-      echo "  actual:   $actual" >&2
+      echo "$expected" | tr ' ' '\n' | LC_ALL=C sort > expected.txt
+      echo "$actual"   | tr ' ' '\n' | LC_ALL=C sort > actual.txt
+      LC_ALL=C comm -13 expected.txt actual.txt | sed 's/^/  added:   /' >&2
+      LC_ALL=C comm -23 expected.txt actual.txt | sed 's/^/  removed: /' >&2
       echo "Update unitNames in home/uwsm.nix, then check that every added or" >&2
       echo "removed unit is accounted for in the session before shipping it." >&2
       exit 1
@@ -67,10 +72,36 @@ let
     chmod -R u+w "$out"
 
     # --replace-fail, so that upstream fixing this is a build error here rather
-    # than a silent no-op that leaves a stale patch in place forever. Same
-    # contract as the unit-set check above: we are told when the input moves.
+    # than a silent no-op that leaves a stale patch in place forever.
+    test -x ${pkgs.uwsm}/bin/fumon
     substituteInPlace "$out/fumon.service" \
       --replace-fail 'ExecStart=fumon' 'ExecStart=${pkgs.uwsm}/bin/fumon'
+
+    # The two checks above are both exact: one on the set of unit *names*, one
+    # on a single byte string. Neither says anything about the other thirteen
+    # files' contents, and the defect that reached a reboot lived precisely
+    # there -- inside a file whose name the check had already approved. So
+    # assert the actual property we depend on, over every unit at once: after
+    # patching, no Exec directive anywhere may be a relative program name.
+    #
+    # `^Exec[A-Za-z]*=` rather than a list of directive names. Enumerating the
+    # directives by hand is what produced the bug: a hand-written list here
+    # missed ExecStopPost=, which happens to be absolute, and would equally
+    # have missed a relative one. The prefix characters @ - : + ! are systemd's
+    # exec modifiers and are stripped before the path is examined.
+    relative="$(
+      grep -hE '^Exec[A-Za-z]*=' "$out"/* \
+        | sed -E 's/^Exec[A-Za-z]*=//; s/^[@:+!-]+//' \
+        | awk 'NF && $1 !~ /^\// { print }'
+    )" || true
+    if [ -n "$relative" ]; then
+      echo "uwsm ships an Exec directive that is not an absolute path:" >&2
+      echo "$relative" | sed 's/^/  /' >&2
+      echo "systemd resolves these against a compile-time search path, not" >&2
+      echo "the manager's PATH, and no /nix/store entry is on it. Patch the" >&2
+      echo "directive in home/uwsm.nix the way ExecStart=fumon is patched." >&2
+      exit 1
+    fi
   '';
 
   unitLinks = lib.listToAttrs (map

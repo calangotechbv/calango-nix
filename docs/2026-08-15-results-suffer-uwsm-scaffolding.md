@@ -44,8 +44,11 @@ Keeping unchanged units: bt-agent.service, hypridle.service, hyprpolkitagent.ser
 Starting units: app-graphical.slice, background-graphical.slice, fumon.service, wayland-session-bindpid@2963.service, wayland-session-envelope@hyprland\x2dnixgl.desktop.target, wayland-session-xdg-autostart@hyprland\x2dnixgl.desktop.target, wayland-session@hyprland\x2dnixgl.desktop.target, wayland-wm@hyprland\x2dnixgl.desktop.service
 ```
 
-Full output is also saved at
-`.superpowers/sdd/2026-08-15-uwsm-session-scaffolding/sd-switch-plan.txt`.
+That block is the plan in full — every line `sd-switch --dry-run` emitted.
+The `grep` commands below were run against a scratch copy at
+`.superpowers/sdd/2026-08-15-uwsm-session-scaffolding/sd-switch-plan.txt`,
+which was git-ignored working state and no longer exists; they are reproduced
+for the record, and reproduce identically against the block above.
 
 ### Question 1: does `wayland-session-shutdown.target` appear in any *start* action?
 
@@ -317,11 +320,23 @@ $ pgrep -af waitpid
 3170 /nix/store/…-util-linux-2.42.2-bin/bin/waitpid -e 3081
 ```
 
-The handover survives a reboot: nothing from apt's `uwsm` executes, and the
-Python `waitpid` shim is still replaced by util-linux's binary. The package is
-now inert on disk, which is what makes the next step safe to take.
+The handover survives a reboot: nothing matching `/usr/bin/uwsm` executes, and
+the Python `waitpid` shim is still replaced by util-linux's binary.
 
 **Gate verdict: passed.** Phase 3 is authorised.
+
+> **Correction, written after Phase 4.** The two sentences that stood here
+> originally — "nothing from apt's `uwsm` executes" and "the package is now
+> inert on disk, which is what makes the next step safe to take" — were false
+> when written, and they are the sentences that carried the gate to the
+> irreversible step.
+>
+> `pgrep -af "/usr/bin/uwsm"` matches one path. Apt's `uwsm` package also
+> installs `/usr/bin/fumon`, and that binary *was* executing at this moment,
+> as `fumon.service`'s main process. The check searched for the name it
+> expected the leftovers to have. A fourth defective check, in other words,
+> and the most consequential of them: it is the one the removal was authorised
+> on. See "Every defect, and who owns it" below.
 
 ## Phase 3: the irreversible step
 
@@ -493,7 +508,7 @@ Enumerating all fourteen units first, rather than patching the one that
 failed:
 
 ```
-$ grep -nE '^(ExecStart|ExecStop|ExecCondition|ExecStartPre|ExecStartPost|ExecReload)=' \
+$ grep -nE '^Exec[A-Za-z]*=' \
     /nix/store/mafjfhm7pyzjk2ry1sp9xxz4lf07q7n3-uwsm-0.26.4/share/systemd/user/*
 wayland-session-waitenv.service:15:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux waitenv
 wayland-wm-app-daemon.service:11:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux app-daemon
@@ -501,25 +516,58 @@ wayland-session-bindpid@.service:13:ExecStart=/bin/sh -c "... /nix/store/...-uti
 fumon.service:9:ExecCondition=/bin/sh -c "command -v notify-send > /dev/null"
 fumon.service:10:ExecStart=fumon
 wayland-wm-env@.service:21:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux prepare-env -- "%I"
+wayland-wm-env@.service:22:ExecStopPost=/nix/store/...-uwsm-0.26.4/bin/uwsm aux cleanup-env
 wayland-wm@.service:22:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux exec -- %I
 ```
 
-Thirteen of fourteen carry a fully substituted store path. `fumon.service` is
-the only relative `Exec` line in the set — a single miss in nixpkgs'
-substitution, invisible on the platform nixpkgs targets.
+Eight `Exec*` directives across six of the fourteen units. Seven carry a fully
+substituted store path; `fumon.service`'s `ExecStart` is the only relative one
+— a single miss in nixpkgs' substitution, invisible on the platform nixpkgs
+targets.
 
-`home/uwsm.nix` now patches it inside the `uwsmUnits` derivation:
+**That command is not the one this section originally showed.** The first
+version listed the directive names by hand — `ExecStart|ExecStop|ExecCondition|ExecStartPre|ExecStartPost|ExecReload`
+— and so returned seven lines rather than eight, missing
+`wayland-wm-env@.service`'s `ExecStopPost=`. The missed line happens to be
+absolute, so the conclusion held. But the enumeration was being offered as
+proof that the patch was minimal rather than lucky, and it was itself an
+incomplete enumeration produced by cataloguing one syntactic form by hand —
+inside the section diagnosing exactly that. Found by the final branch review,
+not by me. `^Exec[A-Za-z]*=` is the pattern that cannot miss one.
+
+`home/uwsm.nix` patches the relative directive inside the `uwsmUnits`
+derivation:
 
 ```nix
+test -x ${pkgs.uwsm}/bin/fumon
 substituteInPlace "$out/fumon.service" \
   --replace-fail 'ExecStart=fumon' 'ExecStart=${pkgs.uwsm}/bin/fumon'
 ```
 
 `--replace-fail` rather than `--replace`, so that upstream substituting the
 path itself becomes a build error here instead of a stale patch that silently
-does nothing. Same contract as the unit-set check beside it: the build is
-required to tell us when its input moves. The guard was verified by mutating
-the pattern to one that does not occur — the build fails, as intended.
+does nothing.
+
+That is still an exact check on one byte string, and exact checks are what
+this whole document is about. It says nothing about a *different* relative
+`Exec` appearing in some other unit on the next nixpkgs bump — which is the
+same failure, in a file whose name the unit-set check would have approved. So
+the derivation also asserts the property itself, over every unit at once:
+
+```sh
+relative="$(
+  grep -hE '^Exec[A-Za-z]*=' "$out"/* \
+    | sed -E 's/^Exec[A-Za-z]*=//; s/^[@:+!-]+//' \
+    | awk 'NF && $1 !~ /^\// { print }'
+)" || true
+[ -n "$relative" ] && { ...; exit 1; }
+```
+
+`^Exec[A-Za-z]*=` there for the same reason as above: a hand-written list of
+directive names is the bug. Both guards were verified by mutation — the
+unit-set check by adding a name that does not exist, the relative-Exec check
+by pointing the substitution at a bare name and confirming the build fails
+with the message above.
 
 ### The gate, re-run on a clean boot
 
@@ -719,20 +767,29 @@ rule that was never verified.
 This is the only defect in the spec that reached a reboot, and it reached one
 because it was written into a comment as though it were a measurement.
 
-### Three of this spec's own checks could not detect what they tested for.
+### Five of this spec's own checks could not detect what they tested for.
 
-**Owner: the plan. Two caught in Task 6, one only in hindsight.**
+**Owner: the plan. Two caught in Task 6, three only by the final review.**
 
 | Check | Claimed to establish | What it actually did |
 |---|---|---|
 | The Phase 2 gate | the session runs on Nix | compared `FragmentPath` only — passed a unit whose binary was Debian's |
+| `pgrep -af "/usr/bin/uwsm"` | nothing from apt's uwsm executes | matches one path; apt's uwsm also ships `/usr/bin/fumon`, which *was* running |
 | `dpkg-query -W -f='${Version}'` | `uwsm` is gone | prints a version and exits 0 for `rc` packages; would have reported six survivors |
 | `pgrep -x fumon` | fumon resolves into the store | matches nothing ever — Nix wraps it as `.fumon-wrapped`; empty output in both states |
+| the hand-listed `Exec*` grep | every Exec directive was enumerated | omitted `ExecStopPost=`; returned seven of eight lines |
 
-The first is the serious one. Phase 3's removal is not reversible through
-apt, and it was authorised by a gate that could not see the condition that
-later failed. The removal was safe, but that was not established at the time
-it was taken.
+The first two are the serious ones, and they are the same mistake twice:
+both were run as the gate on Phase 3, and Phase 3 is not reversible through
+apt. The removal was safe. That it was safe was not established at the time it
+was taken — the gate could not see the condition that failed two reboots
+later, and the sentence declaring apt's uwsm inert was false as written.
+
+The fifth is the one with a lesson about this document rather than about the
+system: it was the enumeration offered as evidence that the fix was minimal,
+and it was incomplete in exactly the way the surrounding paragraphs describe.
+It was caught by a reviewer, after the branch had already been declared
+finished.
 
 ### A landmine the plan did not anticipate
 
@@ -745,7 +802,7 @@ decision, not session scaffolding.
 ## The recurring defect, counted
 
 Spec 5's results document named this project's signature defect: cataloguing
-by one syntactic form and missing the rest. Spec 6 produced three more
+by one syntactic form and missing the rest. Spec 6 produced five more
 instances, and the shape has shifted.
 
 1. `home/uwsm.nix` guards against it directly — the hardcoded unit list is
@@ -754,15 +811,31 @@ instances, and the shape has shifted.
 2. But the guard checked the set of unit **names** and nothing about their
    **contents**. `ExecStart=fumon` sat inside a file the check had already
    approved.
-3. The fix enumerated all fourteen units' `Exec*` lines before patching the
-   one that failed, and found that thirteen were already absolute. That
-   enumeration is what makes the patch defensible as minimal rather than
-   lucky.
+3. The gate that authorised the irreversible removal searched for
+   `/usr/bin/uwsm` — one name from a package that installs several — and
+   declared the package inert while `/usr/bin/fumon` was running.
+4. Two verification commands (`dpkg-query` on version, `pgrep -x fumon`) were
+   incapable of returning a distinguishing answer at all.
+5. The `Exec*` enumeration written to prove the fix was minimal listed the
+   directive names by hand and missed `ExecStopPost=`.
 
-The pattern across all three: **a check that measures a proxy because the
-proxy is easier to reach than the property.** File names instead of file
-contents. Unit paths instead of executable paths. Exit codes instead of
-package states. Each proxy held while the property it stood for did not.
+The pattern across all five: **a check that measures a proxy because the proxy
+is easier to reach than the property.** File names instead of file contents.
+Unit paths instead of executable paths. One binary's name instead of a
+package's file list. Exit codes instead of package states. A hand-written list
+of directive names instead of the directive syntax. Each proxy held while the
+property it stood for did not.
+
+The last three were found by reviewers rather than by running the plan, two of
+them after the work had been called finished. That is the honest summary of
+this spec's method: the checks it wrote were weaker than the checks it wrote
+*about*, and the gap was closed by someone reading them adversarially rather
+than by the checks themselves failing.
+
+The code now asserts the property instead of a proxy: every `Exec*` value in
+every unit must be an absolute path, matched by directive *syntax* rather than
+by a list of names. That is the one guard here that could have caught the
+defect that reached a reboot.
 
 ## What is still true
 
