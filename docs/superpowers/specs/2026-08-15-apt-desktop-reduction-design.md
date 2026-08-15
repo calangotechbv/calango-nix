@@ -93,7 +93,7 @@ come from `gtk.portal`. A removal pass aimed at "the KDE portal stuff" that
 also swept `xdg-desktop-portal-gtk` would break file pickers in exactly the
 applications that must not break.
 
-There is no `Hyprland-portals.conf`. Backend selection today is therefore
+There is no `hyprland-portals.conf`. Backend selection today is therefore
 *accidental*: `gtk.portal` declares `UseIn=gnome`, which does not match this
 session, and it wins only as a fallback. Removing competing backends would
 silently change which backend serves which interface.
@@ -110,11 +110,25 @@ which applies under LXQt and not here.
 | `xdg-desktop-portal` (frontend) | `1.20.3+ds-1` | `1.22.1` |
 
 Same upstream version, strict superset of interfaces. The discovery mechanism
-is already proven on this machine: `XDG_DATA_DIRS` places
-`/home/isutton/.nix-profile/share` first, ahead of `/usr/share`, and Debian's
-portal frontend is at this moment activating Nix's hyprland backend through a
-D-Bus service file in `~/.nix-profile/share/dbus-1/services`. Nix's gtk backend
-would be found by the identical route and would shadow Debian's.
+is already proven on this machine, in two parts, because two different
+processes read two different files:
+
+- The `.portal` file is read by xdg-desktop-portal itself, under the
+  graphical session's own environment, where `XDG_DATA_DIRS` places
+  `/home/isutton/.nix-profile/share` first, ahead of `/usr/share`. Nix's
+  hyprland backend is already found this way, with no extra wiring.
+- The D-Bus *activation* file is read by dbus-broker's activation scanner,
+  which starts under the session bus's own, earlier environment.
+  Checked directly against the bus's own PID
+  (`systemctl --user show dbus.service -p MainPID --value`, then
+  `tr '\0' '\n' < /proc/<pid>/environ | grep XDG_DATA_DIRS`): that
+  environment's `XDG_DATA_DIRS` does **not** contain `~/.nix-profile/share`.
+  Nix's hyprland backend is found here only because its D-Bus service file is
+  additionally copied to `~/.local/share/dbus-1/services` — `XDG_DATA_HOME`,
+  which the bus does search — via an explicit `xdg.dataFile` entry (see
+  `home/services.nix`). Nix's gtk backend needs the identical treatment: its
+  `.portal` file is found for free, but its D-Bus service file needs the same
+  `xdg.dataFile` copy.
 
 ### The backports survivors
 
@@ -165,7 +179,7 @@ boundary is convenient as well as correct.
 version, superset of interfaces, proven discovery mechanism, and the swap is
 reversible by deleting one line until the apt package is removed.
 
-**Backend selection becomes explicit.** A `Hyprland-portals.conf` is written
+**Backend selection becomes explicit.** A `hyprland-portals.conf` is written
 before any backend is removed, so the removal is a no-op rather than a
 reshuffle.
 
@@ -205,7 +219,7 @@ measured.
 |---|---|---|---|
 | 1 | `tasksel`, `tasksel-data`, 136 `task-*` metapackages | 138 | yes — all downloadable from trixie |
 | 2 | KDE applications and their sweep | 82 | yes — all downloadable from trixie |
-| 3a | Add Nix's `xdg-desktop-portal-gtk`; write `Hyprland-portals.conf` | 0 removed | yes — delete one line |
+| 3a | Add Nix's `xdg-desktop-portal-gtk`; write `hyprland-portals.conf` | 0 removed | yes — delete one line |
 | 3b | Remove Debian's gtk, kde and lxqt backends | 3 + sweep | yes — all downloadable from trixie |
 | 4 | apt's `quickshell`, `libcpptrace1` (+ `libdwarf1`, `libjemalloc2`) | 4 | **no** — repack first |
 | 5 | xkbcommon downgraded to trixie `1.7.0-2` | 2 | **no** — repack first |
@@ -244,21 +258,29 @@ Nothing in the sweep touches `greetd`, `systemd`, `dbus`, or `polkit`.
 
 ### Phase 3a — Nix's gtk backend, shadowing
 
-Add `xdg-desktop-portal-gtk` to `home.packages`. Its `.portal` file and D-Bus
-service file land under `~/.nix-profile/share`, which precedes `/usr/share` in
-both `XDG_DATA_DIRS` and the session bus's service search path, so Nix's
-backend wins the `org.freedesktop.impl.portal.desktop.gtk` name.
+Add `xdg-desktop-portal-gtk` to `home.packages`. Its `.portal` file lands
+under `~/.nix-profile/share`, which precedes `/usr/share` in `XDG_DATA_DIRS`
+as seen by xdg-desktop-portal itself, so Nix's `.portal` file wins there for
+free.
 
-Nix's package installs exactly the two filenames that do the shadowing —
-`share/xdg-desktop-portal/portals/gtk.portal` and
-`share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service` —
-so no renaming or extra wiring is needed.
+The D-Bus *activation* file is a different story, and needs an explicit copy.
+It is read by dbus-broker's activation scanner, which starts under the
+session bus's own, earlier environment — checked directly against the bus's
+own PID, not inferred — and that environment's `XDG_DATA_DIRS` does not
+contain `~/.nix-profile/share`. So an `xdg.dataFile` entry places a copy of
+`share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service` at
+`~/.local/share/dbus-1/services`, which is `XDG_DATA_HOME` and which the bus
+does search. This is the same fix already applied to the hyprland backend's
+D-Bus service file, for the same measured reason (see `home/services.nix`).
 
-Write `~/.config/xdg-desktop-portal/Hyprland-portals.conf` declaring the
-choice rather than inheriting a fallback. The filename is not arbitrary: the
-frontend reads `$XDG_CURRENT_DESKTOP-portals.conf`, and this session reports
-`XDG_CURRENT_DESKTOP=Hyprland`. Debian's frontend supports the format — it
-ships `portals.conf.5`.
+Write `~/.config/xdg-desktop-portal/hyprland-portals.conf` declaring the
+choice rather than inheriting a fallback. The filename is not arbitrary, but
+it is not `$XDG_CURRENT_DESKTOP` verbatim either: `man 5 portals.conf` says
+"DESKTOP is the desktop environment name in lower-case" — case-folding ASCII
+upper case to lower case, with KDE's own example being `kde-portals.conf` for
+desktop name "KDE". This session reports `XDG_CURRENT_DESKTOP=Hyprland`,
+lower-cased to `hyprland`. Debian's frontend supports the format — it ships
+`portals.conf.5`.
 
 ```ini
 [preferred]

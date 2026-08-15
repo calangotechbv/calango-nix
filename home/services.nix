@@ -206,6 +206,18 @@ in
   config.home.file.".config/systemd/user/xdg-desktop-portal-gtk.service".source =
     "${pkgs.xdg-desktop-portal-gtk}/share/systemd/user/xdg-desktop-portal-gtk.service";
 
+  # Same bug as xdg-desktop-portal-hyprland's D-Bus activation file above,
+  # for the same reason: the session bus's own XDG_DATA_DIRS omits the Nix
+  # profile (`systemctl --user show dbus.service -p MainPID --value`, then
+  # `tr '\0' '\n' < /proc/<pid>/environ | grep XDG_DATA_DIRS` shows only
+  # flatpak, /usr/local/share and /usr/share -- no ~/.nix-profile/share). The
+  # package's own presence in home.packages is not enough once Debian's copy
+  # of this file is gone; ~/.local/share/dbus-1/services is XDG_DATA_HOME,
+  # which the bus searches ahead of XDG_DATA_DIRS, so this is where the copy
+  # needs to land.
+  config.xdg.dataFile."dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service".source =
+    "${pkgs.xdg-desktop-portal-gtk}/share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service";
+
   # Backend selection, declared rather than inherited.
   #
   # Without this file the choice is accidental: gtk.portal declares
@@ -214,11 +226,14 @@ in
   # backends would silently change which backend serves which interface. With
   # it, the removals are a no-op.
   #
-  # The filename is not arbitrary. The frontend reads
-  # $XDG_CURRENT_DESKTOP-portals.conf, and this session reports
-  # XDG_CURRENT_DESKTOP=Hyprland. Debian's frontend is 1.20.3 and supports the
-  # format -- it ships portals.conf(5).
-  config.xdg.configFile."xdg-desktop-portal/Hyprland-portals.conf".text = ''
+  # The filename is not arbitrary, but it is not $XDG_CURRENT_DESKTOP
+  # verbatim either. `man 5 portals.conf`: "DESKTOP is the desktop
+  # environment name in lower-case" -- case-folding ASCII upper case to lower
+  # case, with KDE's own example being kde-portals.conf for desktop name
+  # "KDE". This session reports XDG_CURRENT_DESKTOP=Hyprland, lower-cased to
+  # hyprland. Debian's frontend is 1.20.3 and supports the format -- it ships
+  # portals.conf(5).
+  config.xdg.configFile."xdg-desktop-portal/hyprland-portals.conf".text = ''
     [preferred]
     default=gtk
     org.freedesktop.impl.portal.Screenshot=hyprland
