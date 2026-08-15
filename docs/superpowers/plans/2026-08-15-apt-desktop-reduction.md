@@ -317,8 +317,15 @@ git commit -m "docs: Phase 1, the tasksel metapackages removed"
 
 - [ ] **Step 1: The agent reads the entire removal list and categorises it**
 
+`kwallet6` is in this list, not in Task 5's. `/usr/bin/kwalletd6` is provided
+by `kwallet6`, which the autoremove sweep does **not** pick up on its own — so
+without naming it here, the KDE task would finish with a KDE daemon still
+installed. It also provides `kwallet.portal`; removing it now leaves
+`gnome-keyring` as the single Secret provider, which is what already serves
+`org.freedesktop.secrets` anyway.
+
 ```bash
-KDEAPPS="dolphin konsole konqueror kfind kruler kdialog keditbookmarks ktaskswitcher kdeconnect kbrowserselector"
+KDEAPPS="dolphin konsole konqueror kfind kruler kdialog keditbookmarks ktaskswitcher kdeconnect kbrowserselector kwallet6"
 apt-get -s autoremove $KDEAPPS 2>&1 | grep '^Remv' | awk '{print $2}' | sort > /tmp/spec7-kde-remv.txt
 wc -l < /tmp/spec7-kde-remv.txt
 echo "--- PAM / login / bus / portal / init entries, each to be justified ---"
@@ -364,7 +371,7 @@ these two during design.
 
 ```bash
 sudo apt remove dolphin konsole konqueror kfind kruler kdialog \
-                keditbookmarks ktaskswitcher kdeconnect kbrowserselector
+                keditbookmarks ktaskswitcher kdeconnect kbrowserselector kwallet6
 sudo apt autoremove
 ```
 
@@ -376,10 +383,7 @@ Not that the binary exists — that it draws.
 - [ ] **Step 5: The agent verifies**
 
 ```bash
-for p in $(ls /proc | grep -E '^[0-9]+$'); do
-  cmd=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null)
-  case "$cmd" in *kwallet*|*kdeconnect*) echo "STILL RUNNING: $p $cmd";; esac
-done
+dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' kwallet6 kdeconnect 2>&1
 echo "--- session health ---"
 systemctl --user list-units --state=failed --no-legend
 for u in fumon.service quickshell.service xdg-desktop-portal-hyprland.service \
@@ -391,8 +395,14 @@ ls /usr/share/xdg-desktop-portal/portals/
 dpkg-query -W -f='${db:Status-Abbrev} xdg-desktop-portal-gtk\n' xdg-desktop-portal-gtk
 ```
 
-Expected: no `STILL RUNNING` lines; no failed units; all five services active;
-`gtk.portal` still present and `xdg-desktop-portal-gtk` still `ii`.
+Expected: both packages `rc` or absent; no failed units; all five services
+active; `gtk.portal` still present and `xdg-desktop-portal-gtk` still `ii`.
+
+The **processes** are deliberately not checked here. Removing a package does
+not kill what is already running: `kwalletd6` (pid 3094) and `kdeconnectd`
+(pid 3422) both survive their packages' removal until the session ends. Their
+absence is measurable only after Step 6's reboot, which is where Step 7 checks
+it.
 
 - [ ] **Step 6: The user reboots and logs in**
 
@@ -412,9 +422,20 @@ the one thing the PAM `-` prefix is being trusted for.
 who -b
 systemctl --user list-units --state=failed --no-legend
 journalctl -b -u greetd --no-pager | grep -iE 'pam|error|fail' | head
+echo "--- neither daemon came back ---"
+for p in $(ls /proc | grep -E '^[0-9]+$'); do
+  cmd=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null)
+  case "$cmd" in *kwallet*|*kdeconnect*) echo "STILL RUNNING: $p $cmd";; esac
+done
+echo "  (no STILL RUNNING lines = both gone)"
 ```
 
-Expected: a fresh boot time; no failed units; no PAM errors from greetd.
+Expected: a fresh boot time; no failed units; no PAM errors from greetd; and
+neither daemon running.
+
+This is the real check for Step 2's two daemons, and it can only happen here.
+It walks `/proc` rather than using `pgrep` with a guessed name list — the
+guessed list is what missed both of them during design.
 
 - [ ] **Step 8: Append the section and commit**
 
@@ -544,7 +565,7 @@ git commit -m "docs: Phase 3a, Nix's gtk portal backend verified serving"
 - [ ] **Step 1: The agent reads the removal list**
 
 ```bash
-apt-get -s remove xdg-desktop-portal-kde kwallet6 xdg-desktop-portal-lxqt xdg-desktop-portal-gtk 2>&1 \
+apt-get -s remove xdg-desktop-portal-kde xdg-desktop-portal-lxqt xdg-desktop-portal-gtk 2>&1 \
   | grep '^Remv' | awk '{print $2}' | sort > /tmp/spec7-portal-remv.txt
 cat /tmp/spec7-portal-remv.txt
 echo "--- must NOT appear ---"
@@ -553,13 +574,13 @@ for keep in xdg-desktop-portal gnome-keyring google-chrome-stable code 1password
 done
 ```
 
-Expected: the four named packages and whatever depends on them; **not**
+Expected: the three named packages and whatever depends on them; **not**
 `xdg-desktop-portal` (the frontend) and **not** `gnome-keyring`.
 
 - [ ] **Step 2: The user removes them**
 
 ```bash
-sudo apt remove xdg-desktop-portal-kde kwallet6 xdg-desktop-portal-lxqt xdg-desktop-portal-gtk
+sudo apt remove xdg-desktop-portal-kde xdg-desktop-portal-lxqt xdg-desktop-portal-gtk
 ```
 
 - [ ] **Step 3: The user restarts the portal frontend**
