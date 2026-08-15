@@ -45,6 +45,23 @@ in
     # a GL client does not, the fault is the GL wrapper and nothing else.
     foot
 
+    # notify-send, for fumon.service. It is that unit's ExecCondition, and
+    # fumon calls it again at runtime to deliver the notification -- so this
+    # is a hard dependency of the session scaffolding, not a convenience.
+    #
+    # Debian's libnotify-bin supplied it until spec 6 removed uwsm and left
+    # that package an orphan, one `apt autoremove` away from stopping fumon
+    # silently: a failed ExecCondition is not a failed unit, so nothing would
+    # appear in --state=failed. Owning it here is what makes removing
+    # libnotify-bin safe. (libnotify4, the shared library, is a separate
+    # Debian package with eleven dependents and stays.)
+    #
+    # Unlike ExecStart=fumon -- see home/uwsm.nix -- this one resolves
+    # correctly through PATH: the ExecCondition runs an absolute /bin/sh, and
+    # `command -v` inside it searches the service's $PATH, where
+    # ~/.nix-profile/bin precedes /usr/bin.
+    libnotify
+
     # The GL stack. nixGLIntel is the Mesa wrapper and covers AMD; it sits
     # outside nixGL's auto.* set, so it needs no --impure.
     pkgs.nixgl.nixGLIntel
