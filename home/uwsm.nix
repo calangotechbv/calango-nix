@@ -40,6 +40,16 @@ let
   # written inside each unit, which is the entire point of using Nix's copies
   # instead of Debian's: the only difference between the two sets is that
   # Debian's say /usr/bin/uwsm where these say the store path.
+  #
+  # With one exception, patched below. Thirteen of the fourteen units carry a
+  # fully substituted store path; fumon.service alone ships `ExecStart=fumon`,
+  # a bare name. systemd does NOT resolve those against the manager's PATH --
+  # it uses a search path fixed when systemd was compiled, which on Debian is
+  # /usr/local/bin:/usr/bin:/bin and friends and contains no /nix/store. The
+  # bug is invisible on NixOS, whose systemd is patched to search the system
+  # profile, and it was invisible here too for as long as apt's uwsm supplied
+  # /usr/bin/fumon -- the unit came from Nix while the binary it ran came from
+  # Debian. Removing the apt package is what exposed it.
   uwsmUnits = pkgs.runCommand "uwsm-session-units" { } ''
     expected="${lib.concatStringsSep " " unitNames}"
     actual="$(cd ${pkgs.uwsm}/share/systemd/user && LC_ALL=C ls -1 | LC_ALL=C sort | tr '\n' ' ')"
@@ -54,6 +64,13 @@ let
     fi
     mkdir -p "$out"
     cp ${pkgs.uwsm}/share/systemd/user/* "$out/"
+    chmod -R u+w "$out"
+
+    # --replace-fail, so that upstream fixing this is a build error here rather
+    # than a silent no-op that leaves a stale patch in place forever. Same
+    # contract as the unit-set check above: we are told when the input moves.
+    substituteInPlace "$out/fumon.service" \
+      --replace-fail 'ExecStart=fumon' 'ExecStart=${pkgs.uwsm}/bin/fumon'
   '';
 
   unitLinks = lib.listToAttrs (map
@@ -88,10 +105,10 @@ in
     # Removing the package either deletes that link or leaves it dangling, and
     # neither outcome should decide whether fumon runs.
     #
-    # fumon.service's ExecStart is the bare name `fumon`, resolved against the
-    # user manager's PATH. uwsm's store bin is already on it (home/session.nix
-    # puts uwsm in compositorPath), so the bare name reaches Nix's copy both
-    # before and after the apt package goes.
+    # The copy linked here is the patched one, so it runs Nix's fumon. Note
+    # that this link is what actually enables the unit now: the /etc symlink
+    # survived the package removal and dangles, and ~/.config wins anyway at
+    # position 5 against /etc at position 6.
     ".config/systemd/user/graphical-session.target.wants/fumon.service".source =
       "${uwsmUnits}/fumon.service";
   };
