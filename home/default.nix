@@ -38,7 +38,17 @@ in
     uwsm
     xdg-desktop-portal-hyprland
     # hypridle and hyprpolkitagent arrive through their modules below.
-    # ydotool is dev tier and belongs to spec 3.
+    #
+    # ydotool is deliberately absent, and not deferred. It was carried from
+    # spec 1 as "dev tier, belongs to spec 3", but nothing was ever built that
+    # used it: no reference in this flake, hyprland.lua, the quickshell tree
+    # or ~/.config, and no keybind. What it did have was apt's ydotool.service
+    # keeping a ydotoold daemon alive with /dev/uinput open -- the ability to
+    # synthesise arbitrary keyboard and mouse input, for no consumer. Removed
+    # outright rather than ported. `nixpkgs#ydotool` is 1.0.4, the same version
+    # Debian had, if a consumer ever appears; it would also need a udev rule
+    # granting the input group access to /dev/uinput, which is what apt's
+    # 80-uinput.rules did and which a standalone Home Manager cannot install.
 
     # A terminal, so the session can be used and checked. foot draws through
     # wayland shm rather than GL, which makes it a control: if foot opens and
