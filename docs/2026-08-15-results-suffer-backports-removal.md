@@ -3,7 +3,12 @@
 Date: 2026-08-14 to 2026-08-15.
 Session: Hyprland (Nix) 0.55.4. Verified on two accounts — `nixtest`, tty2,
 for the lock/unlock test with a spare-VT escape; `isutton` for the switch,
-the apt removal and the reboot.
+the apt removal and the reboot. `nixtest` was retired once the lock screen
+was proven, and no longer exists: the account, its home directory and its
+Nix profile are gone, `nix-users` now contains only `isutton`, and the
+flake no longer builds a `nixtest@suffer` configuration. Where this
+document describes the account in the past tense below, that is the record
+of how the test was run, not a description of the machine's current state.
 
 ## Did it work?
 
@@ -308,15 +313,44 @@ still apt's.
 - **`ydotool` has no Nix counterpart and no known consumer.** Give it one or
   remove the apt package; leaving an unowned backports survivor is the state
   this whole project has been working to leave.
-- **`/run/opengl-driver` as a symlink to Nix's Mesa** would retire all five
-  nixGL wrappers this project has accumulated (`hyprland-nixgl`,
-  `quickshell-nixgl`, `hyprpolkitagent-nixgl`, and hyprlock's and the
-  portal's from this spec), let the flake drop its `nixgl` input entirely,
-  and remove the exact environment mismatch that caused the llvmpipe bug this
-  spec fixed by accident. Explicitly out of scope here — it is GL plumbing,
-  not backports removal, and it introduces a new root-owned path on a machine
-  where this project has otherwise kept root's surface small — but it is the
-  cleanest next target on the board.
+- **`/run/opengl-driver` as a symlink to Nix's Mesa** is the cleanest next
+  target on the board, but this bullet originally asserted more than had been
+  measured, and the correction belongs here rather than in the next spec's
+  rediscovery. The claim was that the symlink retires all five nixGL wrappers
+  this project has accumulated (`hyprland-nixgl`, `quickshell-nixgl`,
+  `hyprpolkitagent-nixgl`, and hyprlock's and the portal's from this spec)
+  and lets the flake drop its `nixgl` input entirely. A later probe supports
+  part of that and undercuts part:
+
+  `nixGLIntel` sets five variables — `GBM_BACKENDS_PATH`,
+  `LIBGL_DRIVERS_PATH`, `LIBVA_DRIVERS_PATH`,
+  `__EGL_VENDOR_LIBRARY_FILENAMES` and `LD_LIBRARY_PATH`. Only the fourth is
+  demonstrably covered by the symlink: `libglvnd-1.7.0` in this closure has
+  `/run/opengl-driver/share/glvnd/egl_vendor.d` compiled in as the first of
+  its three EGL vendor search directories. `mesa-26.1.5`, by contrast,
+  contains **no `/run/opengl-driver` string anywhere in its output tree** —
+  checked with a binary-safe recursive grep, against a control that confirmed
+  the same grep finds the string in libglvnd. So the DRI and GBM variables,
+  which are the ones that actually carried the llvmpipe bug, are not shown to
+  be covered, and "the symlink alone retires all five wrappers" is **not
+  established**.
+
+  The probe was stopped before it determined what Mesa's compiled-in DRI
+  search path actually is — the obvious `strings` queries against
+  `libgallium-26.1.5.so` came back empty — and that is the first question any
+  future attempt has to answer. Worth noting alongside it: the
+  `MESA-LOADER: failed to open dri: /run/opengl-driver/lib/gbm/dri_gbm.so`
+  error quoted in `home/session.nix` was observed on an earlier Mesa, so it
+  is evidence about that build and not about the one in the closure today.
+  `/run/opengl-driver` does not currently exist on this machine.
+
+  Two design constraints, unchanged and still worth carrying forward: `/run`
+  is a tmpfs, so the symlink needs recreating at every boot by something
+  root-owned, and whatever it points at must stay a live GC root or a
+  nixpkgs bump silently breaks GL at boot. Out of scope here either way — it
+  is GL plumbing, not backports removal, and it introduces a new root-owned
+  path on a machine where this project has otherwise kept root's surface
+  small.
 - **`/etc/pam.d/hyprlock` is dead code, left in place.** hyprlock now reads
   `common-auth`; the old file is harmless and removing a root-owned file to
   tidy up was judged not worth a root action.
