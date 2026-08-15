@@ -151,7 +151,6 @@
     in
     {
       homeConfigurations = {
-        "nixtest@suffer" = mkHome "nixtest" "suffer";
         "isutton@suffer" = mkHome "isutton" "suffer";
       };
     };
