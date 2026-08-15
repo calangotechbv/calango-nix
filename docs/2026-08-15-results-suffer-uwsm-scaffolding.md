@@ -859,6 +859,38 @@ the one that mattered is owned by the flake instead.
 | `libinotifytools0` | no — library for the above | removed |
 | `fuzzel` | no — unreferenced in the flake, `hyprland.lua`, the quickshell tree and `~/.config`; no config directory; not running | removed, not replaced |
 
+A fifth package went with them, not orphaned by the removal but found by the
+same sweep:
+
+| Package | Was it needed? | Outcome |
+|---|---|---|
+| `ydotool` | no — no reference in the flake, `hyprland.lua`, the quickshell tree, `~/.config`, or any keybind | removed, not replaced |
+
+`ydotool` had been deferred since spec 1 as "dev tier, belongs to spec 3", and
+the deferral was never revisited. Meanwhile apt's `ydotool.service` kept a
+`ydotoold` daemon running as the user with `/dev/uinput` open and
+`Restart=always` — the capability to synthesise arbitrary keyboard and mouse
+input into the session, with nothing consuming it. It held the only open
+handle on that device, and its package owned the only udev rule referencing
+it:
+
+```
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+```
+
+So the removal took the whole uinput surface with it. `nixpkgs#ydotool` is
+1.0.4, the same version Debian shipped, if a consumer ever appears — but that
+rule would have to be recreated by hand in `/etc/udev/rules.d/`, since a
+standalone Home Manager cannot install udev rules. Verified after removal: no
+binaries, no daemon, no unit, no rule, zero package files on disk.
+
+Like `uwsm`, it left a dangling root-owned enablement symlink at
+`/etc/systemd/user/default.target.wants/ydotool.service`, which kept the unit
+visible to `systemctl --user` as `loaded inactive dead` until it was deleted.
+Second occurrence of that pattern in one spec: **removing a Debian package
+that ships a systemd *user* unit leaves its `/etc` enablement link behind.**
+Worth expecting rather than rediscovering.
+
 `libnotify4` — the shared library, a different package from `libnotify-bin` —
 stays, with ten installed dependents. It was eleven before `fuzzel` went.
 
@@ -909,7 +941,7 @@ answering `org.freedesktop.Notifications` identifies itself as `quickshell
 
 ## What is still true
 
-### Five backports packages remain, and none of them is pinned by anything
+### Four backports packages remain, and none of them is pinned by anything
 
 ```
 $ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' …
@@ -917,16 +949,19 @@ ii  libcpptrace1        1.0.4-2~bpo13+1
 ii  libxkbcommon0       1.13.1-1~bpo13+1
 ii  libxkbcommon-x11-0  1.13.1-1~bpo13+1
 ii  quickshell          0.3.0-1~bpo13+1
-ii  ydotool             1.0.4-2~bpo13+1
 rc  uwsm                0.26.4+ds-2~bpo13+1
+rc  ydotool             1.0.4-2~bpo13+1
 ```
+
+Six at the start of this spec, four at the end: `uwsm` went in Phase 3 and
+`ydotool` went after it, both now `rc` with no files on disk.
 
 The backports suite is not in `sources.list` or `sources.list.d` — spec 5
 removed it. `apt-cache policy` shows what that means for each survivor:
-`libcpptrace1`, `quickshell` and `ydotool` have **no downloadable source at
-all**, existing only in `/var/lib/dpkg/status` at priority 100. They are
-frozen in the same sense `uwsm` was: unremovable-and-restorable only via
-`dpkg-repack`.
+`libcpptrace1` and `quickshell` have **no downloadable source at all**,
+existing only in `/var/lib/dpkg/status` at priority 100. They are frozen in
+the same sense `uwsm` was: removable, but restorable only from a
+`dpkg-repack` taken beforehand.
 
 **Correction to the record.** Spec 5's results document said the xkbcommon
 pins were held by three packages; this plan's Task 7 brief said four, naming
@@ -980,12 +1015,21 @@ still necessary — greetd reads session desktop files from system paths.
 
 ## What the next spec inherits
 
-**`ydotool` is a loose end, and a small one.** No consumer anywhere in the
-flake: the single hit is a comment in `home/default.nix:41` saying it belongs
-to spec 3. `ydotoold` is running — as **one** process, `3048 /usr/bin/ydotoold`,
-correcting the "two processes" figure carried in this plan's brief. There is
-no `ydotool` in `~/.nix-profile/bin`. Probably one commit, not a spec: decide
-whether anything wants it, then either package it or remove it.
+**`ydotool` is resolved — removed, not inherited.** It was one commit, as
+predicted. Recorded in "The orphans, resolved" above alongside the other four
+removals; the short version is that three specs had carried it forward as
+"dev tier, belongs to spec 3" while nothing was ever built that used it. No
+reference in the flake, `hyprland.lua`, the quickshell tree or `~/.config`,
+and no keybind. What it did have was `ydotool.service` keeping a `ydotoold`
+daemon alive with `/dev/uinput` open — synthetic keyboard and mouse input for
+no consumer — restarted forever by `Restart=always`.
+
+Two corrections to the record it produced on the way out: `ydotoold` was
+running as **one** process (`3048`), not the two this plan's brief carried;
+and the deferral itself was wrong. "Belongs to spec 3" was written in spec 1
+and never re-examined, so a running daemon with an input-injection capability
+survived three specs on the strength of a comment nobody re-read. Deferral
+notes expire the same way premises do.
 
 **The rollback rule is permanently inverted.** Before this spec, a previous
 Home Manager generation was always a safe recovery path. It is not any more.
