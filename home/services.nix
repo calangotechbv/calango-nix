@@ -111,7 +111,9 @@ in
   # name shadows the system one.
   #
   # Nix's .portal file already wins on its own: ~/.nix-profile/share is first in
-  # the session's XDG_DATA_DIRS, so no XDG work is needed here.
+  # the session's XDG_DATA_DIRS, so no XDG work is needed here. The D-Bus
+  # *activation* file (org.freedesktop.impl.portal.desktop.hyprland.service)
+  # is a different story -- see the xdg.dataFile block below this unit.
   #
   # Type=dbus and BusName are copied from Debian's unit deliberately. The portal
   # frontend activates this over D-Bus, and Type=simple would let systemd report
@@ -134,6 +136,35 @@ in
       Slice = "session.slice";
     };
   };
+
+  # Post-reboot verification found the portal not D-Bus activatable:
+  # `ServiceUnknown: The name is not activatable`. Apt's package used to ship
+  # /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.hyprland.service,
+  # and removing that package took the .service file with it, even though
+  # xdg-desktop-portal-hyprland is already in home.packages (home/default.nix)
+  # and its own SystemdService= line already names the unit above.
+  #
+  # This is NOT redundant with the .portal file. The two are read by
+  # different consumers with different startup timing:
+  #
+  #   - hyprland.portal (share/xdg-desktop-portal/portals/) is read by
+  #     xdg-desktop-portal itself, which starts under the graphical session
+  #     after uwsm has set XDG_DATA_DIRS -- so ~/.nix-profile/share, first in
+  #     that list, is searched and the file is found there. No copy needed.
+  #
+  #   - This .service file is read by dbus-broker's activation scanner,
+  #     which starts long before uwsm runs and so scans XDG_DATA_DIRS from
+  #     its own earlier environment -- one that never gets ~/.nix-profile/share
+  #     added to it. dbus-broker does search ~/.local/share/dbus-1/services,
+  #     though, which is why that -- not the profile -- is where this needs
+  #     to land. Same shape as home/apps.nix's .desktop entries, which go to
+  #     ~/.local/share/applications for the analogous reason.
+  #
+  # Proven by hand: copying this file to ~/.local/share/dbus-1/services/ and
+  # calling dbus's ReloadConfig made the Ping return and the unit go active.
+  # xdg.dataFile reproduces that placement declaratively.
+  config.xdg.dataFile."dbus-1/services/org.freedesktop.impl.portal.desktop.hyprland.service".source =
+    "${pkgs.xdg-desktop-portal-hyprland}/share/dbus-1/services/org.freedesktop.impl.portal.desktop.hyprland.service";
 
   config.systemd.user.services.nm-secret-agent = {
     Unit = {
