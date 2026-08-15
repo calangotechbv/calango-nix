@@ -83,6 +83,17 @@ in
     # environment. A bare TTY or ssh login does not get ~/.nix-profile/bin.
     inotify-tools
 
+    # The GTK portal backend. hyprland.portal provides only Screenshot,
+    # ScreenCast and GlobalShortcuts -- every file dialog, print dialog and
+    # Settings read goes through this one instead, including Chrome's and
+    # Code's. Debian ships 1.15.3-1 and nixpkgs ships 1.15.3: the same
+    # upstream release, with one extra interface (Wallpaper). So this is a
+    # lateral move, not an upgrade.
+    #
+    # This line on its own changes nothing at runtime -- see the unit in
+    # home/services.nix for why.
+    xdg-desktop-portal-gtk
+
     # The GL stack. nixGLIntel is the Mesa wrapper and covers AMD; it sits
     # outside nixGL's auto.* set, so it needs no --impure.
     pkgs.nixgl.nixGLIntel

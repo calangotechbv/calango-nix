@@ -186,4 +186,44 @@ in
     };
     Install.WantedBy = [ "graphical-session.target" ];
   };
+
+  # Nix's own gtk portal unit, at ~/.config/systemd/user (UnitPath position 5)
+  # so it beats Debian's at /usr/lib/systemd/user (position 15).
+  #
+  # This is the part that actually switches the backend. Both D-Bus activation
+  # files -- Debian's and Nix's -- say
+  # `SystemdService=xdg-desktop-portal-gtk.service`, and D-Bus prefers the unit
+  # over the Exec= line. That is a unit *name*, so whichever unit wins the
+  # search path decides which binary runs. Installing the package without this
+  # would leave Debian's unit answering, and Debian's binary serving, while
+  # every file looked correct.
+  #
+  # Copied verbatim rather than re-described with systemd.user.services: Nix's
+  # unit already carries an absolute store path in ExecStart and needs no
+  # nixGL wrapper (the binary has no libGL, libEGL or libgbm linkage, unlike
+  # xdg-desktop-portal-hyprland above). Re-describing it would mean owning a
+  # copy that can drift from upstream.
+  config.home.file.".config/systemd/user/xdg-desktop-portal-gtk.service".source =
+    "${pkgs.xdg-desktop-portal-gtk}/share/systemd/user/xdg-desktop-portal-gtk.service";
+
+  # Backend selection, declared rather than inherited.
+  #
+  # Without this file the choice is accidental: gtk.portal declares
+  # `UseIn=gnome`, which does not match this session, so it wins only as
+  # xdg-desktop-portal's last-resort fallback. Removing the kde and lxqt
+  # backends would silently change which backend serves which interface. With
+  # it, the removals are a no-op.
+  #
+  # The filename is not arbitrary. The frontend reads
+  # $XDG_CURRENT_DESKTOP-portals.conf, and this session reports
+  # XDG_CURRENT_DESKTOP=Hyprland. Debian's frontend is 1.20.3 and supports the
+  # format -- it ships portals.conf(5).
+  config.xdg.configFile."xdg-desktop-portal/Hyprland-portals.conf".text = ''
+    [preferred]
+    default=gtk
+    org.freedesktop.impl.portal.Screenshot=hyprland
+    org.freedesktop.impl.portal.ScreenCast=hyprland
+    org.freedesktop.impl.portal.GlobalShortcuts=hyprland
+    org.freedesktop.impl.portal.Secret=gnome-keyring
+  '';
 }
