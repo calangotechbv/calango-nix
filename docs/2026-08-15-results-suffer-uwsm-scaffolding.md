@@ -248,3 +248,77 @@ module also generates, might collide. It does not. The live directory now
 holds seven entries -- Home Manager's six plus `fumon.service` from
 `home/uwsm.nix` -- and `fumon.service` is active, loaded from
 `~/.config/systemd/user/fumon.service`.
+
+## Phase 2: the gate
+
+Rebooted at 2026-08-15 11:13 and logged in through greetd as normal. This is
+the gate that authorises the irreversible step, so it is stated as a rule and
+not as a count: **every live session unit must resolve under
+`~/.config/systemd/user`, with exactly two permitted exceptions.**
+
+```
+fumon.service                                      ~/.config/systemd/user/fumon.service
+wayland-session-bindpid@3081.service               ~/.config/systemd/user/wayland-session-bindpid@.service
+wayland-session-waitenv.service                    ~/.config/systemd/user/wayland-session-waitenv.service
+wayland-wm-env@hyprland\x2dnixgl.desktop.service   ~/.config/systemd/user/wayland-wm-env@.service
+wayland-wm@hyprland\x2dnixgl.desktop.service       ~/.config/systemd/user/wayland-wm@.service
+app-graphical.slice                                ~/.config/systemd/user/app-graphical.slice
+background-graphical.slice                         ~/.config/systemd/user/background-graphical.slice
+wayland-session-envelope@…desktop.target           ~/.config/systemd/user/wayland-session-envelope@.target
+wayland-session-pre@…desktop.target                ~/.config/systemd/user/wayland-session-pre@.target
+wayland-session-shutdown.target                    ~/.config/systemd/user/wayland-session-shutdown.target
+wayland-session-xdg-autostart@…desktop.target      ~/.config/systemd/user/wayland-session-xdg-autostart@.target
+wayland-session@…desktop.target                    ~/.config/systemd/user/wayland-session@.target
+
+graphical-session-pre.target                       /usr/lib/systemd/user/graphical-session-pre.target
+graphical-session.target                           /usr/lib/systemd/user/graphical-session.target
+```
+
+The two exceptions are the permitted ones and no others. `dpkg -S` attributes
+both to the `systemd` package rather than to `uwsm`, so removing `uwsm` cannot
+touch them. This was checked before the plan was written precisely because a
+missing `graphical-session.target` would take down every service in this
+configuration that is `WantedBy` it.
+
+`session-graphical.slice` does not appear because it is not loaded on this
+boot. The gate is written as a rule rather than as a fixed number for exactly
+this reason: instance names carry a fresh PID each boot
+(`wayland-session-bindpid@3081` here, `@293521` before the reboot) and slices
+load on demand, so a count would fail for reasons that have nothing to do with
+the migration.
+
+### Health
+
+```
+fumon.service                        active
+quickshell.service                   active
+xdg-desktop-portal-hyprland.service  active
+hypridle.service                     active
+hyprpolkitagent.service              active
+
+failed units: none
+compositor:   /nix/store/…-hyprland-0.55.4/bin/Hyprland
+```
+
+The portal is **active on this boot**, where it was inactive immediately after
+the Phase 1 switch. Both states were correct, and the pair of observations is
+better evidence than either alone: the unit is D-Bus activated, so it is
+inactive until a client asks and active once one has. Seeing it come up on its
+own confirms the activation path spec 5 built is intact, which is the thing
+that regressed in spec 5 and was caught only by a reboot.
+
+### Debian's uwsm, across a boot
+
+```
+$ pgrep -af "/usr/bin/uwsm"
+  (no matches)
+
+$ pgrep -af waitpid
+3170 /nix/store/…-util-linux-2.42.2-bin/bin/waitpid -e 3081
+```
+
+The handover survives a reboot: nothing from apt's `uwsm` executes, and the
+Python `waitpid` shim is still replaced by util-linux's binary. The package is
+now inert on disk, which is what makes the next step safe to take.
+
+**Gate verdict: passed.** Phase 3 is authorised.
