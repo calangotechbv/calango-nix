@@ -70,8 +70,13 @@ let
   # and logs nothing. compositorPath above is derived from the config, not
   # transcribed from a design document.
   #
-  # Prepended, not appended: apt's Hyprland, hyprctl and hyprlock are all
-  # still installed under /usr/bin, and an appended path would let them win.
+  # Prepended, not appended. The original reason was that apt's Hyprland,
+  # hyprctl and hyprlock sat in /usr/bin and an appended path would let them
+  # win. That premise expired with spec 5: none of those three exists any
+  # more, and /usr/share/wayland-sessions is not even a directory. Prepending
+  # stays because the guarantee is what matters -- this list is derived from
+  # the config and is meant to be the answer, not a suggestion ranked below
+  # whatever a future apt package happens to install.
   #
   # No QS_CONFIG_PATH here any more, and its absence is deliberate.
   #
