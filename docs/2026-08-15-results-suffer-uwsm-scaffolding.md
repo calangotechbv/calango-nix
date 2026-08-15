@@ -160,3 +160,91 @@ confirms it is currently active (loaded today from
 would load it from home-manager's `~/.config/systemd/user/fumon.service`,
 newly added by Task 1 and newly listed in
 `graphical-session.target.wants/`).
+
+## Phase 1: the switch, run from a TTY
+
+The user logged out of Hyprland, logged in on tty1, ran
+`sg nix-users -c 'home-manager switch --flake .#isutton@suffer'` there, and
+logged back in through greetd. The switch was never run from inside a
+graphical session.
+
+That sequencing was not a precaution that turned out to be unnecessary. The
+dry run recorded above lists
+`wayland-wm@hyprland\x2dnixgl.desktop.service` -- the compositor unit itself --
+in both the stop set and the start set. Run from inside the session, this
+switch would have stopped the compositor mid-activation.
+
+### What the units resolve to now
+
+Measured from the restored graphical session:
+
+```
+fumon.service                                      ~/.config/systemd/user/fumon.service
+wayland-session-bindpid@293521.service             ~/.config/systemd/user/wayland-session-bindpid@.service
+wayland-session-waitenv.service                    ~/.config/systemd/user/wayland-session-waitenv.service
+wayland-wm-env@hyprland\x2dnixgl.desktop.service   ~/.config/systemd/user/wayland-wm-env@.service
+wayland-wm@hyprland\x2dnixgl.desktop.service       ~/.config/systemd/user/wayland-wm@.service
+app-graphical.slice                                ~/.config/systemd/user/app-graphical.slice
+background-graphical.slice                         ~/.config/systemd/user/background-graphical.slice
+wayland-session-envelope@…desktop.target           ~/.config/systemd/user/wayland-session-envelope@.target
+wayland-session-pre@…desktop.target                ~/.config/systemd/user/wayland-session-pre@.target
+wayland-session-shutdown.target                    ~/.config/systemd/user/wayland-session-shutdown.target
+wayland-session-xdg-autostart@…desktop.target      ~/.config/systemd/user/wayland-session-xdg-autostart@.target
+wayland-session@…desktop.target                    ~/.config/systemd/user/wayland-session@.target
+
+graphical-session-pre.target                       /usr/lib/systemd/user/graphical-session-pre.target
+graphical-session.target                           /usr/lib/systemd/user/graphical-session.target
+```
+
+Twelve units moved. The two that did not are `systemd`'s own, not uwsm's --
+`dpkg -S` attributes both to the `systemd` package -- and they are expected to
+stay where they are for good. A check demanding they move would be a wrong
+check.
+
+### Debian's uwsm has stopped executing
+
+Before this switch the session ran
+`/usr/bin/python3 /usr/bin/uwsm aux waitpid <pid>` -- apt's uwsm, executing
+inside a session otherwise built from Nix. That process is gone:
+
+```
+$ pgrep -af "/usr/bin/uwsm"
+  (no matches)
+
+$ pgrep -af waitpid
+293550 /nix/store/…-util-linux-2.42.2-bin/bin/waitpid -e 293521
+```
+
+This is a second, unlooked-for improvement. Debian's
+`wayland-session-bindpid@.service` tests for a bare `waitpid` on PATH and falls
+back to `uwsm aux waitpid`, a Python reimplementation, when it does not find
+one. On this machine it never found one, so every session since spec 1 has
+carried that shim. Nix's unit names util-linux's `waitpid` by absolute store
+path, so the real binary is used and the Python process is not spawned at all.
+
+### Session health
+
+`fumon`, `quickshell`, `hypridle` and `hyprpolkitagent` all active; no failed
+units; the compositor running from
+`/nix/store/…-hyprland-0.55.4/bin/Hyprland`.
+
+`xdg-desktop-portal-hyprland.service` is **inactive, and that is correct**.
+The unit was checked rather than assumed, because spec 5 shipped a portal
+regression that only a reboot caught. Three facts settle it: the unit has
+`WantedBy=` empty and has never appeared in
+`graphical-session.target.wants/`, so nothing is supposed to start it eagerly;
+`busctl --user list --activatable` reports
+`org.freedesktop.impl.portal.desktop.hyprland` as `(activatable)`; and
+`~/.local/share/dbus-1/services/org.freedesktop.impl.portal.desktop.hyprland.service`
+is present, naming the Nix binary and
+`SystemdService=xdg-desktop-portal-hyprland.service`. It is D-Bus activated by
+design -- spec 5's arrangement -- and starts when a client first asks for it.
+
+### fumon's enablement link merged cleanly
+
+The spec recorded an open question: `home.file` writing into
+`graphical-session.target.wants/`, a directory Home Manager's own systemd
+module also generates, might collide. It does not. The live directory now
+holds seven entries -- Home Manager's six plus `fumon.service` from
+`home/uwsm.nix` -- and `fumon.service` is active, loaded from
+`~/.config/systemd/user/fumon.service`.
