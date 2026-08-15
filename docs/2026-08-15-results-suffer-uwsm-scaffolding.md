@@ -322,3 +322,106 @@ Python `waitpid` shim is still replaced by util-linux's binary. The package is
 now inert on disk, which is what makes the next step safe to take.
 
 **Gate verdict: passed.** Phase 3 is authorised.
+
+## Phase 3: the irreversible step
+
+### The restore path, built first
+
+```
+$ sudo dpkg-repack uwsm
+dpkg-deb: building package 'uwsm' in './uwsm_0.26.4+ds-2~bpo13+1_amd64.deb'.
+
+-rw-r--r-- 1 root root 90188 Aug 15 11:16 /root/pkg-archive/uwsm_0.26.4+ds-2~bpo13+1_amd64.deb
+```
+
+The file landed in `/root/pkg-archive`, not `~isutton/pkg-archive`, because the
+commands ran in a root shell. That is where it is, and the path is written down
+here rather than corrected, because a restore path nobody can find is not one.
+
+This mattered: `apt` cannot re-download this package. The backports source went
+in spec 5 and no `.deb` was cached, so `/var/lib/dpkg/status` -- the installed
+files themselves -- was the only remaining source. Repacking converted those
+files back into something installable while they still existed.
+
+### The removal
+
+`apt-get -s remove uwsm` proposed `uwsm` and nothing else, matching the
+measured empty `apt-cache rdepends --installed uwsm`. The real removal took
+only that package.
+
+```
+$ ls /usr/lib/systemd/user/wayland-wm@.service
+ls: cannot access '…': No such file or directory
+
+$ dpkg -l uwsm | tail -1
+rc  uwsm  0.26.4+ds-2~bpo13+1  amd64  Wayland session manager for standalone compositors
+```
+
+`rc` -- removed, config files retained. Apt's unit templates are gone.
+
+### The root-owned enablement link: dangling, and harmless
+
+```
+$ ls -l /etc/systemd/user/graphical-session.target.wants/fumon.service
+… -> /usr/lib/systemd/user/fumon.service
+```
+
+The link survived the removal and now points at a file that no longer exists.
+This is one of the two outcomes the spec anticipated, and it is the harmless
+one. `systemd` resolves a unit by *name* through the `UnitPath`, and
+`~/.config/systemd/user` sits at position 5 against `/etc/systemd/user` at
+position 6, so the flake's copy wins:
+
+```
+$ systemctl --user cat fumon.service | head -1
+# /home/isutton/.config/systemd/user/fumon.service
+
+$ systemctl --user is-active fumon.service
+active
+```
+
+`fumon` stayed active across the removal. Had the flake not taken ownership of
+its `.wants` link in Task 1, this dangling symlink would have been the only
+thing enabling it.
+
+### A landmine the plan did not anticipate
+
+`apt` now reports four packages as automatically installed and no longer
+required:
+
+```
+fuzzel  inotify-tools  libinotifytools0  libnotify-bin
+```
+
+They were pulled in as `uwsm` dependencies and became orphans when it went.
+**`apt autoremove` must not be run without deciding about `libnotify-bin`
+first**, because:
+
+```
+$ dpkg -S "$(command -v notify-send)"
+libnotify-bin: /usr/bin/notify-send
+```
+
+`fumon.service` carries
+`ExecCondition=/bin/sh -c "command -v notify-send > /dev/null"`. Remove
+`libnotify-bin` and that condition fails, so `fumon` stops starting -- silently
+and by design, because a failed `ExecCondition` is not a failed unit. Nothing
+would appear in `systemctl --user list-units --state=failed`. The unit would
+simply never run again, and the next person to look would find a healthy
+system with a service quietly absent.
+
+This is the same shape as the defect that has recurred through this project:
+a dependency that is real but invisible to the check being run. It is recorded
+here rather than fixed, because fixing it is a scope decision -- either the
+flake takes ownership of `notify-send`, or `libnotify-bin` is marked manual --
+and neither belongs in a spec about session scaffolding.
+
+`fuzzel` is referenced nowhere in this flake, `hyprland.lua`, or the quickshell
+tree. `inotify-tools` and `libinotifytools0` likewise. They are genuinely
+orphaned; only `libnotify-bin` is load-bearing.
+
+### Session state immediately after removal
+
+No failed units. `quickshell`, `hypridle`, `hyprpolkitagent`,
+`xdg-desktop-portal-hyprland` and `fumon` all active, with the session still
+running from before the removal.
