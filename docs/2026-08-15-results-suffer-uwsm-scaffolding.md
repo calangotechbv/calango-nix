@@ -455,10 +455,16 @@ premise were true. The conclusion was wrong, because the premise is not the
 rule systemd applies.
 
 systemd resolves a relative `ExecStart` against a search path fixed **when
-systemd was compiled** — on Debian, `/usr/local/bin:/usr/bin:/bin` and the
-`sbin` variants. The manager's `PATH` does not enter into it. No `/nix/store`
-path can appear in a compile-time constant, so no amount of environment
-arrangement could have made the bare name work here.
+systemd was compiled**. The manager's `PATH` does not enter into it. On this
+machine:
+
+```
+$ systemd-path search-binaries-default
+/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+```
+
+No `/nix/store` path can appear in a compile-time constant, so no amount of
+environment arrangement could have made the bare name work here.
 
 The bug is invisible on NixOS, whose systemd is patched to search the system
 profile. It was invisible on this machine too, for as long as apt's uwsm
@@ -487,7 +493,7 @@ Enumerating all fourteen units first, rather than patching the one that
 failed:
 
 ```
-$ grep -nE '^(ExecStart|ExecStop|ExecCondition|ExecStartPre|ExecStartPost)=' \
+$ grep -nE '^(ExecStart|ExecStop|ExecCondition|ExecStartPre|ExecStartPost|ExecReload)=' \
     /nix/store/mafjfhm7pyzjk2ry1sp9xxz4lf07q7n3-uwsm-0.26.4/share/systemd/user/*
 wayland-session-waitenv.service:15:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux waitenv
 wayland-wm-app-daemon.service:11:ExecStart=/nix/store/...-uwsm-0.26.4/bin/uwsm aux app-daemon
@@ -540,11 +546,69 @@ $ grep -c '/usr/' /proc/3465/maps
 mappings in the running process is the executable-provenance check the Phase 2
 gate should have made.
 
-Twelve units resolve under `~/.config/systemd/user`.
-`graphical-session.target` and `graphical-session-pre.target` remain
-`/usr/lib/systemd/user`, which is correct — they belong to systemd, not to
-uwsm. Neither `/usr/bin/uwsm` nor `/usr/bin/fumon` exists. All five services
-active.
+The full provenance table, in the same form Phases 1 and 2 used:
+
+```
+fumon.service                                    /home/isutton/.config/systemd/user/fumon.service
+wayland-session-bindpid@3095.service             /home/isutton/.config/systemd/user/wayland-session-bindpid@.service
+wayland-session-waitenv.service                  /home/isutton/.config/systemd/user/wayland-session-waitenv.service
+wayland-wm-env@hyprland\x2dnixgl.desktop.service /home/isutton/.config/systemd/user/wayland-wm-env@.service
+wayland-wm@hyprland\x2dnixgl.desktop.service     /home/isutton/.config/systemd/user/wayland-wm@.service
+app-graphical.slice                              /home/isutton/.config/systemd/user/app-graphical.slice
+background-graphical.slice                       /home/isutton/.config/systemd/user/background-graphical.slice
+graphical-session-pre.target                     /usr/lib/systemd/user/graphical-session-pre.target
+graphical-session.target                         /usr/lib/systemd/user/graphical-session.target
+wayland-session-envelope@…desktop.target         /home/isutton/.config/systemd/user/wayland-session-envelope@.target
+wayland-session-pre@…desktop.target              /home/isutton/.config/systemd/user/wayland-session-pre@.target
+wayland-session-shutdown.target                  /home/isutton/.config/systemd/user/wayland-session-shutdown.target
+wayland-session-xdg-autostart@…desktop.target    /home/isutton/.config/systemd/user/wayland-session-xdg-autostart@.target
+wayland-session@…desktop.target                  /home/isutton/.config/systemd/user/wayland-session@.target
+```
+
+Twelve under `~/.config/systemd/user`. `graphical-session.target` and
+`graphical-session-pre.target` remain `/usr/lib/systemd/user`, which is
+correct — they belong to systemd, not to uwsm. Neither `/usr/bin/uwsm` nor
+`/usr/bin/fumon` exists. All five services active:
+
+```
+fumon.service                            active
+quickshell.service                       active
+xdg-desktop-portal-hyprland.service      active
+hypridle.service                         active
+hyprpolkitagent.service                  active
+```
+
+The package states, using the corrected status check rather than the
+version check discussed below:
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' …
+ii  libcpptrace1        1.0.4-2~bpo13+1
+ii  libxkbcommon0       1.13.1-1~bpo13+1
+ii  libxkbcommon-x11-0  1.13.1-1~bpo13+1
+ii  quickshell          0.3.0-1~bpo13+1
+ii  ydotool             1.0.4-2~bpo13+1
+rc  uwsm                0.26.4+ds-2~bpo13+1
+
+$ dpkg -L uwsm
+Package 'uwsm' does not contain any files (!)
+```
+
+Five installed, one removed with nothing left behind — not even conffiles,
+which is cleaner than `rc` normally implies.
+
+Finally, the flake still evaluates and builds:
+
+```
+$ sg nix-users -c 'nix eval .#homeConfigurations --apply builtins.attrNames'
+[ "isutton@suffer" ]
+$ sg nix-users -c 'nix build --no-link --print-out-paths \
+    .#homeConfigurations."isutton@suffer".activationPackage'
+/nix/store/pdpxm3sqd3fhcwqf7skbln255mp4wb90-home-manager-generation
+```
+
+That store path is the generation the session is running, so the tree, the
+build and the live system all agree.
 
 ### Two more checks that could not have failed
 
