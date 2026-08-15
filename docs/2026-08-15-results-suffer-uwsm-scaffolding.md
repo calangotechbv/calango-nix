@@ -431,6 +431,11 @@ here rather than fixed, because fixing it is a scope decision -- either the
 flake takes ownership of `notify-send`, or `libnotify-bin` is marked manual --
 and neither belongs in a spec about session scaffolding.
 
+> **Resolved after the branch, before it was left.** The flake took ownership.
+> `libnotify` is now in `home.packages`, so `notify-send` comes from
+> `~/.nix-profile/bin`, which precedes `/usr/bin` on the session `PATH`. All
+> four orphans were then removed outright. See "The orphans, resolved" below.
+
 `fuzzel` is referenced nowhere in this flake, `hyprland.lua`, or the quickshell
 tree. `inotify-tools` and `libinotifytools0` likewise. They are genuinely
 orphaned; only `libnotify-bin` is load-bearing.
@@ -796,8 +801,13 @@ finished.
 Recorded in full under Phase 3 above: removing `uwsm` orphaned
 `libnotify-bin`, which provides `notify-send`, which is `fumon.service`'s
 `ExecCondition`. `apt autoremove` would stop `fumon` starting without
-producing a failed unit. Still unfixed, deliberately — it is a scope
-decision, not session scaffolding.
+producing a failed unit.
+
+Fixed after the branch was otherwise finished — see "The orphans, resolved"
+below. Worth noting how it was found: not by any check in this plan, but by
+reading the list of packages `apt` reported as newly orphaned and asking what
+each one did. The plan had no step for that, and the four names would
+otherwise have scrolled past as noise.
 
 ## The recurring defect, counted
 
@@ -836,6 +846,66 @@ The code now asserts the property instead of a proxy: every `Exec*` value in
 every unit must be an absolute path, matched by directive *syntax* rather than
 by a list of names. That is the one guard here that could have caught the
 defect that reached a reboot.
+
+## The orphans, resolved
+
+Removing `uwsm` left four orphaned Debian packages. All four are now gone, and
+the one that mattered is owned by the flake instead.
+
+| Package | Was it needed? | Outcome |
+|---|---|---|
+| `libnotify-bin` | **yes** — `notify-send`, `fumon.service`'s `ExecCondition` *and* its runtime notification command | replaced by `pkgs.libnotify` in `home.packages`; removed |
+| `inotify-tools` | no — nothing on this system invokes `inotifywait`/`inotifywatch` | replaced by `pkgs.inotify-tools` anyway, as an interactive tool; removed |
+| `libinotifytools0` | no — library for the above | removed |
+| `fuzzel` | no — unreferenced in the flake, `hyprland.lua`, the quickshell tree and `~/.config`; no config directory; not running | removed, not replaced |
+
+`libnotify4` — the shared library, a different package from `libnotify-bin` —
+stays, with ten installed dependents. It was eleven before `fuzzel` went.
+
+### Why the ExecCondition was safe to move to Nix, when ExecStart was not
+
+The two look like the same problem and are not:
+
+```
+ExecStart=fumon                                          <- broke
+ExecCondition=/bin/sh -c "command -v notify-send ..."    <- fine
+```
+
+`ExecStart` was a bare name resolved by systemd itself, against the
+compile-time search path that contains no `/nix/store`. The `ExecCondition`
+runs an **absolute** `/bin/sh`, and `command -v` inside that shell searches
+the service's real `$PATH` — where `~/.nix-profile/bin` sits at position 18
+against `/usr/bin` at 22. Putting `notify-send` in the profile is therefore
+sufficient, and no unit patching was needed.
+
+### Verified after the removal
+
+```
+$ command -v notify-send inotifywait
+/home/isutton/.nix-profile/bin/notify-send
+/home/isutton/.nix-profile/bin/inotifywait
+
+$ systemctl --user show fumon.service -p ActiveState -p NRestarts -p MainPID
+ActiveState=active
+NRestarts=0
+MainPID=3465
+
+$ systemd-run --user --pipe --wait /bin/sh -c 'command -v notify-send'
+/home/isutton/.nix-profile/bin/notify-send        # the ExecCondition, in the service environment
+
+$ apt-get -s autoremove
+0 upgraded, 0 newly installed, 0 to remove and 138 not upgraded.
+```
+
+`MainPID` is unchanged from the boot at 17:46 and `NRestarts` is still 0, so
+`fumon` never restarted through any of this — the swap happened underneath a
+running process that had already passed its condition.
+
+The check that matters is the last one, and it is deliberately not a proxy. A
+passing `ExecCondition` proves only that `notify-send` is *findable*. A real
+notification was sent through the session bus and rendered: the daemon
+answering `org.freedesktop.Notifications` identifies itself as `quickshell
+1.2`. Findable, and working.
 
 ## What is still true
 
