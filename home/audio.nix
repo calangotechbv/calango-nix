@@ -196,14 +196,101 @@ let
       })
       units)
     wants));
+
+  # Task 4b: pactl and its siblings from Nix, without the daemon.
+  #
+  # Spec 9 decided pulseaudio-utils stays on apt, on the grounds that "Nix
+  # ships a rich pw-* toolset and no pactl". That premise is false: at this
+  # flake's pinned input, pkgs.pulseaudio is 17.0 -- the same upstream
+  # release as Debian's pulseaudio-utils 17.0+dfsg1-2+b1 -- and
+  # ${pkgs.pulseaudio}/bin holds every one of Debian's eleven client
+  # binaries, plus a twelfth Debian never shipped there: the daemon itself.
+  # Debian's pulseaudio-utils has never carried a daemon, and the pulseaudio
+  # daemon package has never been installed on this machine (dpkg-query
+  # shows `un`) -- so putting pkgs.pulseaudio straight into home.packages
+  # would not be the lateral move it looks like. It would put a real
+  # PulseAudio daemon on PATH here for the first time.
+  #
+  # That distinction has teeth because of how PulseAudio clients find a
+  # daemon: `strings` on libpulse.so.0 shows the bare word "pulseaudio" and
+  # no absolute store path anywhere in the binary. Autospawn resolves the
+  # daemon through PATH, by name, whenever a client fails to reach one. A
+  # client that couldn't reach pipewire-pulse could therefore autospawn a
+  # real PulseAudio, which would seize the ALSA devices out from under
+  # pipewire -- the same two-sound-servers hazard that put
+  # libcanberra-pulse into Task 4's removal set, reintroduced here through
+  # pactl's own upstream package. Which is also why withholding the daemon
+  # from $out/bin is not theatre: because the lookup is by bare name and
+  # nothing else, its absence from PATH genuinely prevents autospawn rather
+  # than merely hiding the binary somewhere it could still be found.
+  #
+  # An `autospawn = no` in ~/.config/pulse/client.conf was considered and
+  # rejected. It would defend only against some future edit that put the
+  # daemon back on PATH -- and Guard 2 below already turns that edit into a
+  # build failure, so the config file would be defending against a change
+  # that cannot happen silently. Not worth the extra moving part.
+  #
+  # pactl has no consumer in this repo: quickshell/audio/AudioService.qml
+  # names it only in a comment and drives audio through the Pipewire QML
+  # service directly, not through pactl. It is kept for the vocabulary this
+  # migration's own gates speak (`pactl info`, specifically), not because
+  # anything here calls it.
+  #
+  # Every binary in ${pkgs.pulseaudio}/bin is linked except pulseaudio
+  # itself, found by iterating the directory rather than by writing out the
+  # ten wanted names. CLAUDE.md's rule -- enumerate by syntax, never by a
+  # remembered list -- exists because a written list is exactly what missed
+  # ExecStart=fumon; a list of "the ten client binaries" would go stale the
+  # first time upstream adds or renames one, silently dropping it from PATH
+  # while this derivation kept reporting success.
+  pulseaudioClients = pkgs.runCommand "pulseaudio-clients" { } ''
+    # Guard 1: the binary this derivation exists to exclude is still there
+    # to exclude. The whole derivation is an exclusion; if pkgs.pulseaudio
+    # no longer ships bin/pulseaudio, the exclusion below excludes nothing,
+    # and someone must re-read what the package now ships rather than let
+    # a now-meaningless exclusion pass silently.
+    if [ ! -e ${pkgs.pulseaudio}/bin/pulseaudio ]; then
+      echo "pkgs.pulseaudio no longer ships bin/pulseaudio." >&2
+      echo "home/audio.nix's pulseaudioClients derivation exists to keep" >&2
+      echo "exactly this binary off PATH. Re-check what pkgs.pulseaudio" >&2
+      echo "ships now and update the exclusion to match." >&2
+      exit 1
+    fi
+
+    mkdir -p "$out/bin"
+    for f in ${pkgs.pulseaudio}/bin/*; do
+      name="$(basename "$f")"
+      [ "$name" = "pulseaudio" ] && continue
+      ln -s "$f" "$out/bin/$name"
+    done
+
+    # Guard 2: the property this derivation exists for, asserted directly
+    # rather than inferred from the loop above having been written
+    # correctly.
+    if [ -e "$out/bin/pulseaudio" ]; then
+      echo "pulseaudioClients linked the pulseaudio daemon into \$out/bin." >&2
+      echo "That is the one binary this derivation must withhold -- see" >&2
+      echo "the comment above it for why an autospawned daemon on PATH" >&2
+      echo "would seize the ALSA devices from pipewire." >&2
+      exit 1
+    fi
+
+    # Guard 3: the binary this derivation exists to provide.
+    if [ ! -e "$out/bin/pactl" ]; then
+      echo "pulseaudioClients did not produce \$out/bin/pactl." >&2
+      echo "pactl is the reason this derivation exists -- see home/audio.nix." >&2
+      exit 1
+    fi
+  '';
 in
 {
   # pipewire brings pw-play, pw-dump, pw-top, pw-cli and the 14 bluez5 SPA
-  # plugins; wireplumber brings wpctl. Debian's pulseaudio-utils stays for
-  # pactl, which Nix does not ship and which most of this migration's gate
-  # speaks -- see the plan's Global Constraints for why it gets marked manual.
+  # plugins; wireplumber brings wpctl; pulseaudioClients (above) brings
+  # pactl and the rest of pulseaudio-utils' vocabulary, minus the daemon --
+  # see that derivation's comment for why Debian's pulseaudio-utils staying
+  # on apt was a false premise, corrected in Task 4b.
   #
-  # This line puts both binaries on PATH and nothing more. An earlier version
+  # This line puts these binaries on PATH and nothing more. An earlier version
   # of this comment claimed it was also what put Nix's wireplumber scripts
   # ahead of Debian's on XDG_DATA_DIRS -- that claim was false. Membership in
   # home.packages only affects $XDG_DATA_DIRS for processes that start inside
@@ -224,7 +311,7 @@ in
   # which resolves its own configuration through a compiled-in datadir and
   # PIPEWIRE_CONFIG_DIR, not XDG_DATA_DIRS (checked with strings on both
   # libraries) -- so pipewire needed no equivalent fix.
-  home.packages = [ pkgs.pipewire pkgs.wireplumber ];
+  home.packages = [ pkgs.pipewire pkgs.wireplumber pulseaudioClients ];
 
   # xdg.configFile rather than home.file.".config/...": home-manager's own
   # systemd module writes user units through xdg.configFile, and sd-switch
