@@ -141,6 +141,7 @@
           ./home/apps.nix
           ./home/services.nix
           ./home/portals.nix
+          ./home/audio.nix
           ./home/uwsm.nix
           {
             home.username = username;
@@ -157,8 +158,9 @@
         "isutton@suffer" = suffer;
       };
 
-      # Every xdg.configFile/xdg.dataFile ".source" in home/portals.nix and
-      # home/uwsm.nix is a bare string pointing into a package output --
+      # Every xdg.configFile/xdg.dataFile ".source" in home/portals.nix,
+      # home/audio.nix and home/uwsm.nix is a bare string pointing into a
+      # package output --
       # nothing checks it resolves. Home Manager's file builder links each one
       # with a plain `ln -s "$source" "$target"` (see the derivation for
       # home-manager-files); there is no existence test anywhere in that path.
