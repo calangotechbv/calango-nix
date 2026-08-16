@@ -257,6 +257,17 @@ in
   # come from a single package; each moves independently because each unit is
   # placed here at UnitPath position 5, ahead of /usr/lib/systemd/user at 15.
   #
+  # Those numbers are `systemctl --user show -p UnitPath --value`, the
+  # manager's own list. `systemd-analyze --user unit-paths` looks like the
+  # obvious way to check this and answers a different question: it computes
+  # the path from the *calling* process's environment, and a shell in the
+  # graphical session has XDG_DATA_DIRS entries (~/.nix-profile/share among
+  # them) that the manager itself never saw at startup. That shifts
+  # /usr/lib/systemd/user to 18 and invents a
+  # ~/.nix-profile/share/systemd/user entry that isn't on the manager's list
+  # at all -- which is exactly why the xdg.configFile entries below, not the
+  # package in home.packages, are what switches each service.
+  #
   # Copied verbatim rather than re-described: Nix's three units diff identical
   # to Debian's apart from ExecStart -- same Type=dbus, BusName, Slice and
   # PartOf. None of the three binaries links libGL, libEGL or libgbm (checked
