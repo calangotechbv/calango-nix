@@ -225,10 +225,21 @@ let
   # than merely hiding the binary somewhere it could still be found.
   #
   # An `autospawn = no` in ~/.config/pulse/client.conf was considered and
-  # rejected. It would defend only against some future edit that put the
-  # daemon back on PATH -- and Guard 2 below already turns that edit into a
-  # build failure, so the config file would be defending against a change
-  # that cannot happen silently. Not worth the extra moving part.
+  # rejected. Guard 2 below only reaches this derivation's own $out/bin --
+  # it says nothing about the rest of home.packages, so it cannot by itself
+  # be the reason to skip a client.conf belt-and-suspenders. The property
+  # that actually matters -- no `pulseaudio` binary anywhere on the built
+  # profile's PATH, however it got there -- is enforced separately, at
+  # flake.nix's checks.${system}.no-pulseaudio-daemon, which walks the real
+  # generation's home-path/bin rather than reasoning about which
+  # derivation a stray reference came from. With that check in place, the
+  # rejection still holds, just anchored to the right guard: `autospawn =
+  # no` would defend only against some future edit that put a `pulseaudio`
+  # binary back on PATH -- pkgs.pulseaudio added to home.packages directly,
+  # or pulled in transitively -- and no-pulseaudio-daemon already turns
+  # that edit into a build failure. The config file would be defending
+  # against a change that cannot happen silently. Not worth the extra
+  # moving part.
   #
   # pactl has no consumer in this repo: quickshell/audio/AudioService.qml
   # names it only in a comment and drives audio through the Pipewire QML

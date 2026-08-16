@@ -175,16 +175,61 @@
       # activation script itself uses (a symlink baked into the activation
       # package's own output), so this checks the real generation, not a
       # reconstruction of it.
-      checks.${system}.no-dangling-home-files =
-        pkgs.runCommand "portal-stack-no-dangling-home-files" { } ''
-          dangling="$(find -L ${suffer.activationPackage}/home-files -type l || true)"
-          if [ -n "$dangling" ]; then
-            echo "Dangling symlink(s) under home-files -- a .source (or a" >&2
-            echo "package it came from) points at a path that does not exist:" >&2
-            echo "$dangling" | sed 's/^/  /' >&2
-            exit 1
-          fi
-          touch "$out"
-        '';
+      checks.${system} = {
+        no-dangling-home-files =
+          pkgs.runCommand "portal-stack-no-dangling-home-files" { } ''
+            dangling="$(find -L ${suffer.activationPackage}/home-files -type l || true)"
+            if [ -n "$dangling" ]; then
+              echo "Dangling symlink(s) under home-files -- a .source (or a" >&2
+              echo "package it came from) points at a path that does not exist:" >&2
+              echo "$dangling" | sed 's/^/  /' >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
+
+        # home/audio.nix's pulseaudioClients derivation withholds the
+        # pulseaudio daemon binary from its own output, on the strength of a
+        # measurement made there: `strings` on libpulse.so.0 shows the bare
+        # word "pulseaudio" and no absolute store path, so PulseAudio's
+        # autospawn resolves the daemon through PATH, by name. That guard
+        # only inspects pulseaudioClients' own $out/bin, though -- it cannot
+        # see the rest of home.packages. A `pkgs.pulseaudio` reference added
+        # anywhere else in this profile (the exact mistake pulseaudioClients
+        # exists to avoid, arriving a second time -- e.g. straight into
+        # home.packages, alongside pulseaudioClients rather than instead of
+        # it) would put the real daemon back on PATH with that guard still
+        # green, silently reopening the autospawn hazard: a client that
+        # failed to reach pipewire-pulse could start a real PulseAudio and
+        # seize the ALSA devices, and nothing in the per-derivation guard
+        # would notice.
+        #
+        # This check closes that gap at the level where the hazard actually
+        # lives: the built profile's PATH, not any one derivation's output.
+        # It walks ${suffer.activationPackage}/home-path/bin -- the same
+        # store path uwsm puts on PATH for the session, and the same
+        # generation no-dangling-home-files above checks -- rather than
+        # reasoning about which packages are listed in home.packages, so a
+        # transitive dependency that happens to ship a `pulseaudio` binary is
+        # caught the same way a direct one would be.
+        no-pulseaudio-daemon =
+          pkgs.runCommand "portal-stack-no-pulseaudio-daemon" { } ''
+            found="$(find ${suffer.activationPackage}/home-path/bin -maxdepth 1 -name pulseaudio || true)"
+            if [ -n "$found" ]; then
+              echo "A 'pulseaudio' binary is on the profile's PATH:" >&2
+              echo "$found" | sed 's/^/  /' >&2
+              echo "libpulse resolves the daemon by bare name through PATH" >&2
+              echo "(autospawn), so its presence here restores the hazard" >&2
+              echo "home/audio.nix's pulseaudioClients derivation exists to" >&2
+              echo "remove: a client that cannot reach pipewire-pulse can" >&2
+              echo "start a real PulseAudio and seize the ALSA devices." >&2
+              echo "Likely cause: pkgs.pulseaudio was added to home.packages" >&2
+              echo "directly, or pulled in transitively -- remove it and use" >&2
+              echo "pulseaudioClients instead." >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
+      };
     };
 }
