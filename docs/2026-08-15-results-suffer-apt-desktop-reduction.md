@@ -113,16 +113,34 @@ before the sweep:
 
 ### An unmanaged 218 MB, and it is not dormant
 
+Two separate piles live under `~/.local/share/fonts`, one nested in the
+other, and they need to be told apart:
+
 ```
-$ ls ~/.local/share/fonts/calango-desktop | wc -l
+$ ls -1 ~/.local/share/fonts | wc -l
 101
+$ du -sh --exclude=calango-desktop ~/.local/share/fonts
+164M
+$ ls -1 ~/.local/share/fonts/calango-desktop | wc -l
+18
+$ du -sh ~/.local/share/fonts/calango-desktop
+54M
 $ du -sh ~/.local/share/fonts
 218M
 ```
 
-Hand-copied files, no Home Manager symlinks among them, dated 2026-07-15,
-namespaced under the repository this project migrated away from. They are
-live: 36 of them are served by fontconfig, and
+|  | `~/.local/share/fonts` (top level) | `…/calango-desktop/` |
+|---|---|---|
+| files | 101 | 18 |
+| size | 164 MB | 54 MB |
+| dated | 2026-07-15 | 2026-08-01 … 08-04 |
+| contents | Inter, JetBrainsMono | Adwaita Sans/Mono, AdwaitaMono NF |
+
+Neither pile has Home Manager symlinks among its files; both are
+hand-copied, and the top-level one is namespaced under the repository this
+project migrated away from. Both are live: the 18 `calango-desktop` files
+produce 36 `fc-list` entries (several TTFs carry two named instances), and
+the other 101 files at the top level are served too. In particular:
 
 ```
 $ fc-match "Adwaita Sans"
@@ -132,7 +150,11 @@ $ fc-match "Adwaita Sans"
 wins over the flake's own copy at `~/.nix-profile/share/fonts/Adwaita/`. The
 portal's file dialog rendered with the hand-copied one. So `adwaita-fonts` in
 `home/default.nix` is currently decorative — the font that actually draws
-comes from a directory neither apt nor Nix owns. Recorded, not fixed.
+comes from a directory neither apt nor Nix owns. That part is the 18-file,
+54 MB `calango-desktop` pile specifically; the larger, older, 101-file /
+164 MB pile one level up is a separate, undifferentiated stash of Inter and
+JetBrainsMono that happens to sit in the same parent directory. Recorded, not
+fixed — either way, all 218 MB across both piles are unmanaged.
 
 ## Phase 3a: the gtk backend moves to Nix
 
@@ -194,6 +216,39 @@ a process found by matching a name pattern, rather than from the process
 systemd reports as the bus. Third instance in this spec of *a thing matching
 the pattern* standing in for *the thing*.
 
+### Backend selection, verified read rather than just present
+
+The filename argument (`man 5 portals.conf`, `g_ascii_strdown`,
+`lxqt-portals.conf` as a worked example) establishes that
+`hyprland-portals.conf` is the *name* xdg-desktop-portal will look for. It
+does not by itself establish that anything reads the file: a config file
+existing on disk is not evidence that it was consulted, and the file dialog,
+screenshot and screen share gates below cannot distinguish "config honoured"
+from "config ignored, fallback happens to agree" — with `kde` and `lxqt`
+removed, `gtk` is the only remaining `FileChooser` provider either way.
+
+So the resolution was checked directly, on a throwaway private bus that
+touched nothing live:
+
+```
+$ timeout 6 dbus-run-session -- env G_MESSAGES_DEBUG=all \
+    XDG_CURRENT_DESKTOP=Hyprland XDG_CONFIG_HOME=/home/isutton/.config \
+    /usr/libexec/xdg-desktop-portal -v
+XDP: Looking for portals configuration in
+  '/home/isutton/.config/xdg-desktop-portal/hyprland-portals.conf'
+XDP: Using portal configuration file '…/hyprland-portals.conf' for desktop 'hyprland'
+XDP: Using gtk.portal for org.freedesktop.impl.portal.FileChooser (config)
+XDP: Using gtk.portal for org.freedesktop.impl.portal.Print (config)
+XDP: Using gtk.portal for org.freedesktop.impl.portal.Settings (config)
+XDP: Using gtk.portal for org.freedesktop.impl.portal.Wallpaper (config)
+XDP: Using hyprland.portal for org.freedesktop.impl.portal.Screenshot (config)
+XDP: Using gnome-keyring.portal for org.freedesktop.impl.portal.Secret (config)
+```
+
+Every interface resolves `(config)`, from the declared file, under desktop
+name `hyprland`. That is the actual read, not an inference from the name
+being right — and it is what the summary table's "declared" now rests on.
+
 ### The gate
 
 ```
@@ -212,7 +267,30 @@ data caches (`gschemas.compiled`, `icon-theme.cache`, `mime.cache`), not code.
 
 ## Phase 2: the KDE installation
 
-878 packages, after `bluez` was protected.
+878 packages, after `bluez` was protected. That number does not decompose the
+way it might look. Reconstructed from `/var/log/apt/history.log`:
+
+```
+apt remove dolphin konsole … kwallet6     Remove=94
+apt autoremove                            Remove=784
+                                    total = 878
+```
+
+Of the 784 autoremoved, 466 are the language stack Phase 1 had already
+orphaned (see "The number the plan got wrong", above) — this autoremove is
+what actually swept it, alongside KDE's own dependents. The remaining
+`878 − 466 = 412` packages are attributable to the KDE removal itself: the 94
+named explicitly plus 318 of the autoremove.
+
+The spec's own estimate for this sweep was **82** packages, simulated in
+design. 412 is five times that. The spec's number was not a measurement error
+so much as a stale one: it was produced by simulating `autoremove` after
+removing the ten named KDE applications, *before* Phase 1 had orphaned
+anything and before `kwallet6` was added to the explicit removal list. Adding
+`kwallet6` to the list and running the sweep after Phase 1 had already
+changed the dependency graph is most of the gap between 82 and 412. The 82
+figure is not revisited elsewhere in this document; this is the one place it
+is reconciled against what was actually removed.
 
 ### The check the plan should have specified
 
@@ -324,6 +402,17 @@ serving exe:      /nix/store/…-xdg-desktop-portal-gtk-1.15.3/libexec/.xdg-desk
 /usr code mappings in it:  0
 ```
 
+The spec's gate for this phase was the same three checks as 3a, run again
+after removal: a real file dialog in Chrome, screenshot, and screen share.
+The process-level evidence above is not that gate — Phase 3a itself argues at
+length that a process check passes whether or not the dialog draws, which is
+exactly the class of miss a process check alone cannot catch here. The user
+performed and confirmed all three checks after this removal: the file dialog
+opened and rendered correctly (fonts, sizing, icons), and both screenshot and
+screen share worked. That human confirmation, not the process check, is what
+actually gates this phase; it is recorded here explicitly because the
+process-level facts above do not stand in for it.
+
 Those two `XDG_DATA_HOME` activation files are the Task 1 review finding doing
 its job. Without them this step would have left D-Bus with no activation file
 for `org.freedesktop.impl.portal.desktop.gtk`, and the first symptom would
@@ -338,7 +427,32 @@ mappings, and the process answering `GetServerInformation` as
 shadowed.
 
 `quickshell` and `libcpptrace1` were repacked into `/root/pkg-archive` first —
-neither has a download source. Removal took 17 packages in all.
+neither has a download source. The spec named four packages for this phase
+(`quickshell`, `libcpptrace1`, `libdwarf1`, `libjemalloc2`); removal took
+**17** in all, from two transactions:
+
+```
+apt remove quickshell     Remove=1
+apt autoremove            Remove=16
+```
+
+The sixteen from `autoremove`, categorised: fourteen QML6/Qt6 modules and
+libraries orphaned by `quickshell`'s own dependency tree
+(`qml6-module-qtquick`, `qml6-module-qtquick-window`,
+`qml6-module-qtquick-shapes`, `qml6-module-qtquick-layouts`,
+`qml6-module-qtquick-controls`, `qml6-module-qtquick-templates`,
+`qml6-module-qtqml`, `qml6-module-qtqml-models`,
+`qml6-module-qtqml-workerscript`, `libqt6quickcontrols2-6`,
+`libqt6quicktemplates2-6`, `libdwarf1`, `libjemalloc2`, `libcpptrace1`); the
+three spec-named survivors of that group (`libcpptrace1`, `libdwarf1`,
+`libjemalloc2`) are among them — `libcpptrace1` was repacked before this
+transaction swept it, same as `quickshell` — so the spec's four named
+packages are entirely accounted for. The other two are `accountsservice` and
+`libaccountsservice0` — not spec-named, and covered separately below ("The
+in-use check had a hole"), where the corrected check found `accountsservice`
+running but unconsumed and safe to remove.
+
+No PAM, login, D-Bus, systemd, polkit or portal package is in this list.
 
 **Nix's quickshell never restarted through any of it**: still MainPID 3923,
 `NRestarts=0`, before and after. The bar, panels and notifications kept
@@ -427,16 +541,20 @@ in the final verification of the spec that spent its length on it.
 | Backports packages | 4 | **0**, with no backports source to reintroduce them |
 | `apt-get -s autoremove` | 0, then 466 after Phase 1 | **0** |
 | What serves FileChooser | Debian's `xdg-desktop-portal-gtk` | Nix's, at `~/.config/systemd/user`, 0 `/usr` code mappings |
-| Backend selection | accidental — `gtk.portal` won as a fallback under `UseIn=gnome` | declared in `hyprland-portals.conf` |
+| Backend selection | accidental — `gtk.portal` won as a fallback under `UseIn=gnome` | declared in `hyprland-portals.conf`, confirmed read (below) |
 | Portal backends registered | 6 (gtk, kde, kwallet, lxqt, gnome-keyring, hyprland) | 3 — gtk and hyprland from Nix, gnome-keyring from apt |
 | KDE daemons running | `kwalletd6`, `kdeconnectd` | none, and no KDE installed |
 | `fc-match` for the three generic families | Debian's `fonts-noto-core` and `fonts-dejavu-mono` | the Nix store |
 | xkbcommon | `1.13.1-1~bpo13+1`, unmaintainable | `1.7.0-2` from trixie, maintained |
 
 Every row is a win, with one qualification worth stating: the reduction is
-larger than the spec authorised. Phase 1 orphaned a 466-package language stack
-the spec had explicitly placed out of scope, and the decision to sweep it was
-taken mid-execution rather than at design time.
+larger than the spec authorised, and in two distinct ways. Phase 1 orphaned a
+466-package language stack the spec had explicitly placed out of scope, and
+the decision to sweep it was taken mid-execution rather than at design time.
+Separately, Phase 2's own KDE removal came to ~412 packages against the
+spec's estimate of 82 — the language stack accounts for real overage, but not
+for all of it, and the KDE-side estimate was low by roughly 5x for reasons
+that had nothing to do with the language stack (see Phase 2, above).
 
 ## Every defect, and who owns it
 
@@ -583,12 +701,17 @@ That decision was tested by a reboot: greetd logged in with no PAM errors.
 
 ## What the next spec inherits
 
-**The portal frontend is now the only mixed piece.** Debian's `1.20.3` drives
-two Nix backends. nixpkgs has `1.22.1`. That is a real version change, it owns
-systemd units rather than a D-Bus service file alone, and it sits in the path
-of every portal call including the corp applications'. It is the obvious next
-spec, and it is now the *last* thing standing between the session and being
-entirely Nix's.
+**The portal frontend is now the only mixed piece.** Debian's `1.20.3+ds-1`
+drives two Nix backends. The flake's pinned nixpkgs has `1.20.4` — a patch
+bump on the same minor, not the version jump this document originally
+claimed. (The `1.22.1` figure in an earlier draft came from the flake
+*registry*, `nixpkgs#xdg-desktop-portal`, not from this flake's pinned input;
+it does not apply here, and the deferral rationale below does not lean on it
+anymore.) What still justifies leaving this frontend for its own spec: it
+owns systemd units rather than a D-Bus service file alone, and it sits in the
+path of every portal call including the corp applications'. It is the
+obvious next spec, and it is now the *last* thing standing between the
+session and being entirely Nix's.
 
 **Audio is a strong second.** `pipewire` (3042), `pipewire-pulse` (3047) and
 `wireplumber` (3046) all run as **user** services from Debian units at
@@ -597,9 +720,11 @@ Nix's `wireplumber-0.5.14` is already on the session PATH. Deferred here
 because it is a migration rather than a reduction, the failure mode is "no
 audio", and PipeWire's A2DP path couples to `bluez`, which stays on apt.
 
-**The unmanaged 218 MB of fonts.** 101 hand-copied files at
-`~/.local/share/fonts/calango-desktop`, live in fontconfig, shadowing the
-flake's own `adwaita-fonts`. The largest artefact in `$HOME` that neither apt
+**The unmanaged 218 MB of fonts.** Two piles under `~/.local/share/fonts`:
+101 files / 164 MB of Inter and JetBrainsMono at the top level, dated
+2026-07-15, and 18 files / 54 MB of Adwaita under `calango-desktop/`, dated
+2026-08-01…04 — the second of which shadows the flake's own `adwaita-fonts`.
+Both are live in fontconfig. The largest artefact in `$HOME` that neither apt
 nor Nix owns.
 
 **82 dictionary packages** nobody has justified, untouched by this spec.
@@ -608,6 +733,17 @@ nor Nix owns.
 it is the residue of three specs of removals and nobody has looked at it.
 
 **`/run/opengl-driver`** remains parked and unestablished.
+
+**The hyprland D-Bus activation file's `Exec=` names the unwrapped binary.**
+Pre-existing, from spec 5, and outside this spec's scope — not touched here.
+`~/.local/share/dbus-1/services/org.freedesktop.impl.portal.desktop.hyprland.service`
+carries `Exec=/nix/store/…-xdg-desktop-portal-hyprland-1.3.12/libexec/xdg-desktop-portal-hyprland`,
+the real binary, not the `portal-nixgl` wrapper. dbus-broker prefers
+`SystemdService=` when the user manager is reachable, so this path is not
+taken today — but it is an undisclosed fallback around nixGL: if activation
+ever falls through to `Exec=`, the portal hits the same
+`/run/opengl-driver/lib/gbm` problem the wrapper exists to prevent, in the
+one situation where nothing is watching. Recorded, not fixed.
 
 **The rollback rule, extended again.** A previous Home Manager generation was
 already not a recovery path after spec 6. It now additionally supplies the gtk

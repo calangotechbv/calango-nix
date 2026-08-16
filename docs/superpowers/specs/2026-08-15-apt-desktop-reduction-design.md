@@ -107,7 +107,7 @@ which applies under LXQt and not here.
 |---|---|---|
 | `xdg-desktop-portal-gtk` | `1.15.3-1` | `1.15.3` |
 | Interfaces declared | 11 | the same 11 plus `Wallpaper` |
-| `xdg-desktop-portal` (frontend) | `1.20.3+ds-1` | `1.22.1` |
+| `xdg-desktop-portal` (frontend) | `1.20.3+ds-1` | `1.20.4` |
 
 Same upstream version, strict superset of interfaces. The discovery mechanism
 is already proven on this machine, in two parts, because two different
@@ -194,10 +194,13 @@ data, and neither does this spec.
 
 ## Non-goals
 
-- **The portal frontend.** `1.20.3` → `1.22.1` is a real version change, it
-  owns systemd units rather than a D-Bus service file alone, and it sits in
-  the path of every portal call including the corp applications'. Its own
-  spec.
+- **The portal frontend.** `1.20.3+ds-1` → `1.20.4` (the flake's pinned
+  nixpkgs; `1.22.1` was misread from the flake *registry*, not this flake's
+  input, and does not apply here) is a patch bump on the same minor, not the
+  real version change this non-goal originally leaned on. The version delta
+  no longer carries the argument. What still does: it owns systemd units
+  rather than a D-Bus service file alone, and it sits in the path of every
+  portal call including the corp applications'. Its own spec.
 - **Migrating the remaining GUI applications** — `firefox-esr`,
   `signal-desktop`, `bitwarden`, `kitty`, `emacs-lucid`, `thunar`,
   `pcmanfm-qt`, `virt-manager`, `displaycal`, `isoimagewriter`, `seahorse`,
