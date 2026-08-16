@@ -252,9 +252,39 @@ package at a later phase, not a contradiction of this one.
   standalone Home Manager writes only `~/.config/systemd/user`. Permanent apt
   dependency, by architecture. It is marked manual so `autoremove` cannot take
   it. Do not re-open this.
+- **`gnome-keyring` stays on apt, deliberately — and this one was decided after
+  a survey, not by default.** It serves `org.freedesktop.secrets` and
+  `org.gnome.keyring` on the session bus and backs
+  `org.freedesktop.impl.portal.Secret`, which `hyprland-portals.conf` names. It
+  is a genuine candidate on paper, and three measurements say leave it:
+  - **nixpkgs' package ships no systemd units and no D-Bus activation files.**
+    `find <store> -path '*systemd*'` returns 0, where Debian ships two units
+    and three activation files. Every migration in this project copied units
+    verbatim; here all five artifacts would have to be hand-authored, which is
+    the drift the copy-verbatim rule exists to avoid.
+  - **`pam_gnome_keyring.so` is in `/etc/pam.d/greetd`** (`auth optional`, and
+    `session optional … auto_start`), from Debian's `libpam-gnome-keyring`.
+    That is the auto-unlock path. nixpkgs does ship the module at
+    `lib/security/pam_gnome_keyring.so`, but using it means a root-owned
+    system file referencing a `/nix/store` path — and if that path is ever
+    garbage-collected or the package dropped, **login breaks**. Every other
+    failure mode this project has accepted is recoverable from a running
+    desktop. This one is not.
+  - 48 → 50 is two majors, on `~/.local/share/keyrings/login.keyring`, a live
+    file.
+
+  Note the daemon is currently owned by the *systemd user unit*, not by PAM's
+  `auto_start` — `/proc/<pid>/cgroup` puts it in
+  `app.slice/gnome-keyring-daemon.service`. PAM's `auth` hook is what passes
+  the login password through to unlock the keyring, and that is the part with
+  no user-space replacement. Do not re-open this without answering the PAM
+  question first.
 - **The corp set stays on apt permanently:** `google-chrome-stable`, `code`,
   `1password`, `1password-cli`, `endpoint-verification`, and flatpak Slack
-  (`com.slack.Slack`).
+  (`com.slack.Slack`). Note `1password` is load-bearing beyond its own window:
+  `~/.ssh/config` sets `IdentityAgent ~/.1password/agent.sock` for `github.com`,
+  and that agent holds the SSH keys — which is why Debian's `ssh-agent` and
+  `gcr-ssh-agent` serve nothing here.
 - **A previous Home Manager generation is not a recovery path.** It lacks the
   uwsm session units, both portal backends, the portal frontend, the portal
   config and the font baseline. Recovery is fix-forward:
