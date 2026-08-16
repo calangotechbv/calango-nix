@@ -709,3 +709,243 @@ The gate was invented from the rehearsal without checking the baseline
 first — the same error as item 7, in the other direction: a warning seen
 under Nix, attributed to Nix, without asking what Debian did. It is
 withdrawn.
+
+## Phase 3: the apt removal
+
+### The removal set, and why it is six and not five
+
+`apt-get -s remove pipewire pipewire-bin pipewire-pulse wireplumber
+libspa-0.2-bluetooth libcanberra-pulse`, re-verified against the live
+machine rather than trusted from the spec, gave `6 to remove, 0 newly
+installed` and **zero `Inst` lines** anywhere in the output.
+
+`libcanberra-pulse` is in the set for one reason: it declares
+`Depends: pipewire-pulse | pulseaudio`. Removing `pipewire-pulse` without
+it leaves that dependency satisfiable the other way, and apt installs
+PulseAudio to close it — two sound servers on one socket. With
+`libcanberra-pulse` in the set, the simulation installs nothing, and the
+package state captured after the real removal confirms it:
+
+```
+un  pulseaudio
+```
+
+`pulseaudio` reads `un`, not `rc` and not `ii` — dpkg has no record of it
+ever having been installed. `libcanberra-pulse` did its job.
+
+### The two keepers, marked manual before anything was removed
+
+Both `rtkit` and `pulseaudio-utils` appeared in the removal's "no longer
+required" list. Neither would have gone today — both would have gone to
+some later, unrelated `apt autoremove`, at which point whatever broke
+would have been blamed on this migration's version bump rather than on
+the mark. Both were made manual before the six packages were removed, to
+close that off in advance rather than after the fact.
+
+**`rtkit`.** `rtkit-daemon` is a *system* service, at
+`/usr/lib/systemd/system/rtkit-daemon.service`, active, and it is what
+grants pipewire's `data-loop.0` thread `SCHED_RR` priority 20 — measured
+on this boot, under Nix's pipewire, in Gate 4 below. Standalone Home
+Manager writes only user units and cannot replace a system service, so
+`rtkit` is a permanent apt dependency in the same way `bluez` is.
+
+**`pulseaudio-utils`.** Supplies `pactl`. Nix ships a rich `pw-*`
+toolset and no `pactl`, and much of this migration's own gate is written
+in `pactl` invocations. Losing the diagnostic vocabulary at the exact
+moment the sound server underneath it changes would have been a bad
+trade.
+
+### Package state after
+
+```
+un  libcanberra-pulse
+un  libspa-0.2-bluetooth
+rc  pipewire 1.4.2-1
+rc  pipewire-bin 1.4.2-1
+rc  pipewire-pulse 1.4.2-1
+un  pulseaudio
+ii  pulseaudio-utils 17.0+dfsg1-2+b1
+ii  rtkit 0.13-5.1
+rc  wireplumber 0.5.8-2
+```
+
+Four of the six removed packages read `rc` (removed, conffiles
+retained); the other two — `libcanberra-pulse` and `libspa-0.2-bluetooth`
+— read `un`, having shipped no conffiles for dpkg to keep. The two
+keepers hold `ii`.
+
+`${db:Status-Abbrev}` is the field that matters, not `${Version}`.
+`dpkg-query -W -f='${Version}'` prints a version string and exits `0`
+for an `rc` package — exactly the state `apt remove` leaves behind — so
+a version-only query cannot tell "still installed" from "removed,
+config left on disk." There are 120 `rc` packages on this machine
+already; a version-only query would have silently agreed all six were
+still there.
+
+### The /etc sweep
+
+dpkg left all six audio `.wants` symlinks dangling under
+`/etc/systemd/user` — it creates them as part of installing a unit but
+does not own them and does not clean them up on removal, exactly what
+`CLAUDE.md` already documents from `fumon`, `ydotool` and
+`rewrite-launchers`. The machine's dangling-symlink total went from 8
+(pre-existing, unrelated to audio) to 14.
+
+They are inert. The links that actually matter sit at `UnitPath`
+position 5 (`~/.config/systemd/user`); these six sit at position 15
+(`/etc/systemd/user`, resolving toward `/usr/lib/systemd/user`) and now
+point at fragment files that no longer exist on disk. Left in place,
+root-owned, outside this flake's territory — not deleted.
+
+### The cold gate, second run
+
+A second reboot, then the whole Task 3 gate re-run unchanged, against a
+machine with no Debian audio package installed, no Debian audio unit
+file left in `/usr/lib/systemd/user`, and `/usr/share/wireplumber`
+deleted. The Task 3 gate had already passed once, with Debian's packages
+merely stopped and out-competed on `UnitPath` — passing it then proved
+nothing about whether anything was still capable of reaching for them.
+Running the identical gate again, with the packages gone rather than
+just quiet, is what actually closes that gap.
+
+**Gate 1 — provenance.**
+```
+pipewire        active   NRestarts=0 pid=2950    usr-maps=0 exe=/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/bin/pipewire
+pipewire-pulse  active   NRestarts=0 pid=2955    usr-maps=0 exe=/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/bin/pipewire
+wireplumber     active   NRestarts=0 pid=2953    usr-maps=0 exe=/nix/store/gnvd0pfyxahyw4k7m5kki0ad75mzwws8-wireplumber-0.5.14/bin/wireplumber
+filter-chain    active   NRestarts=0 pid=2954    usr-maps=0 exe=/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/bin/pipewire
+sockets: active active
+failed units: 0
+```
+Same four units, same store paths, `NRestarts=0` from cold, `usr-maps=0`
+across the board — unchanged from Phase 2, now with nothing left at
+`/usr/lib/systemd/user` for a stray lookup to have quietly resolved to
+instead.
+
+**Gate 2 — the alias, both halves.**
+```
+$ grep -E '^Wants=' /home/isutton/.config/systemd/user/pipewire-pulse.service      # what the unit ASKS for
+Wants=pipewire.service pipewire-session-manager.service
+$ systemctl --user show pipewire-pulse.service -p Wants   # what the manager RESOLVED
+Wants=wireplumber.service pipewire.service
+Id=wireplumber.service
+Names=wireplumber.service pipewire-session-manager.service
+LoadState=loaded
+$ systemctl --user list-dependencies --after pipewire-pulse.service | grep -i wireplumber
+● ├─wireplumber.service
+```
+The unit file still asks for the alias by name, the manager still
+resolves it to `wireplumber.service`, and the ordering still took effect
+— the same three-part proof Phase 2 required, unchanged with the
+Debian packages gone.
+
+**Gate 3 — enablement, with nothing left at position 15.**
+```
+our .wants links: 6
+alias: wireplumber.service
+dangling under ~/.config/systemd/user: 0
+Debian audio unit files in /usr/lib/systemd/user: 0
+Debian .wants links left dangling under /etc/systemd/user: 6
+total dangling under /etc/systemd/user: 14   (was 8 before this migration)
+```
+Six of our own links, zero dangling on our side, and — the fact this run
+adds that Phase 2 could not have shown — zero Debian audio unit files
+anywhere under `/usr/lib/systemd/user`. Position 15 is now empty. The
+six Debian `.wants` links under `/etc/systemd/user`, from the sweep
+above, point at nothing.
+
+**Gate 4 — devices and realtime.**
+```
+49	alsa_card.pci-0000_03_00.1	alsa
+50	alsa_card.pci-0000_03_00.6	alsa
+76	bluez_card.E4_61_F4_29_55_BA	module-bluez5-device.c
+
+57	alsa_output.pci-0000_03_00.6.HiFi__Speaker__sink	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+77	bluez_output.E4_61_F4_29_55_BA.1	PipeWire	s16le 2ch 48000Hz	RUNNING
+
+57	alsa_output.pci-0000_03_00.6.HiFi__Speaker__sink.monitor	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+58	alsa_input.pci-0000_03_00.6.HiFi__Mic2__source	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+59	alsa_input.pci-0000_03_00.6.HiFi__Mic1__source	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+77	bluez_output.E4_61_F4_29_55_BA.1.monitor	PipeWire	s16le 2ch 48000Hz	RUNNING
+79	bluez_input.E4:61:F4:29:55:BA	PipeWire	float32le 1ch 48000Hz	SUSPENDED
+
+Server Name: PulseAudio (on PipeWire 1.6.6)
+pipewire       pid 2950's current scheduling policy: SCHED_OTHER|SCHED_RESET_ON_FORK;pid 2950's current scheduling priority: 0;pid 2950's current runtime parameter: 2800000
+module-rt      pid 2974's current scheduling policy: SCHED_OTHER|SCHED_RESET_ON_FORK;pid 2974's current scheduling priority: 0;pid 2974's current runtime parameter: 2800000
+data-loop.0    pid 2979's current scheduling policy: SCHED_RR|SCHED_RESET_ON_FORK;pid 2979's current scheduling priority: 20
+ActiveState=active
+FragmentPath=/usr/lib/systemd/system/rtkit-daemon.service
+```
+Both ALSA cards, the JBL connected and `RUNNING`, and `data-loop.0`
+still at `SCHED_RR` priority 20 — the property marking `rtkit` manual
+exists to protect — holding on this run exactly as Phase 2 recorded it,
+still granted by Debian's still-active system unit.
+
+**Gate 7 — script provenance, with Debian's tree deleted.**
+```
+state-routes tracebacks: 0
+journal lines: 7
+XDG_DATA_DIRS=/home/isutton/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/
+WIREPLUMBER_DATA_DIR=/nix/store/gnvd0pfyxahyw4k7m5kki0ad75mzwws8-wireplumber-0.5.14/share/wireplumber
+/usr/share/wireplumber exists: NO
+```
+Zero tracebacks, a non-empty journal, and `/usr/share/wireplumber` — the
+tree the Phase 2 regression was reading from — confirmed gone rather
+than merely unused. `WIREPLUMBER_DATA_DIR` is still doing the work;
+`XDG_DATA_DIRS` still carries no `~/.nix-profile/share`.
+
+**By hand, reported by the user — all four pass again:**
+- Sound from the speakers: YES
+- quickshell volume OSD and audio panel: YES
+- Chrome does not walk the microphone gain back up: YES
+- JBL Tune 520BT playback (A2DP) and a real call on its microphone (HFP): YES
+
+Second time these four have been run: once on the Task 3 cold gate with
+Debian's packages still installed, and again here with them removed. The
+repetition is the point — passing the first time did not prove nothing
+was still reaching for Debian's copies.
+
+#### Gate 6: the plan named the wrong process
+
+The plan's check was `grep -c 'spa-0.2/bluez5' /proc/<pipewire-pid>/maps`.
+That check is not merely incomplete, it is wrong: pipewire does not load
+the bluez5 plugins at all — **wireplumber** does, as the device monitor.
+Run against pipewire, the count reads `0` whether Bluetooth works or
+not — a check that cannot fail, the exact shape `CLAUDE.md` names as the
+thing to never ship. This is not "the check was improved": the plan
+named the wrong process, and the check as written could never have
+failed either way.
+
+Corrected against wireplumber's own maps:
+```
+bluez5 map entries in pipewire   (pid 2950): 0
+bluez5 map entries in wireplumber (pid 2953): 70
+
+distinct .so loaded, all from /nix/store:
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-bluez5.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-aac.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-aptx.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-faststream.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-g722.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-hfp-cvsd.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-hfp-lc3-a127.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-hfp-lc3-swb.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-hfp-msbc.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-lc3.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-ldac.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-opus-g.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-opus.so
+/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/lib/spa-0.2/bluez5/libspa-codec-bluez5-sbc.so
+
+plugins on disk: 14   Debian's libspa-0.2-bluetooth shipped 9 and is now uninstalled
+files left at /usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/: 0
+bluetooth.service: active from /usr/lib/systemd/system/bluetooth.service
+```
+70 map entries against wireplumber, zero against pipewire, all 14
+`.so` files loaded from `/nix/store`, none from Debian's now-empty
+directory — including the four HFP codecs (`cvsd`, `msbc`, `lc3-swb`,
+`lc3-a127`) and AAC that Debian's 9-plugin build never shipped at all.
+`bluetooth.service` remains the one apt-owned piece of the audio path
+left, still `active`, from `/usr/lib/systemd/system/bluetooth.service`
+— a system unit, permanently out of Home Manager's reach in the same
+way `rtkit-daemon` is.
