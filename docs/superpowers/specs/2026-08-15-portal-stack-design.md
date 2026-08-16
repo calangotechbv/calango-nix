@@ -49,8 +49,13 @@ share/systemd/user/
   xdg-desktop-portal.service
   xdg-document-portal.service
   xdg-permission-store.service
-  xdg-desktop-portal-rewrite-launchers.service     <- Debian has no equivalent
+  xdg-desktop-portal-rewrite-launchers.service
 ```
+
+Debian ships the same four. An earlier draft of this spec claimed the fourth
+was Nix-only; `dpkg -L xdg-desktop-portal` disproves it. The mistake came from
+reading `systemctl --user list-units`, where a finished oneshot does not
+appear.
 
 The three shared units `diff` **identical to Debian's apart from
 `ExecStart`** — same `Type=dbus`, same `BusName`, same
@@ -147,11 +152,27 @@ shadow. Leaving inert Debian units at position 15 forever makes "which one is
 actually serving" a question every future reader must re-derive — and that
 ambiguity is exactly what spec 6's defect was made of.
 
-**`xdg-desktop-portal-rewrite-launchers.service` is not installed.** Debian
-never had it, nothing here uses dynamic launchers, and adding a unit to
-`graphical-session-pre.target` is a session-startup risk for no benefit. The
-decision is recorded so a later reader does not mistake its absence for an
-oversight.
+**`xdg-desktop-portal-rewrite-launchers.service` is installed**, correcting
+this spec's first draft.
+
+That draft skipped it, arguing Debian never had it. Measurement says
+otherwise: `dpkg -L xdg-desktop-portal` lists it, it is enabled by a
+root-owned symlink at
+`/etc/systemd/user/graphical-session-pre.target.wants/`, and it ran
+successfully at this boot. **Debian ships four units from this package, not
+three**, and the earlier inventory in this spec counted only the three that
+appear in `systemctl --user list-units` — a oneshot that has already finished
+does not show there.
+
+It is a no-op on this machine: `~/.local/share/applications` holds three
+entries and none was created through the DynamicLauncher portal. But "it does
+nothing today" is a different argument from "Debian never had it", and only
+the second was made. Parity with current behaviour is the default; a
+behaviour reduction should not ride along inside a migration.
+
+It also carries `WantedBy=graphical-session-pre.target`, unlike the other
+three, so it needs an explicit enablement link — the treatment
+`home/uwsm.nix` already gives `fumon.service`.
 
 **No nixGL wrapper**, on the `ldd` evidence above.
 

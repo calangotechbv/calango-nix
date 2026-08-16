@@ -19,7 +19,7 @@
 - **Slack is corp software the user needs to run.** It is a flatpak, and `xdg-document-portal` is what lets it reach files outside its sandbox. Task 3's gate is Slack moving a file.
 - **Nothing in this plan is irreversible.** Debian's `xdg-desktop-portal` is downloadable from trixie (`1.20.3+ds-1`) and sits in flatpak's `Recommends`, not `Depends`. Recovery at any point is `sudo apt install xdg-desktop-portal` plus removing flake lines.
 - **A Home Manager rollback is not a recovery path.** The current generation carries the uwsm units, the gtk portal backend, `hyprland-portals.conf` and the font baseline.
-- **`xdg-desktop-portal-rewrite-launchers.service` is deliberately not installed.** Debian never had it, nothing here uses dynamic launchers, and adding a unit to `graphical-session-pre.target` is a session-startup risk for no benefit.
+- **`xdg-desktop-portal-rewrite-launchers.service` IS installed, in Task 2.** An earlier draft skipped it on the grounds that Debian never had it. That was false: `dpkg -L xdg-desktop-portal` lists it, `/etc/systemd/user/graphical-session-pre.target.wants/` enables it, and it ran successfully this boot. Debian ships **four** units, not three. It also carries `WantedBy=graphical-session-pre.target`, so it needs an explicit enablement link — the treatment `home/uwsm.nix` gives `fumon.service`.
 - **Gates read a running process's own state.** `/proc/<pid>/exe`, `/usr` code-mapping counts, `busctl --user status` name ownership — plus one thing a person does. Every check in specs 6 and 7 that compared a path, a name or an exit code eventually lied.
 - **Verify by counting, never by reading empty output as success.** `sed` and other filters exit 0 and mask an upstream `grep`'s status, so "printed nothing" and "the pipeline broke" look identical.
 
@@ -248,6 +248,42 @@ In `home/services.nix`, immediately after the permission-store pair from Task 1:
     "${pkgs.xdg-desktop-portal}/share/dbus-1/services/org.freedesktop.portal.Desktop.service";
 ```
 
+- [ ] **Step 1b: Add the rewrite-launchers unit and its enablement link**
+
+Debian ships four units and enables this one; parity is the default, and the
+reason an earlier draft gave for skipping it was factually wrong.
+
+It is a `oneshot` in `graphical-session-pre.target` that rewrites `.desktop`
+entries created through the DynamicLauncher portal. There are none here —
+`~/.local/share/applications` holds three entries, none of them portal-created
+— so it is a no-op today. It is installed for parity, not for need, and the
+comment says so.
+
+Immediately after the frontend pair:
+
+```nix
+  # Debian ships four units from this package and enables this one via
+  # /etc/systemd/user/graphical-session-pre.target.wants. It runs at every
+  # graphical session start and finishes in under a second.
+  #
+  # A oneshot that rewrites .desktop entries created through the
+  # DynamicLauncher portal. There are none on this machine, so it does nothing
+  # here -- it is installed for parity with what Debian already does, not
+  # because anything needs it. Dropping it would be a behaviour change smuggled
+  # into a migration.
+  #
+  # Unlike the other three units this one carries
+  # WantedBy=graphical-session-pre.target, so the unit file alone does not
+  # enable it. The .wants link below does, owned here rather than left to the
+  # root-owned /etc symlink that Debian's package installed and that Task 4
+  # deletes. Same shape as fumon.service in home/uwsm.nix.
+  config.xdg.configFile."systemd/user/xdg-desktop-portal-rewrite-launchers.service".source =
+    "${pkgs.xdg-desktop-portal}/share/systemd/user/xdg-desktop-portal-rewrite-launchers.service";
+
+  config.xdg.configFile."systemd/user/graphical-session-pre.target.wants/xdg-desktop-portal-rewrite-launchers.service".source =
+    "${pkgs.xdg-desktop-portal}/share/systemd/user/xdg-desktop-portal-rewrite-launchers.service";
+```
+
 - [ ] **Step 2: Build and verify**
 
 ```bash
@@ -258,6 +294,16 @@ grep -E '^(ExecStart|BusName)=' "$NEW/home-files/.config/systemd/user/xdg-deskto
 
 Expected: `ExecStart=/nix/store/…-xdg-desktop-portal-1.20.4/libexec/xdg-desktop-portal`,
 `BusName=org.freedesktop.portal.Desktop`, and no `/usr/libexec`.
+
+Also confirm the rewrite-launchers unit and its enablement link:
+
+```bash
+grep -E '^(ExecStart|WantedBy)=' "$NEW/home-files/.config/systemd/user/xdg-desktop-portal-rewrite-launchers.service"
+ls -l "$NEW/home-files/.config/systemd/user/graphical-session-pre.target.wants/"
+```
+
+Expected: `ExecStart` under `/nix/store`, `WantedBy=graphical-session-pre.target`,
+and the `.wants` directory containing the link.
 
 - [ ] **Step 3: Read the dry run**
 
@@ -483,12 +529,31 @@ ls ~/.local/share/dbus-1/services/ | grep -i portal
 ls /usr/lib/systemd/user/ | grep -E 'xdg-(desktop-portal|document-portal|permission-store)'
 ```
 
-Expected: Debian's three activation files and three units gone; Nix's five
+Expected: Debian's three activation files and **four** units gone; Nix's five
 activation files present in `XDG_DATA_HOME` (three from this spec, two from
-spec 7's backends).
+spec 7's backends). Debian ships four units but only three D-Bus activation
+files — rewrite-launchers is a oneshot, not a bus-activated service.
 
 This is the moment the `xdg.dataFile` entries become load-bearing. Until now
 Debian's copies were also present.
+
+- [ ] **Step 3b: The user removes the dangling enablement link**
+
+```bash
+ls -l /etc/systemd/user/graphical-session-pre.target.wants/
+sudo rm /etc/systemd/user/graphical-session-pre.target.wants/xdg-desktop-portal-rewrite-launchers.service
+sudo rmdir --ignore-fail-on-non-empty /etc/systemd/user/graphical-session-pre.target.wants
+```
+
+Removing Debian's package leaves this symlink pointing at a file that no
+longer exists. dpkg does not own these links — its systemd helper creates them
+— so it never cleans them up.
+
+This is the **third** occurrence of the same pattern in three specs: apt's
+`fumon` link survived the uwsm removal, apt's `ydotool` link survived that
+removal, and now this one. It is a predictable consequence, not a discovery.
+Nix's own enablement link at `~/.config/systemd/user/graphical-session-pre.target.wants/`
+is unaffected and keeps the unit enabled.
 
 - [ ] **Step 4: The user reboots**
 
