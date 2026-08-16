@@ -450,11 +450,45 @@ FragmentPath=/home/isutton/.config/systemd/user/wireplumber.service
 readlink: wireplumber.service
 ```
 
-Establishes: `pipewire-pulse.service`'s `Wants=` names
-`pipewire-session-manager.service`, and that name resolves live to
-`Id=wireplumber.service`, `LoadState=loaded` — against Phase 0's baseline
-reading of `LoadState=not-found` for the same name, which is what makes a
-`loaded` here mean something. `readlink` confirms the on-disk link is the
+`systemctl show -p Wants` reports the resolved canonical id, never the alias
+name it was asked for, so that block by itself cannot show
+`pipewire-pulse.service` ever asked for `pipewire-session-manager.service` —
+only that *something* named `wireplumber.service` was pulled in. Reading it
+as proof of the alias would be the same mistake as reading
+`show-environment` for a boot-path unit's environment: the wrong instrument,
+answering a related but different question. The raw unit file is the other
+half:
+
+```
+$ grep -E '^(Wants|After|BindsTo)=' /home/isutton/.config/systemd/user/pipewire-pulse.service
+Wants=pipewire.service pipewire-session-manager.service
+After=pipewire.service pipewire-session-manager.service
+BindsTo=pipewire.service
+
+$ grep -E '^(After|BindsTo)=' /home/isutton/.config/systemd/user/filter-chain.service
+After=pipewire.service pipewire-session-manager.service
+BindsTo=pipewire.service
+
+$ systemctl --user show pipewire-pulse.service -p Wants -p After
+Wants=pipewire.service wireplumber.service
+After=-.mount pipewire.service wireplumber.service basic.target session.slice pipewire-pulse.socket
+
+$ systemctl --user list-dependencies --after pipewire-pulse.service | grep -i wireplumber
+● ├─wireplumber.service
+```
+
+Establishes, from the pair together: the unit file is what *asks* for the
+alias — `pipewire-pulse.service` and `filter-chain.service` both name
+`pipewire-session-manager.service` on disk — and the manager is what
+*resolved* it — the same query against the running manager reports
+`wireplumber.service`. Neither line alone distinguishes a resolved alias
+from a silently dropped one; `Wants=` naming a unit that does not exist is
+not an error; systemd drops the dependency and the ordering with it, audio
+starts anyway, and `--state=failed` stays empty. Only the pair, read
+together, rules that out. `list-dependencies --after` then confirms the
+ordering itself took effect, not just the naming: wireplumber does appear
+ahead of `pipewire-pulse.service` in the manager's dependency graph. And
+`readlink` on the alias file itself still confirms the on-disk link is the
 bare string `wireplumber.service`, no directory part, no store path: a true
 alias, not a unit that merely mentions the name.
 
@@ -565,7 +599,20 @@ through `XDG_DATA_DIRS`. `wireplumber.service` carries
 start, at 13:27:33; `graphical-session.target`, and with it uwsm's session
 environment update, only reached `active` at 13:27:36 — three seconds later.
 The unit was started, and had already resolved its data tree, before uwsm
-ever set `~/.nix-profile/share` into the session environment.
+ever set `~/.nix-profile/share` into the session environment. A later boot's
+`ActiveEnterTimestamp`s, read from the manager rather than from prose,
+corroborate the same three-second gap:
+
+```
+$ systemctl --user show wireplumber.service -p ActiveEnterTimestamp --value
+Sun 2026-08-16 13:46:52 -03
+$ systemctl --user show graphical-session.target -p ActiveEnterTimestamp --value
+Sun 2026-08-16 13:46:55 -03
+```
+
+(13:27:33 / 13:27:36 are the failing boot that produced the 8 tracebacks;
+13:46:52 / 13:46:55 are a later boot, captured after the fix — the shape
+repeats.)
 
 The Task 2 comment claiming `pkgs.wireplumber` in `home.packages` fixes this
 was **wrong**. The error was made by reading
@@ -600,6 +647,41 @@ mechanism that was blamed and corrected (`XDG_DATA_DIRS`) is demonstrably
 still broken, and the drop-in's `WIREPLUMBER_DATA_DIR` is demonstrably what
 is doing the work. The journal is non-empty (20 lines), ruling out an empty
 journal as the reason the traceback count reads zero.
+
+The positive half completes the same point with the script tree itself:
+
+```
+$ journalctl --user -u wireplumber.service -b | wc -l
+21
+
+$ ls ~/.nix-profile/share/wireplumber/scripts/device/state-routes.lua
+/home/isutton/.nix-profile/share/wireplumber/scripts/device/state-routes.lua
+
+$ grep -c 'get_count' <that file>   # the 0.5.14 form
+1
+
+$ grep -c 'next (selected_routes)' /usr/share/wireplumber/scripts/device/state-routes.lua   # Debian's 0.5.8 form
+ugrep: warning: /usr/share/wireplumber/scripts/device/state-routes.lua: No such file or directory
+
+$ ls -d /usr/share/wireplumber
+ls: cannot access '/usr/share/wireplumber': No such file or directory
+```
+
+A non-empty journal (21 lines this time), Nix's own script present with
+the 0.5.14 `get_count` form (count 1) — both rule out "zero tracebacks
+because there was nothing to traceback from." The fourth counter-check,
+grepping Debian's `next (selected_routes)` form, can no longer run: the
+Task 4 apt removal has since deleted `/usr/share/wireplumber` entirely.
+When Gate 7 was evaluated, that tree was still present — which is precisely
+why a count of zero tracebacks meant something at that moment, rather than
+meaning the comparison script was simply gone. Its absence now is a Task 4
+property, not a Task 3 one, and it is the strongest argument for keeping
+the `WIREPLUMBER_DATA_DIR` drop-in explicit rather than relying on
+`XDG_DATA_DIRS` ever picking up Nix's tree by accident: with Debian's
+`/usr/share/wireplumber` gone, wireplumber now falls back to its
+compiled-in store path regardless, and would *appear* to fix itself even
+without the drop-in — an implicit fix would have been indistinguishable
+from the explicit one, on this machine, from this boot forward.
 
 ### Gate 8, withdrawn
 
