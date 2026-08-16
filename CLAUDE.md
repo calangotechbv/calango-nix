@@ -160,6 +160,23 @@ only as "no dangling *symlinks*".
 **Removing a package does not kill its running process.** Absence is only
 measurable after the session ends — check after the reboot, not before.
 
+**Nor does it make the unit disappear from `systemctl --user show`.** The
+manager caches its unit table until a reload, so a unit whose fragment has just
+been deleted still reports `LoadState=loaded` and `UnitFileState=enabled`, with
+a `FragmentPath` pointing at a file that is no longer there. Measured right
+after `apt remove foot`:
+
+```sh
+systemctl --user show foot-server.service -p LoadState -p FragmentPath -p UnitFileState
+# LoadState=loaded
+# FragmentPath=/usr/lib/systemd/user/foot-server.service   <- does not exist
+# UnitFileState=enabled
+```
+
+`list-unit-files` had already dropped it, so the two disagree. Checking a
+unit's *absence* with `show`, without a `daemon-reload` or a fresh login, is a
+false positive waiting to happen.
+
 **A `.source` pointing at a nonexistent path builds fine.** Home Manager's file
 builder uses a bare `ln -s` with no existence test, so you get a dangling
 symlink and a clean switch. `nix flake check`'s `no-dangling-home-files` exists
@@ -268,6 +285,21 @@ package at a later phase, not a contradiction of this one.
   `home/audio.nix`'s `pulseaudioClients`, which withholds the daemon
   deliberately. Never add `pkgs.pulseaudio` to `home.packages` —
   `flake.nix`'s `no-pulseaudio-daemon` check exists to stop exactly that.
+- **There is deliberately no foot server.** `pkgs.foot` ships
+  `foot-server.service` and `foot-server.socket`, but they land in
+  `~/.nix-profile/share/systemd/user`, which is not on the manager's UnitPath
+  at all — so their presence in the store is not an oversight to be corrected.
+  Debian's `foot` was removed because its unit *was* enabled, by two root-owned
+  links, and had been running a 1.21.0 server for months while every terminal
+  on screen was Nix's 1.27.0: a mixed-provenance shadow of the same shape as
+  spec 6's `fumon`. Nothing used it — zero references to `footclient` anywhere
+  in this repo, and `SUPER+Q` runs `foot` standalone. Server mode buys startup
+  latency and, measured here, roughly 13 MB of private RSS per window beyond
+  the first against a 15.7 MB baseline — a wash at two windows. It would also
+  put every window in one process that parses the config once, which is a
+  hazard for the quickshell theme switcher (see `home/foot.nix`, which records
+  that a theme change already fails to reach an *open* window). Adopt it only
+  after testing that interaction.
 
 ---
 
