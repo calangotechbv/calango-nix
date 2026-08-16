@@ -79,10 +79,32 @@ let
     # directives by hand is what produced that bug. The prefix characters
     # @ - : + ! are systemd's exec modifiers, stripped before the path is read.
     #
-    # All seven units are absolute today, filter-chain.service included --
-    # its `-c filter-chain.conf` argument is a config name resolved by
-    # pipewire's own search path, not by systemd, and only the program word is
-    # examined here.
+    # Only five of the seven units carry any Exec directive at all -- the two
+    # sockets (pipewire.socket, pipewire-pulse.socket) carry none, since a
+    # socket unit is activated by the kernel, not exec'd. Of the five that do,
+    # every one is absolute today, filter-chain.service included -- its
+    # `-c filter-chain.conf` argument is a config name resolved by pipewire's
+    # own search path, not by systemd, and only the program word is examined
+    # here.
+    #
+    # An empty $relative is ambiguous by itself: "no relative Exec directive
+    # found" and "grep matched nothing because $out was empty or unreadable"
+    # look identical to `[ -n "$relative" ]`. check_set above makes $out
+    # non-empty today, but this guard should not depend on a different
+    # guard's correctness to be non-vacuous. So count what was actually
+    # examined and compare it to the number this file's own comment just
+    # asserted, rather than reading empty output as success.
+    examined="$(grep -hE '^Exec[A-Za-z]*=' "$out"/* | wc -l)"
+    if [ "$examined" != 5 ]; then
+      echo "Expected exactly 5 Exec* directives across the seven audio" >&2
+      echo "units (five services carry one each; the two sockets carry" >&2
+      echo "none) -- found $examined." >&2
+      echo "Either a unit gained or lost an Exec directive, or this guard" >&2
+      echo "examined the wrong files; either way the absolute-path check" >&2
+      echo "below cannot be trusted until this is understood." >&2
+      exit 1
+    fi
+
     relative="$(
       grep -hE '^Exec[A-Za-z]*=' "$out"/* \
         | sed -E 's/^Exec[A-Za-z]*=//; s/^[@:+!-]+//' \
@@ -130,22 +152,31 @@ let
     # really there.
     #
     # The drop-in below (xdg.configFile's
-    # "systemd/user/wireplumber.service.d/10-data-dir.conf") hardcodes
-    # ${pkgs.wireplumber}/share/wireplumber as an Environment= value. Nix
-    # cannot check that a string embedded in a unit file names a real path --
-    # an interpolated store path always exists, but the directory tree under
-    # it is upstream's to rearrange. Checking a specific file rather than just
-    # the scripts/ directory matters: an upstream reshuffle that left
-    # scripts/ present but empty, or moved device/ elsewhere, would pass a
-    # directory-only check while still leaving wireplumber unable to find
-    # state-routes.lua -- the exact script whose version mismatch this whole
-    # drop-in exists to prevent.
-    if [ ! -f ${pkgs.wireplumber}/share/wireplumber/scripts/device/state-routes.lua ]; then
-      echo "pkgs.wireplumber no longer ships" >&2
-      echo "  share/wireplumber/scripts/device/state-routes.lua" >&2
-      echo "The WIREPLUMBER_DATA_DIR drop-in in home/audio.nix assumes this" >&2
-      echo "layout. Re-check where upstream now keeps its Lua scripts and" >&2
-      echo "wireplumber.conf, and update the drop-in's path to match." >&2
+    # "systemd/user/wireplumber.service.d/10-data-dir.conf" and its
+    # wireplumber@.service.d twin) hardcodes ${pkgs.wireplumber}/share/wireplumber
+    # as an Environment= value. Nix cannot check that a string embedded in a
+    # unit file names a real path -- an interpolated store path always
+    # exists, but the directory tree under it is upstream's to rearrange.
+    # Checking specific files rather than just the top-level directory
+    # matters: an upstream reshuffle that left share/wireplumber present but
+    # emptied would pass a directory-only check while still leaving
+    # wireplumber unable to find its scripts or its config.
+    #
+    # Three things are checked, because the drop-in's WIREPLUMBER_DATA_DIR is
+    # also where wireplumber looks for wireplumber.conf and
+    # wireplumber.conf.d, not only for scripts/ -- an upstream move of the
+    # config alone, leaving scripts/ untouched, would pass a scripts-only
+    # check while leaving wireplumber configless.
+    if [ ! -f ${pkgs.wireplumber}/share/wireplumber/scripts/device/state-routes.lua ] \
+      || [ ! -f ${pkgs.wireplumber}/share/wireplumber/wireplumber.conf ] \
+      || [ ! -d ${pkgs.wireplumber}/share/wireplumber/wireplumber.conf.d ]; then
+      echo "pkgs.wireplumber no longer ships the layout the" >&2
+      echo "WIREPLUMBER_DATA_DIR drop-in assumes under" >&2
+      echo "  share/wireplumber/" >&2
+      echo "one of scripts/device/state-routes.lua, wireplumber.conf or" >&2
+      echo "wireplumber.conf.d is missing. Re-check where upstream now keeps" >&2
+      echo "its Lua scripts and its config, and update the drop-in's path to" >&2
+      echo "match." >&2
       exit 1
     fi
   '';
@@ -166,12 +197,17 @@ let
 
   # Enablement, owned here rather than inherited.
   #
-  # Six of the seven units carry [Install] WantedBy=, so the unit file alone
-  # enables nothing -- exactly the treatment home/uwsm.nix gives fumon.service
-  # and home/portals.nix gives xdg-desktop-portal-rewrite-launchers.service.
-  # Debian's package installed root-owned symlinks under /etc/systemd/user for
-  # all six; removing the package either deletes them or leaves them dangling,
-  # and neither outcome should decide whether audio starts.
+  # All seven units carry [Install] WantedBy= -- wireplumber@.service's own
+  # is WantedBy=pipewire.service, same as wireplumber.service's -- so the
+  # unit file alone enables nothing for any of them, exactly the treatment
+  # home/uwsm.nix gives fumon.service and home/portals.nix gives
+  # xdg-desktop-portal-rewrite-launchers.service. This module links six of
+  # the seven; wireplumber@.service is excluded below by policy (it is the
+  # disabled-by-design split-mode template), not because it lacks a
+  # WantedBy= to act on. Debian's package installed root-owned symlinks
+  # under /etc/systemd/user for its six enabled units; removing the package
+  # either deletes them or leaves them dangling, and neither outcome should
+  # decide whether audio starts.
   #
   # .wants links from every UnitPath entry are unioned rather than shadowed,
   # so while Debian's package is still installed both sets exist and both name
@@ -203,17 +239,30 @@ let
   # ships a rich pw-* toolset and no pactl". That premise is false: at this
   # flake's pinned input, pkgs.pulseaudio is 17.0 -- the same upstream
   # release as Debian's pulseaudio-utils 17.0+dfsg1-2+b1 -- and
-  # ${pkgs.pulseaudio}/bin holds every one of Debian's eleven client
-  # binaries, plus a twelfth Debian never shipped there: the daemon itself.
-  # Debian's pulseaudio-utils has never carried a daemon, and the pulseaudio
-  # daemon package has never been installed on this machine (dpkg-query
-  # shows `un`) -- so putting pkgs.pulseaudio straight into home.packages
-  # would not be the lateral move it looks like. It would put a real
-  # PulseAudio daemon on PATH here for the first time.
+  # ${pkgs.pulseaudio}/bin holds 11 binaries, counted by listing the
+  # directory rather than transcribed: pacat pacmd pactl padsp pa-info
+  # pamon paplay parec parecord pasuspender pulseaudio -- ten clients plus
+  # the daemon itself, which Debian's pulseaudio-utils has never carried.
+  # 11 - 1 = 10 exposed below, which is what this derivation's own guards
+  # count and what the results document files.
+  #
+  # Not full parity with Debian's package, though: Debian's pulseaudio-utils
+  # also ships pax11publish, which nixpkgs' pulseaudio omits because its
+  # x11Support defaults to false (confirmed absent from the same listing).
+  # Practical impact is nil on Wayland -- pax11publish only publishes
+  # PULSE_SERVER to the X11 root window -- but that is worth saying rather
+  # than claiming a parity that does not hold.
+  #
+  # The pulseaudio daemon package has never been installed on this machine
+  # (dpkg-query shows `un`) -- so putting pkgs.pulseaudio straight into
+  # home.packages would not be the lateral move it looks like. It would put
+  # a real PulseAudio daemon on PATH here for the first time.
   #
   # That distinction has teeth because of how PulseAudio clients find a
-  # daemon: `strings` on libpulse.so.0 shows the bare word "pulseaudio" and
-  # no absolute store path anywhere in the binary. Autospawn resolves the
+  # daemon: `strings` on libpulse.so.0 shows the bare word "pulseaudio", and
+  # no absolute path to the daemon anywhere in the binary -- the one
+  # absolute path it does contain is the DT_RUNPATH, a library search path,
+  # not a reference to a pulseaudio executable. Autospawn resolves the
   # daemon through PATH, by name, whenever a client fails to reach one. A
   # client that couldn't reach pipewire-pulse could therefore autospawn a
   # real PulseAudio, which would seize the ALSA devices out from under
@@ -241,11 +290,22 @@ let
   # against a change that cannot happen silently. Not worth the extra
   # moving part.
   #
-  # pactl has no consumer in this repo: quickshell/audio/AudioService.qml
-  # names it only in a comment and drives audio through the Pipewire QML
-  # service directly, not through pactl. It is kept for the vocabulary this
-  # migration's own gates speak (`pactl info`, specifically), not because
-  # anything here calls it.
+  # pactl has one consumer in this repo, and it is load-bearing:
+  # hypr/idle-sleep.sh:135-136, the second half of audio_active(). The
+  # script's own comment above it explains why: /proc/asound is kernel-level
+  # and dependency-free but "cannot see a bluetooth sink, which has no ALSA
+  # card, so pactl covers that". idle-sleep.sh is hypridle's on-timeout
+  # command (home/hyprland.nix), so if a future reader drops
+  # pulseaudioClients, `command -v pactl` in that script fails,
+  # audio_active() returns 1, and the machine suspends during Bluetooth-only
+  # playback -- silently, because idle-sleep.sh treats pactl as an optional
+  # dependency by design and nothing errors. That is what makes the failure
+  # quiet rather than loud.
+  #
+  # An earlier version of this comment claimed pactl had no consumer here.
+  # That came from a grep over quickshell/, home/ and ~/.local/bin -- which
+  # does not include hypr/. Enumeration by a remembered list of directories,
+  # in a file whose own header forbids exactly that.
   #
   # Every binary in ${pkgs.pulseaudio}/bin is linked except pulseaudio
   # itself, found by iterating the directory rather than by writing out the
@@ -388,8 +448,21 @@ in
   # /usr/share/wireplumber disappears and the mismatch would silently vanish
   # too -- but only by accident, and only until the next thing that ships a
   # tree under /usr/share/wireplumber.
+  #
+  # wireplumber@.service.d gets the identical drop-in. It is disabled and
+  # nothing in this module links it, but it is still installed (see
+  # wireplumberUnits above, "for parity") and shares wireplumber.service's
+  # binary and its dependence on XDG_DATA_DIRS for the same Lua scripts. Without
+  # this, wireplumber@.service would carry no data dir at all the moment
+  # /usr/share/wireplumber is gone -- not merely a stale one -- if anyone
+  # ever starts it by hand for split-mode debugging. Cheap to keep correct;
+  # no reason to let the disabled unit rot just because nothing here starts it.
   xdg.configFile = unitFiles // wantLinks // {
     "systemd/user/wireplumber.service.d/10-data-dir.conf".text = ''
+      [Service]
+      Environment=WIREPLUMBER_DATA_DIR=${pkgs.wireplumber}/share/wireplumber
+    '';
+    "systemd/user/wireplumber@.service.d/10-data-dir.conf".text = ''
       [Service]
       Environment=WIREPLUMBER_DATA_DIR=${pkgs.wireplumber}/share/wireplumber
     '';
@@ -425,8 +498,8 @@ in
   # ~/.config/... -> /nix/store/<home-manager-files>/...; there is no
   # arrangement of .source that avoids it, and
   # config.lib.file.mkOutOfStoreSymlink does not help either -- it is merged
-  # into home.file and goes through the same linker. Full evidence in
-  # .superpowers/sdd/2026-08-16-audio-stack/alias-research.md.
+  # into home.file and goes through the same linker. Full evidence in this
+  # branch's alias research notes (not part of the committed tree).
   #
   # The failure this prevents is otherwise silent. Wants= and After= naming a
   # unit that does not exist are not errors: the dependency is dropped, the
@@ -439,8 +512,24 @@ in
   # The `run` wrapper makes the entire body a no-op under DRY_RUN, so a dry
   # run before the first switch does not abort on a target that has not been
   # linked yet.
+  #
+  # Ordering: after the files are linked, and before systemd is reloaded --
+  # the second half is a real constraint, not a nicety. Home Manager's own
+  # reloadSystemd (modules/systemd.nix) is ALSO entryAfter
+  # [ "linkGeneration" ], so two DAG entries with no stated relation between
+  # them are ordered only by hm.dag.topoSort's tie-break: it feeds
+  # builtins.attrValues -- attribute-name sorted -- into a stable
+  # lib.toposort. An entryAfter here lands ahead of reloadSystemd only
+  # because "pipewireSessionManagerAlias" sorts before "reloadSystemd";
+  # renaming this attribute to anything that sorts after (e.g.
+  # "wireplumberAlias") would silently move it past the daemon-reload.
+  # sd-switch would then restart pipewire-pulse.service while
+  # pipewire-session-manager.service is still unknown to systemd --
+  # Wants=/After= dropped for that session, with nothing in
+  # --state=failed. entryBetween pins both edges explicitly, so the
+  # ordering cannot depend on how a future rename happens to sort.
   home.activation.pipewireSessionManagerAlias =
-    lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+    lib.hm.dag.entryBetween [ "reloadSystemd" ] [ "linkGeneration" ] ''
       run ${pkgs.bash}/bin/sh -c '
         dir=${lib.escapeShellArg "${config.xdg.configHome}/systemd/user"}
         if [ ! -e "$dir/wireplumber.service" ]; then

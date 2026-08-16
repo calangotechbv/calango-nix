@@ -150,6 +150,13 @@ the next time a package shipping a user unit is removed. Sweep with:
 for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do [ -e "$f" ] || echo "$f"; done
 ```
 
+The glob `*.wants/*` needs at least one entry to expand, so an **empty**
+`.wants` directory is invisible to this loop rather than reported by it.
+`/etc/systemd/user/pipewire.service.wants/` is exactly that right now — empty,
+still present, silent here. Cosmetic, since an empty directory dangles
+nothing, but don't read this loop's silence as "no residue of any kind" —
+only as "no dangling *symlinks*".
+
 **Removing a package does not kill its running process.** Absence is only
 measurable after the session ends — check after the reboot, not before.
 
@@ -173,6 +180,13 @@ which routes hop 1 through the same store. Home Manager's
 calls `enable`. The only mechanism is a raw `ln -s` from `home.activation`.
 The failure is silent: `Wants=` and `After=` naming a unit that does not
 exist are dropped along with their ordering, and `--state=failed` stays empty.
+And the link is unmanaged by Home Manager's own file manifest —
+`no-dangling-home-files` walks `home-files` and never sees it, so removing
+`home/audio.nix` from the flake's module list leaves
+`~/.config/systemd/user/pipewire-session-manager.service` dangling forever
+unless someone deletes it by hand — the same species as the root-owned
+`/etc/systemd/user/*.wants` residue below, now reproduced in the user's own
+tree by this flake.
 
 **`systemctl --user show-environment` is not what a boot-path unit
 inherited.** It reports the manager's environment *as it is now*, after uwsm
@@ -198,10 +212,19 @@ they appear.
 
 **An apt removal orphans packages the Nix side still needs.**
 `apt-get -s remove` prints a "no longer required" list that is easy to skim
-past. Removing the audio set orphaned `rtkit` and `pulseaudio-utils`. Neither
-goes at removal time; both go to some later `apt autoremove`, by which point
-the breakage gets blamed on the version bump. Read that list and
-`apt-mark manual` what is still in use.
+past. Removing the audio set orphaned `rtkit` and, at that same moment,
+`pulseaudio-utils` — both were marked manual to survive the removal. Neither
+goes at removal time; an unmarked orphan goes to some later `apt autoremove`,
+by which point the breakage gets blamed on something else entirely. Read
+that list and `apt-mark manual` what is still in use, **as of that
+moment** — that qualifier matters, because the two kept different fates.
+`rtkit` stayed manual permanently: `rtkit-daemon` is a system service Nix can
+never own (see Standing facts below). `pulseaudio-utils` did not — once
+`pactl` and its siblings came from Nix (`home/audio.nix`'s
+`pulseaudioClients`, in Phase 3b), it was removed on purpose. The sequence is
+the instructive part: "rescued from autoremove" is not "kept forever", and
+the standing fact further down that `pulseaudio-utils` is gone is that same
+package at a later phase, not a contradiction of this one.
 
 ---
 

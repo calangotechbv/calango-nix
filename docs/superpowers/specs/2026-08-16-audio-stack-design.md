@@ -2,6 +2,9 @@
 
 2026-08-16
 
+> Superseded in places. Read `## Corrections` at the end before acting on
+> anything here.
+
 Spec 8 finished the portal subsystem. What remains on Debian's side of the
 session divides into clusters, and audio is the largest: `pipewire`,
 `pipewire-pulse`, `wireplumber` and `filter-chain`, all user services from
@@ -18,6 +21,7 @@ mode is "no audio".
 
 Move the four audio services and their two sockets to Nix, then remove the six
 Debian packages behind them, leaving audio entirely Nix's.
+`[superseded — see Corrections]`
 
 ## The inventory, measured
 
@@ -205,6 +209,7 @@ not a hybrid assembled from two upstreams.
 provides `pactl`, which most of this spec's gate speaks. Nix ships a rich
 `pw-*` toolset and no `pactl`. Losing the diagnostic vocabulary at the moment
 the sound server changes is a bad trade.
+`[superseded — see Corrections]`
 
 **A new `home/audio.nix`**, following the shape `home/portals.nix` established
 in spec 8: one file per subsystem rather than accretion into
@@ -256,7 +261,7 @@ Costs one interrupted audio session, at a time the user chooses. Recovery is
   `filter-chain.service`
 - `pipewire.service.wants/` → `wireplumber.service`
 - `systemd/user/pipewire-session-manager.service` → the alias, pointing at
-  Nix's `wireplumber.service`
+  Nix's `wireplumber.service` `[superseded — see Corrections]`
 
 `sd-switch --dry-run` is read before switching, extracted from the live
 activation script rather than from `nixpkgs#sd-switch`. Expect it to cycle the
@@ -282,7 +287,7 @@ The gate, ordered by what it establishes:
    A2DP and HFP are different code paths and only the second exercises the
    codecs Debian never shipped.
 
-### Phase 3 — remove six packages
+### Phase 3 — remove six packages `[superseded — see Corrections]`
 
 ```
 sudo apt remove pipewire pipewire-bin pipewire-pulse wireplumber \
@@ -327,7 +332,7 @@ recovery never needs a TTY.
 
 - Audio entirely Nix's: `pipewire 1.6.6`, `wireplumber 0.5.14`, both sockets,
   the filter chain, and a bluez5 plugin set that is a superset of Debian's.
-- Six fewer apt packages.
+- Six fewer apt packages. `[superseded — see Corrections]`
 - Debian user services down from 14 to 10, leaving the secrets and agent
   cluster, the session bus, flatpak's own two, and the miscellaneous five.
 

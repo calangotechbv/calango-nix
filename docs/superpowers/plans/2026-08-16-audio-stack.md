@@ -1,8 +1,11 @@
 # Audio Stack Implementation Plan
 
+> Superseded in places. Read `## Corrections` at the end before acting on
+> anything here.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move `pipewire`, `pipewire-pulse`, `wireplumber` and `filter-chain` — seven unit files and seven enablement artifacts — from Debian to Nix, then remove the six Debian packages behind them, leaving audio entirely Nix's.
+**Goal:** Move `pipewire`, `pipewire-pulse`, `wireplumber` and `filter-chain` — seven unit files and seven enablement artifacts — from Debian to Nix, then remove the six Debian packages behind them, leaving audio entirely Nix's. `[superseded — see Corrections]`
 
 **Architecture:** Two Nix packages (`pipewire` 1.6.6, `wireplumber` 0.5.14) supply all seven units. A build-time derivation (`audioUnits`) cross-checks both unit sets against a written list, asserts every `Exec*=` directive is absolute, and asserts `wireplumber.service` still declares `Alias=pipewire-session-manager.service`. The units land at `~/.config/systemd/user` (UnitPath position 5), which beats `/usr/lib/systemd/user` (position 15). Unlike spec 8's portal work, all seven move in **one** switch: `wireplumber` is `pipewire`'s session manager and sequencing would build a `pipewire 1.6.6` / `wireplumber 0.5.8` pairing nobody tests. A hand-run rehearsal comes first, because this is the project's first migration that is an upgrade rather than a lateral move.
 
@@ -21,7 +24,7 @@
 - **The alias must be created explicitly.** Nix's `pipewire-pulse.service` carries `Wants=pipewire.service pipewire-session-manager.service` and Nix's `filter-chain.service` carries `After=pipewire.service pipewire-session-manager.service`. That name exists only because `wireplumber.service` declares `Alias=pipewire-session-manager.service`, and an alias becomes a real name only when the alias symlink is written. This plan installs units declaratively, so it writes the symlink itself.
 - **`Wants=` and `After=` on a missing unit are silent.** The dependency is dropped, the ordering with it, audio starts anyway, and nothing appears in `--state=failed`. The alias gate must confirm the name **resolves** (`systemctl --user show pipewire-session-manager.service -p Id` returns `Id=wireplumber.service`), not merely that a unit file mentions it. Today that name is `LoadState=not-found`.
 - **`ldd` is not a decision procedure for a `dlopen` question.** PipeWire loads its SPA plugins — bluez5 among them — with `dlopen`, so clean linkage proves nothing about Bluetooth. The check is a connected device or `pw-dump`. This project has twice nearly shipped `ldd` as the answer to a `dlopen` question.
-- **`rtkit` and `pulseaudio-utils` must be marked manual before the apt removal.** Both are currently `apt-mark showauto`, and `apt-get -s remove` of the six packages lists both as "no longer required". `rtkit-daemon` is a running *system* service owning `org.freedesktop.RealtimeKit1`; it is how PipeWire's `module-rt` gets `SCHED_FIFO` for its data loop (`data-loop.0` is at priority 20 right now). Losing it to a later `apt autoremove` would turn into intermittent audio glitching with no obvious cause. `pulseaudio-utils` supplies `pactl`, which most of this plan's gate speaks; Nix ships a rich `pw-*` toolset and no `pactl`.
+- **`rtkit` and `pulseaudio-utils` must be marked manual before the apt removal.** Both are currently `apt-mark showauto`, and `apt-get -s remove` of the six packages lists both as "no longer required". `rtkit-daemon` is a running *system* service owning `org.freedesktop.RealtimeKit1`; it is how PipeWire's `module-rt` gets `SCHED_FIFO` for its data loop (`data-loop.0` is at priority 20 right now). Losing it to a later `apt autoremove` would turn into intermittent audio glitching with no obvious cause. `pulseaudio-utils` supplies `pactl`, which most of this plan's gate speaks; Nix ships a rich `pw-*` toolset and no `pactl`. `[superseded — see Corrections]`
 - **Gates read a running process's own state.** `/proc/<pid>/exe`, `/usr` code-mapping counts, `NRestarts` after a cold boot — plus one thing a person does. Every check in specs 6, 7 and 8 that compared a path, a name or an exit code eventually lied.
 - **Enumerate by listing the filesystem, never from a remembered list.** The seven enablement artifacts get counted with `find`. Spec 8's results document asserted three permission-store tables from memory when the live system had four — inside a document that states this rule.
 - **Verify by counting, never by reading empty output as success.** `sed` and other filters exit 0 and mask an upstream `grep`'s status, so "the property holds" and "the pipeline broke" look identical. Use `| wc -l` and compare the number.
@@ -618,6 +621,10 @@ in
 }
 ```
 
+`[superseded — see Corrections]` The alias entry above, installed via
+`xdg.configFile`, does not work — see `## Corrections` at the end of this
+document before copying this design.
+
 - [ ] **Step 2: Add the module to the flake**
 
 In `flake.nix`, add `./home/audio.nix` to the `modules` list, after
@@ -1139,7 +1146,7 @@ appear in --state=failed."
 
 ---
 
-## Task 4: Mark two packages, remove six, gate from cold again
+## Task 4: Mark two packages, remove six, gate from cold again `[superseded — see Corrections]`
 
 Spec Phase 3.
 
@@ -1391,7 +1398,7 @@ difference is rather than repeating the spec.
 - Audio entirely Nix's: pipewire <version>, wireplumber <version>, both
   sockets, the filter chain, and <n> bluez5 plugins against Debian's 9.
 - Six fewer apt packages; two (rtkit, pulseaudio-utils) deliberately kept and
-  marked manual.
+  marked manual. `[superseded — see Corrections]`
 - Debian user services: <before> to <after>.
 
 ## Defects found
@@ -1488,6 +1495,11 @@ unrewritten, as the record of what was argued at the time; see
   what puts Nix's Lua scripts ahead of Debian's on `XDG_DATA_DIRS`; without
   it, Nix's `wireplumber` binary ran Debian's older scripts and threw. See
   Phase 0, Attempt 1, and Phase 2, item 7, in the results document.
+  [this correction is itself imprecise — see `home/audio.nix`'s Task 4b
+  comment: the package line puts the Lua scripts in the *profile*, but
+  `wireplumber.service` is a boot-path unit that never sees the profile's
+  `XDG_DATA_DIRS`. What actually decides it is the `wireplumber.service.d`
+  drop-in setting `WIREPLUMBER_DATA_DIR`, not `home.packages` membership.]
 - **Step 4's premise ("Nix ships a rich `pw-*` toolset and no `pactl`") is
   wrong.** `pkgs.pulseaudio` at the pinned input is `17.0`, the same
   upstream release as Debian's `pulseaudio-utils`, and it ships `pactl`.

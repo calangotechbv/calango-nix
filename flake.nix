@@ -175,10 +175,26 @@
       # activation script itself uses (a symlink baked into the activation
       # package's own output), so this checks the real generation, not a
       # reconstruction of it.
+      #
+      # Same shape as no-pulseaudio-daemon below, and given the same
+      # treatment for the same reason: `find -L <dir> -type l || true`
+      # swallows "No such file or directory" as readily as it swallows "no
+      # matches", so a $dir that stopped existing -- an activationPackage
+      # layout change, or a typo here -- would leave $dangling empty and
+      # this check would pass vacuously instead of failing loudly.
       checks.${system} = {
         no-dangling-home-files =
           pkgs.runCommand "portal-stack-no-dangling-home-files" { } ''
-            dangling="$(find -L ${suffer.activationPackage}/home-files -type l || true)"
+            dir=${suffer.activationPackage}/home-files
+            if [ ! -d "$dir" ] || [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+              echo "$dir does not exist or is empty." >&2
+              echo "Either activationPackage's layout changed, or this" >&2
+              echo "check's path is wrong -- either way, an empty" >&2
+              echo "\$dangling below would be vacuous, not a real pass." >&2
+              exit 1
+            fi
+
+            dangling="$(find -L "$dir" -type l || true)"
             if [ -n "$dangling" ]; then
               echo "Dangling symlink(s) under home-files -- a .source (or a" >&2
               echo "package it came from) points at a path that does not exist:" >&2
@@ -191,7 +207,9 @@
         # home/audio.nix's pulseaudioClients derivation withholds the
         # pulseaudio daemon binary from its own output, on the strength of a
         # measurement made there: `strings` on libpulse.so.0 shows the bare
-        # word "pulseaudio" and no absolute store path, so PulseAudio's
+        # word "pulseaudio" and no absolute path to the daemon (the one
+        # absolute path present is a DT_RUNPATH, a library search path, not
+        # a reference to a pulseaudio executable), so PulseAudio's
         # autospawn resolves the daemon through PATH, by name. That guard
         # only inspects pulseaudioClients' own $out/bin, though -- it cannot
         # see the rest of home.packages. A `pkgs.pulseaudio` reference added
@@ -206,15 +224,46 @@
         #
         # This check closes that gap at the level where the hazard actually
         # lives: the built profile's PATH, not any one derivation's output.
-        # It walks ${suffer.activationPackage}/home-path/bin -- the same
-        # store path uwsm puts on PATH for the session, and the same
-        # generation no-dangling-home-files above checks -- rather than
-        # reasoning about which packages are listed in home.packages, so a
-        # transitive dependency that happens to ship a `pulseaudio` binary is
-        # caught the same way a direct one would be.
+        # It walks ${suffer.activationPackage}/home-path/bin at maxdepth 1 --
+        # the only directory buildEnv links from home.packages onto the
+        # session's PATH, and the same store path uwsm uses for the session
+        # and the same generation no-dangling-home-files above checks. A
+        # transitive dependency that lands a `pulseaudio` binary there is
+        # caught the same way a direct home.packages entry would be; one
+        # that ships it only under home-path's sbin/ or libexec/ is not,
+        # because nothing puts those on PATH either -- the scope is exactly
+        # the hazard's surface, no wider and no narrower.
         no-pulseaudio-daemon =
           pkgs.runCommand "portal-stack-no-pulseaudio-daemon" { } ''
-            found="$(find ${suffer.activationPackage}/home-path/bin -maxdepth 1 -name pulseaudio || true)"
+            bindir=${suffer.activationPackage}/home-path/bin
+
+            # Prove the negative check below is actually looking somewhere,
+            # not passing vacuously. `find … || true` swallows `No such
+            # file or directory` silently: a typo in this path, or an
+            # upstream change to the generation's layout, would make
+            # $found empty for the wrong reason and this check would touch
+            # $out anyway -- the "check that cannot fail" species CLAUDE.md
+            # names. Asserting the directory exists, and that a binary this
+            # profile always ships is actually in it, makes a path-drift
+            # failure loud instead of silently green.
+            if [ ! -d "$bindir" ]; then
+              echo "$bindir does not exist." >&2
+              echo "Either activationPackage's home-path layout changed, or" >&2
+              echo "this check's path is wrong. Either way, the negative" >&2
+              echo "'no pulseaudio binary found' result below would be" >&2
+              echo "vacuous, not a real pass -- fix the path before trusting it." >&2
+              exit 1
+            fi
+            if [ ! -e "$bindir/pactl" ]; then
+              echo "$bindir exists but has no pactl." >&2
+              echo "pactl is a known binary this profile always ships, via" >&2
+              echo "home/audio.nix's pulseaudioClients. Its absence means" >&2
+              echo "this check is looking in the wrong directory, not that" >&2
+              echo "the profile's PATH is somehow clean." >&2
+              exit 1
+            fi
+
+            found="$(find "$bindir" -maxdepth 1 -name pulseaudio || true)"
             if [ -n "$found" ]; then
               echo "A 'pulseaudio' binary is on the profile's PATH:" >&2
               echo "$found" | sed 's/^/  /' >&2
