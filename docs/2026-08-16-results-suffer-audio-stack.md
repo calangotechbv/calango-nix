@@ -180,8 +180,7 @@ have started it: two session managers racing against the same pipewire core,
 with nothing in `--state=failed` to show it, since `Wants=` on a resolvable
 name is silent about which unit it resolved to.
 
-`.superpowers/sdd/2026-08-16-audio-stack/alias-research.md` confirms there is
-no Home Manager mechanism that closes this from inside `xdg.configFile`:
+No Home Manager mechanism closes this from inside `xdg.configFile`:
 `modules/systemd.nix` has no `Install.Alias` handling at all (`grep -n Alias`
 on the fetched source returns no matches), and this project's units bypass
 that module's `Install`-handling code (`buildService`) anyway by installing
