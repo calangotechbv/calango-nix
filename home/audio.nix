@@ -125,6 +125,29 @@ let
       echo "what name they depend on now, and fix both together." >&2
       exit 1
     fi
+
+    # Guard 3: the data tree the WIREPLUMBER_DATA_DIR drop-in points at is
+    # really there.
+    #
+    # The drop-in below (xdg.configFile's
+    # "systemd/user/wireplumber.service.d/10-data-dir.conf") hardcodes
+    # ${pkgs.wireplumber}/share/wireplumber as an Environment= value. Nix
+    # cannot check that a string embedded in a unit file names a real path --
+    # an interpolated store path always exists, but the directory tree under
+    # it is upstream's to rearrange. Checking a specific file rather than just
+    # the scripts/ directory matters: an upstream reshuffle that left
+    # scripts/ present but empty, or moved device/ elsewhere, would pass a
+    # directory-only check while still leaving wireplumber unable to find
+    # state-routes.lua -- the exact script whose version mismatch this whole
+    # drop-in exists to prevent.
+    if [ ! -f ${pkgs.wireplumber}/share/wireplumber/scripts/device/state-routes.lua ]; then
+      echo "pkgs.wireplumber no longer ships" >&2
+      echo "  share/wireplumber/scripts/device/state-routes.lua" >&2
+      echo "The WIREPLUMBER_DATA_DIR drop-in in home/audio.nix assumes this" >&2
+      echo "layout. Re-check where upstream now keeps its Lua scripts and" >&2
+      echo "wireplumber.conf, and update the drop-in's path to match." >&2
+      exit 1
+    fi
   '';
 
   # The seven unit files, at ~/.config/systemd/user -- UnitPath position 5,
@@ -180,21 +203,27 @@ in
   # pactl, which Nix does not ship and which most of this migration's gate
   # speaks -- see the plan's Global Constraints for why it gets marked manual.
   #
-  # Unlike every other package line in this flake, this one is NOT inert at
-  # runtime -- Task 1's rehearsal found out the hard way. wireplumber resolves
-  # its Lua scripts through XDG_DATA_DIRS rather than a compiled-in datadir,
-  # and the user manager's own XDG_DATA_DIRS (`systemctl --user
-  # show-environment`) leads with ~/.nix-profile/share. Before this package
-  # was in home.packages, ~/.nix-profile/share/wireplumber did not exist,
-  # /usr/share/wireplumber was the only scripts tree on the path, and Nix's
-  # wireplumber 0.5.14 binary ran Debian's 0.5.8 Lua scripts -- state-routes
-  # .lua:119 throwing "bad argument #1 to 'next' (table expected, got
-  # GBoxed)", which reads like a 0.5.14 bug but is a binary/script version
-  # mismatch. So this line is load-bearing: it is what puts Nix's scripts
-  # ahead of Debian's on XDG_DATA_DIRS. It is a mechanism, confirmed by hand
-  # on this machine, not luck -- and it does not generalise to pipewire below,
-  # which resolves its configuration through its own compiled-in datadir, not
-  # XDG_DATA_DIRS.
+  # This line puts both binaries on PATH and nothing more. An earlier version
+  # of this comment claimed it was also what put Nix's wireplumber scripts
+  # ahead of Debian's on XDG_DATA_DIRS -- that claim was false. Membership in
+  # home.packages only affects $XDG_DATA_DIRS for processes that start inside
+  # a shell carrying ~/.nix-profile on it (uwsm's session, or any interactive
+  # shell after login). wireplumber.service is not one of those: it is
+  # WantedBy=pipewire.service, which starts at user-manager start from
+  # default.target, three seconds before uwsm ever runs and sets the session
+  # environment. `/proc/<wireplumber MainPID>/environ` at that unit's own
+  # ActiveEnterTimestamp of 13:27:33 showed
+  #   XDG_DATA_DIRS=…flatpak…:/usr/local/share/:/usr/share/
+  # -- no ~/.nix-profile/share at all -- while graphical-session.target, and
+  # with it uwsm's environment update, landed at 13:27:36. So the boot-path
+  # unit finds only /usr/share/wireplumber, and no amount of adding the
+  # package to home.packages changes what that already-running process
+  # inherited. What actually fixes this is the WIREPLUMBER_DATA_DIR drop-in
+  # below, in xdg.configFile. This package line still matters for wpctl and
+  # for anything spawned after login, and it does not generalise to pipewire,
+  # which resolves its own configuration through a compiled-in datadir and
+  # PIPEWIRE_CONFIG_DIR, not XDG_DATA_DIRS (checked with strings on both
+  # libraries) -- so pipewire needed no equivalent fix.
   home.packages = [ pkgs.pipewire pkgs.wireplumber ];
 
   # xdg.configFile rather than home.file.".config/...": home-manager's own
@@ -206,7 +235,67 @@ in
   #
   # No alias entry here -- see the home.activation hook below for why
   # xdg.configFile cannot express one.
-  xdg.configFile = unitFiles // wantLinks;
+  #
+  # The drop-in below is added here rather than by editing wireplumber.service
+  # itself: this module's units are deliberately verbatim copies (see
+  # audioUnits above), and a drop-in is systemd's own mechanism for layering a
+  # change on top of a unit without touching the original.
+  #
+  # wireplumber resolves its Lua scripts and wireplumber.conf through
+  # XDG_DATA_DIRS, not a compiled-in datadir (confirmed with strings on
+  # libwireplumber-0.5.so, which also names WIREPLUMBER_CONFIG_DIR and
+  # WIREPLUMBER_MODULE_DIR alongside WIREPLUMBER_DATA_DIR). That is what makes
+  # this drop-in necessary at all -- pipewire, below in home.packages, does
+  # NOT share this behaviour: its own strings show a compiled-in
+  # /nix/store/…/share/pipewire plus PIPEWIRE_CONFIG_DIR, so nothing here
+  # generalises to it and no equivalent drop-in exists for pipewire.service.
+  #
+  # wireplumber.service is WantedBy=pipewire.service and starts at
+  # user-manager start, from default.target -- three seconds before uwsm sets
+  # the session environment. Measured on this boot:
+  #
+  #   wireplumber.service ActiveEnterTimestamp   13:27:33
+  #     /proc/<MainPID>/environ:
+  #     XDG_DATA_DIRS=…flatpak…:/usr/local/share/:/usr/share/
+  #   graphical-session.target reached                       13:27:36
+  #     systemctl --user show-environment:
+  #     XDG_DATA_DIRS=/home/isutton/.nix-profile/share:…
+  #
+  # `systemctl --user show-environment` is the wrong instrument for this
+  # question: it reports the manager's environment as it is NOW, after uwsm
+  # has already mutated it -- not what a unit that started at boot actually
+  # inherited. It says nothing about wireplumber.service's own, earlier
+  # environment. This is the same trap as `systemd-analyze --user
+  # unit-paths` documented in CLAUDE.md, walked into during this very
+  # migration; the authoritative source for what a running unit sees is
+  # always that unit's own /proc/<MainPID>/environ. So the unit's actual
+  # search path at startup has only /usr/share/wireplumber to find scripts
+  # in, home.packages or not -- adding pkgs.wireplumber to home.packages
+  # changes what a login shell's XDG_DATA_DIRS contains, not what a unit
+  # already running before that shell existed inherited.
+  #
+  # Without this, Nix's 0.5.14 binary runs Debian's 0.5.8 Lua scripts: a
+  # mixed-provenance stack, confirmed this boot by
+  #   wplua: [string "state-routes.lua"]:119: bad argument #1 to 'next'
+  #   (table expected, got GBoxed)
+  # eight times, because 0.5.14 passes a Properties GBoxed where 0.5.8's
+  # state-routes.lua:119 (`if next (selected_routes) == nil then`) expects a
+  # table -- 0.5.14 moved that guard to :117 as
+  # `selected_routes:get_count () == 0`. Running the binary by hand with the
+  # unit's own broken XDG_DATA_DIRS plus only WIREPLUMBER_DATA_DIR added gave
+  # zero tracebacks, with the one remaining log line moving to alsa.lua:397 --
+  # Nix's line number, where Debian's is 392, confirming Nix's tree is now
+  # what's read. This must stay explicit rather than be left to fix itself:
+  # Task 4 removes Debian's wireplumber package, at which point
+  # /usr/share/wireplumber disappears and the mismatch would silently vanish
+  # too -- but only by accident, and only until the next thing that ships a
+  # tree under /usr/share/wireplumber.
+  xdg.configFile = unitFiles // wantLinks // {
+    "systemd/user/wireplumber.service.d/10-data-dir.conf".text = ''
+      [Service]
+      Environment=WIREPLUMBER_DATA_DIR=${pkgs.wireplumber}/share/wireplumber
+    '';
+  };
 
   # The alias, written by a raw `ln -s` because xdg.configFile cannot express
   # one and nothing else in Home Manager will.
