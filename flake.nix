@@ -140,6 +140,7 @@
           ./home/gtk.nix
           ./home/apps.nix
           ./home/services.nix
+          ./home/portals.nix
           ./home/uwsm.nix
           {
             home.username = username;
@@ -149,10 +150,39 @@
           }
         ];
       };
+      suffer = mkHome "isutton" "suffer";
     in
     {
       homeConfigurations = {
-        "isutton@suffer" = mkHome "isutton" "suffer";
+        "isutton@suffer" = suffer;
       };
+
+      # Every xdg.configFile/xdg.dataFile ".source" in home/portals.nix and
+      # home/uwsm.nix is a bare string pointing into a package output --
+      # nothing checks it resolves. Home Manager's file builder links each one
+      # with a plain `ln -s "$source" "$target"` (see the derivation for
+      # home-manager-files); there is no existence test anywhere in that path.
+      # A nixpkgs bump that relocates a unit or an activation file therefore
+      # builds and switches cleanly while quietly producing a dead symlink --
+      # proven by hand by pointing a real entry at a nonexistent path and
+      # watching the build succeed anyway.
+      #
+      # This walks the built generation's home-files for exactly that: `find
+      # -L ... -type l` prints only symlinks whose target does not exist.
+      # `${suffer.activationPackage}/home-files` is the same store path the
+      # activation script itself uses (a symlink baked into the activation
+      # package's own output), so this checks the real generation, not a
+      # reconstruction of it.
+      checks.${system}.no-dangling-home-files =
+        pkgs.runCommand "portal-stack-no-dangling-home-files" { } ''
+          dangling="$(find -L ${suffer.activationPackage}/home-files -type l || true)"
+          if [ -n "$dangling" ]; then
+            echo "Dangling symlink(s) under home-files -- a .source (or a" >&2
+            echo "package it came from) points at a path that does not exist:" >&2
+            echo "$dangling" | sed 's/^/  /' >&2
+            exit 1
+          fi
+          touch "$out"
+        '';
     };
 }
