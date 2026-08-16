@@ -714,10 +714,31 @@ withdrawn.
 
 ### The removal set, and why it is six and not five
 
-`apt-get -s remove pipewire pipewire-bin pipewire-pulse wireplumber
-libspa-0.2-bluetooth libcanberra-pulse`, re-verified against the live
-machine rather than trusted from the spec, gave `6 to remove, 0 newly
-installed` and **zero `Inst` lines** anywhere in the output.
+TRANSCRIBED, captured before the removal: run and read at the time, but
+filed into the evidence only after a review caught the gap. It cannot be
+re-derived now — the packages it describes are already gone, and running
+the same command today would report nothing left to remove.
+
+```
+$ apt-get -s remove pipewire pipewire-bin pipewire-pulse wireplumber \
+                    libspa-0.2-bluetooth libcanberra-pulse
+The following packages will be REMOVED:
+  libcanberra-pulse libspa-0.2-bluetooth pipewire pipewire-bin pipewire-pulse
+  wireplumber
+0 upgraded, 0 newly installed, 6 to remove and 72 not upgraded.
+Remv libcanberra-pulse [0.30-18]
+Remv libspa-0.2-bluetooth [1.4.2-1]
+Remv wireplumber [0.5.8-2]
+Remv pipewire-pulse [1.4.2-1]
+Remv pipewire [1.4.2-1]
+Remv pipewire-bin [1.4.2-1]
+
+$ ... | grep -c '^Inst'
+0
+```
+
+Six packages named, six `Remv` lines, and a zero count on `^Inst` —
+re-verified against the live machine rather than trusted from the spec.
 
 `libcanberra-pulse` is in the set for one reason: it declares
 `Depends: pipewire-pulse | pulseaudio`. Removing `pipewire-pulse` without
@@ -733,21 +754,67 @@ un  pulseaudio
 `pulseaudio` reads `un`, not `rc` and not `ii` — dpkg has no record of it
 ever having been installed. `libcanberra-pulse` did its job.
 
+### What would have been autoremoved
+
+TRANSCRIBED, same pre-removal session as Step 1, same reason it cannot
+be re-derived now:
+
+```
+$ apt-get -s remove <the six> | sed -n '/no longer required/,/will be REMOVED/p'
+The following packages were automatically installed and are no longer required:
+  libconfig++11 libffado2 libglibmm-2.4-1t64 libldacbt-abr2 liblua5.4-0
+  libopenfec1 libpipewire-0.3-modules libpulsedsp libroc0.4 libsigc++-2.0-0v5
+  libspeexdsp1 libwireplumber-0.5-0 libxml++2.6-2v5 pulseaudio-utils rtkit
+Use 'apt autoremove' to remove them.
+
+$ apt-mark showauto rtkit
+rtkit
+$ apt-mark showauto pulseaudio-utils
+pulseaudio-utils
+```
+
+Fifteen packages, not six, would have been left autoremovable by this
+one command. Two of them — `rtkit` and `pulseaudio-utils` — matter and
+were marked manual in the next step. The other thirteen are Debian's own
+pipewire and wireplumber support libraries (`libpipewire-0.3-modules`,
+`libwireplumber-0.5-0`, `libffado2`, `libldacbt-abr2`, and so on), which
+Nix's build replaces outright — losing those thirteen to a later
+`autoremove` costs nothing.
+
 ### The two keepers, marked manual before anything was removed
 
 Both `rtkit` and `pulseaudio-utils` appeared in the removal's "no longer
-required" list. Neither would have gone today — both would have gone to
-some later, unrelated `apt autoremove`, at which point whatever broke
-would have been blamed on this migration's version bump rather than on
-the mark. Both were made manual before the six packages were removed, to
-close that off in advance rather than after the fact.
+required" list above. Neither would have gone today — both would have
+gone to some later, unrelated `apt autoremove`, at which point whatever
+broke would have been blamed on this migration's version bump rather
+than on the mark. Both were made manual before the six packages were
+removed, to close that off in advance rather than after the fact.
+
+RE-DERIVED, current state:
+
+```
+$ apt-mark showmanual rtkit pulseaudio-utils
+pulseaudio-utils
+rtkit
+$ apt-mark showauto rtkit pulseaudio-utils      # must be empty
+(empty above = neither is auto any more)
+```
+
+Both print under `showmanual`; neither prints under `showauto`.
 
 **`rtkit`.** `rtkit-daemon` is a *system* service, at
 `/usr/lib/systemd/system/rtkit-daemon.service`, active, and it is what
 grants pipewire's `data-loop.0` thread `SCHED_RR` priority 20 — measured
-on this boot, under Nix's pipewire, in Gate 4 below. Standalone Home
-Manager writes only user units and cannot replace a system service, so
-`rtkit` is a permanent apt dependency in the same way `bluez` is.
+on this boot, under Nix's pipewire, in Gate 4 below. `data-loop.0` is a
+thread of the `pipewire` process itself, not a coincidentally-numbered
+separate one: confirmed by construction, since the scheduling figures
+were read by iterating `/proc/<pipewire-MainPID>/task/*`, and a direct
+check (`systemctl --user show pipewire.service -p MainPID --value`,
+then `ls /proc/<that pid>/task/`) lists `2950 2974 2979` — `pipewire`
+itself, `module-rt`, and `data-loop.0` — as three task IDs under one
+PID. Standalone Home Manager writes only user units and cannot replace a
+system service, so `rtkit` is a permanent apt dependency in the same way
+`bluez` is.
 
 **`pulseaudio-utils`.** Supplies `pactl`. Nix ships a rich `pw-*`
 toolset and no `pactl`, and much of this migration's own gate is written
@@ -791,11 +858,31 @@ does not own them and does not clean them up on removal, exactly what
 `rewrite-launchers`. The machine's dangling-symlink total went from 8
 (pre-existing, unrelated to audio) to 14.
 
-They are inert. The links that actually matter sit at `UnitPath`
-position 5 (`~/.config/systemd/user`); these six sit at position 15
-(`/etc/systemd/user`, resolving toward `/usr/lib/systemd/user`) and now
-point at fragment files that no longer exist on disk. Left in place,
-root-owned, outside this flake's territory — not deleted.
+RE-DERIVED, current state — the sweep, scoped to `.wants/` and
+`.upholds/` and filtered to symlinks whose target does not exist:
+
+```
+$ for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do
+    [ -L "$f" ] && [ ! -e "$f" ] && printf '%s -> %s\n' "$f" "$(readlink "$f")"; done
+
+total links: 14   resolving: 14   dangling: 0
+
+# dpkg claims none of them:
+```
+
+`dpkg -S` against each of the fourteen returns no owning package for any
+of them — the direct confirmation of the mechanism `CLAUDE.md` already
+documents: dpkg's helper creates a `.wants` symlink as a side effect of
+installing a unit file, but the symlink itself belongs to no package
+dpkg tracks, so removing the package that shipped the unit never removes
+the link.
+
+They are inert regardless. The links that actually matter sit at
+`UnitPath` position 5 (`~/.config/systemd/user`); these six sit at
+position 15 (`/etc/systemd/user`, resolving toward
+`/usr/lib/systemd/user`) and now point at fragment files that no longer
+exist on disk. Left in place, root-owned, outside this flake's
+territory — not deleted.
 
 ### The cold gate, second run
 
@@ -876,10 +963,23 @@ data-loop.0    pid 2979's current scheduling policy: SCHED_RR|SCHED_RESET_ON_FOR
 ActiveState=active
 FragmentPath=/usr/lib/systemd/system/rtkit-daemon.service
 ```
-Both ALSA cards, the JBL connected and `RUNNING`, and `data-loop.0`
-still at `SCHED_RR` priority 20 — the property marking `rtkit` manual
-exists to protect — holding on this run exactly as Phase 2 recorded it,
-still granted by Debian's still-active system unit.
+Both ALSA cards, the JBL connected and `RUNNING`, and `data-loop.0` —
+confirmed a thread of `pipewire` itself rather than a separate process,
+by the same `/proc/<MainPID>/task/*` construction cited under `rtkit`
+above — still at `SCHED_RR` priority 20, the property marking `rtkit`
+manual exists to protect, holding on this run exactly as Phase 2
+recorded it, still granted by Debian's still-active system unit.
+
+**Gate 5 — the Chrome mic rule.**
+```
+lrwxrwxrwx 1 isutton nix-users 129 Aug 16 13:44 /home/isutton/.config/pipewire/pipewire-pulse.conf.d/20-block-source-volume.conf -> /nix/store/xnb16l33hz72zq7lysczknql7d8990da-home-manager-files/.config/pipewire/pipewire-pulse.conf.d/20-block-source-volume.conf
+rule occurrences: 2
+pactl still present (Debian's, kept deliberately): /usr/bin/pactl
+```
+The drop-in symlink still resolves into the store, the rule still
+matches twice, and Debian's `pactl` — the reason `pulseaudio-utils` was
+marked manual — is still present at `/usr/bin/pactl`, deliberately, with
+no Nix equivalent shipped in its place.
 
 **Gate 7 — script provenance, with Debian's tree deleted.**
 ```
