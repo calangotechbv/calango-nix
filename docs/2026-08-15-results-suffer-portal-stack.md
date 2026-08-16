@@ -312,6 +312,9 @@ org.freedesktop.portal.Documents             pid 3398  …/libexec/.xdg-document
 
 portal on /run/user/1000/doc type fuse.portal (rw,nosuid,nodev,relatime,…)
 
+$ ls ~/.local/share/flatpak/db/
+desktop-used-apps  documents  notifications  remote-desktop
+
 notifications      as 1 "notification"
 desktop-used-apps  as 1 "x-scheme-handler/slack"
 remote-desktop     as 1 "031362ce-9406-4407-8cb6-5aee8ac03505"
@@ -326,8 +329,12 @@ Debian portal binaries running: none
 ```
 
 Every service activated from Nix's D-Bus files alone. No failed units. The
-permission tables still hold the values recorded before Phase 1 touched
-anything.
+three tables recorded before Phase 1 still hold those same values. The store
+now holds a fourth table, `documents`, enumerated here by listing the
+directory rather than by re-printing the remembered three — see the defect
+below, where this correction belongs, since the earlier checks in this
+document (Phase 1's gate above and this section, before this correction) did
+the re-printing instead and so could not have noticed a table appear.
 
 Then the four human checks again — file dialog, screenshot, screen share, and
 a Slack upload and download — all passing against a system with no Debian
@@ -354,7 +361,19 @@ removed the KDE desktop. `flatpak list --app` now shows only
 | FUSE mount at `/run/user/1000/doc` | Debian's binary | Nix's binary |
 | Slack file transfer | works | works |
 | Installed packages | 2221 | 2220 |
-| Debian user services running | 17 | 15 |
+| Debian user services, roster count (see "What is still true") | 18 (derived) | 15 |
+
+The after-value is the named roster in "What is still true" below, not a live
+process count: `systemctl --user list-units --state=running` joined to
+`FragmentPath` gives 15 at the moment recorded there, but the same command run
+again later gives 14, because `flatpak-portal.service` is bus-activated and
+was idle at that later moment — the metric is unstable if read as "currently
+running". The before-value was never recorded by this spec; no command in the
+plan or the results produced it. It is derived rather than dropped, because
+the derivation is exact: this spec relocated precisely three services off
+`/usr/lib/systemd/user` (`xdg-desktop-portal`, `xdg-document-portal`,
+`xdg-permission-store`), so a before-count taken the same way as the
+after-count is `15 + 3 = 18`.
 
 The mixed-provenance subsystem is closed. That was the point: two Nix backends
 running under a Debian frontend is the same half-migrated shape that produced
@@ -428,13 +447,42 @@ comment now records which tool is authoritative.
 
 **Owner: nobody — caught by checking rather than assuming.**
 
-Three of the four units are `static`, purely D-Bus activated. The fourth
+Three of the four units carry no `[Install]` section, so the unit file alone
+suffices — no enablement link decides whether they run, only D-Bus activation
+does. (`systemctl --user list-unit-files` reports `linked` for all three, not
+`static`: `linked` is what the manager prints for a unit it found through a
+search-path symlink outside the search path's own directories, which is
+exactly the `xdg.configFile` placement here. `static` was Debian's word for
+the same units before this spec, verified with `systemctl --user show
+xdg-desktop-portal.service xdg-document-portal.service
+xdg-permission-store.service -p UnitFileState --value`.) The fourth
 carries `WantedBy=graphical-session-pre.target`, so placing the unit file at
-position 5 does not enable it. Without the `.wants` entry the unit would exist
-and never run, and nothing would look wrong.
+position 5 does not enable it — verified `enabled` by the same command. Without
+the `.wants` entry the unit would exist and never run, and nothing would look
+wrong.
 
 It was caught because `home/uwsm.nix` already does exactly this for
 `fumon.service`, and that precedent prompted the check.
+
+### The permission store gained a fourth table mid-spec, and the cold-boot gate re-printed a remembered list of three instead of noticing
+
+**Owner: nobody — caught on final review, not by any gate in this spec.**
+
+`~/.local/share/flatpak/db/` holds four tables, not three:
+`desktop-used-apps`, `documents`, `notifications`, `remote-desktop`. `documents`
+was created at `2026-08-16 08:49:09`, three minutes after the Phase 3 reboot —
+by Nix's document portal, the first time it granted Slack a document, during
+the Phase 3 gate itself.
+
+Every check in this document that looked at the permission store — the Phase 1
+before/after gate and the Phase 4 cold-boot block — printed the same three
+names by hand instead of listing the directory. That is exactly this
+document's own stated rule, broken inside the document that states it:
+"Enumerate by syntax, never by a remembered list of names." The Phase 1 gate
+predates `documents` and was correct when written; the Phase 4 cold-boot block
+does not, and a re-enumeration there would have caught it. A later spec
+reading this document before the correction above would have believed the
+store holds three tables.
 
 ## What is still true
 
@@ -478,3 +526,34 @@ the flake's own `adwaita-fonts`), 82 dictionary packages, ~119 packages in
 also carries the portal frontend, the document portal, the permission store
 and `rewrite-launchers`. It has not been a recovery path since spec 6 and it
 is further from being one with each spec.
+
+**Other dangling `/etc` enablement links, not this spec's, not yet cleaned.**
+This spec cleaned the one dangling link it created
+(`xdg-desktop-portal-rewrite-launchers.service`) and called it the third
+occurrence of the pattern. It is not the last one on the machine — a sweep
+over `/etc/systemd/user/*.wants/*` and `*.upholds/*` (`[ -e "$f" ]` per link)
+finds five more still dangling from earlier work:
+
+```
+/etc/systemd/user/graphical-session.target.wants/fumon.service
+/etc/systemd/user/graphical-session.target.wants/hypridle.service
+/etc/systemd/user/graphical-session.target.wants/hyprpaper.service
+/etc/systemd/user/graphical-session.target.wants/hyprpolkitagent.service
+/etc/systemd/user/graphical-session.target.wants/kde-baloo.service
+```
+
+— plus three unrelated to this spec's units entirely:
+`gnome-session.target.wants/org.freedesktop.IBus.session.GNOME.service`,
+`sockets.target.wants/pk-debconf-helper.socket`, and
+`sockets.target.upholds/drkonqi-coredump-launcher.socket`.
+
+Effect today is benign, verified: `fumon`, `hypridle` and `hyprpolkitagent`
+resolve by *name* to Nix's own units at position 5 (`home/uwsm.nix` already
+documents this for `fumon`), so they are redundant duplicates of
+home-manager's own `.wants` links. `hyprpaper.service` and `kde-baloo.service`
+resolve to no unit at all — `systemctl --user show
+graphical-session.target -p Wants` still lists both, and the journal shows no
+attempt to start either, so systemd drops them silently. Only the `drkonqi`
+socket logs anything (`Failed to enqueue start job, ignoring`). Left for the
+spec that next touches one of these clusters, not cleaned here — this spec's
+scope was the portal stack's own link.
