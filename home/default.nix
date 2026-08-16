@@ -103,6 +103,30 @@ in
     # renderer, and this task is where the renderer is first tested.
     adwaita-fonts
     nerd-fonts.adwaita-mono
+
+    # The font baseline, owned here rather than inherited from Debian.
+    #
+    # Before this, fc-match resolved the three generic families to Debian
+    # packages: sans-serif and serif to fonts-noto-core, monospace to
+    # fonts-dejavu-mono. Both survive spec 7's package sweep, but only
+    # incidentally -- nothing in this flake asked for them, and they are held
+    # by apt reverse-dependencies that a later spec could remove. A default
+    # font that exists by accident is one `apt autoremove` away from tofu in
+    # every application, apt's and Nix's alike.
+    #
+    # This reaches Debian applications too. fontconfig is process-local, not
+    # per-packaging-system: Chrome and Code read the same ~/.config/fontconfig
+    # that fonts.fontconfig.enable writes below, so they see the Nix profile's
+    # share/fonts. Verified before this was added -- fc-list already listed
+    # Adwaita Sans and AdwaitaMono Nerd Font, which exist only in the store.
+    #
+    # Note this does NOT cover the 101 hand-copied files in
+    # ~/.local/share/fonts (218 MB, dated 2026-07-15, no Home Manager symlinks
+    # among them). Those predate the migration and belong to neither apt nor
+    # Nix; they are a separate cleanup.
+    noto-fonts # sans-serif and serif, plus broad script coverage
+    dejavu_fonts # the family monospace currently resolves to
+    liberation_ttf # Arial/Times/Courier metric substitutes, for web content
   ];
 
   # Links fonts into ~/.local/share/fonts and writes a fontconfig snippet, so
