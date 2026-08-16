@@ -287,4 +287,34 @@ in
 
   config.xdg.dataFile."dbus-1/services/org.freedesktop.impl.portal.PermissionStore.service".source =
     "${pkgs.xdg-desktop-portal}/share/dbus-1/services/org.freedesktop.impl.portal.PermissionStore.service";
+
+  # 2 of 3: the frontend. Every portal call goes through it, and it is what
+  # reads hyprland-portals.conf below to choose between the gtk and hyprland
+  # backends.
+  config.xdg.configFile."systemd/user/xdg-desktop-portal.service".source =
+    "${pkgs.xdg-desktop-portal}/share/systemd/user/xdg-desktop-portal.service";
+
+  config.xdg.dataFile."dbus-1/services/org.freedesktop.portal.Desktop.service".source =
+    "${pkgs.xdg-desktop-portal}/share/dbus-1/services/org.freedesktop.portal.Desktop.service";
+
+  # Debian ships four units from this package and enables this one via
+  # /etc/systemd/user/graphical-session-pre.target.wants. It runs at every
+  # graphical session start and finishes in under a second.
+  #
+  # A oneshot that rewrites .desktop entries created through the
+  # DynamicLauncher portal. There are none on this machine, so it does nothing
+  # here -- it is installed for parity with what Debian already does, not
+  # because anything needs it. Dropping it would be a behaviour change smuggled
+  # into a migration.
+  #
+  # Unlike the other three units this one carries
+  # WantedBy=graphical-session-pre.target, so the unit file alone does not
+  # enable it. The .wants link below does, owned here rather than left to the
+  # root-owned /etc symlink that Debian's package installed and that Task 4
+  # deletes. Same shape as fumon.service in home/uwsm.nix.
+  config.xdg.configFile."systemd/user/xdg-desktop-portal-rewrite-launchers.service".source =
+    "${pkgs.xdg-desktop-portal}/share/systemd/user/xdg-desktop-portal-rewrite-launchers.service";
+
+  config.xdg.configFile."systemd/user/graphical-session-pre.target.wants/xdg-desktop-portal-rewrite-launchers.service".source =
+    "${pkgs.xdg-desktop-portal}/share/systemd/user/xdg-desktop-portal-rewrite-launchers.service";
 }
