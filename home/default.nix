@@ -94,6 +94,17 @@ in
     # home/services.nix for why.
     xdg-desktop-portal-gtk
 
+    # The portal frontend, plus xdg-document-portal and xdg-permission-store,
+    # which the same package ships. Debian has 1.20.3+ds-1; the flake's pinned
+    # nixpkgs has 1.20.4 -- a patch bump, re-derived from the pinned input and
+    # not from `nixpkgs#`, which reports 1.22.1 and is the registry.
+    #
+    # As with the gtk backend, this line alone changes nothing at runtime: the
+    # D-Bus activation files it brings land in ~/.nix-profile/share, which the
+    # session bus does not search. The units in home/services.nix are what
+    # switch each service.
+    xdg-desktop-portal
+
     # The GL stack. nixGLIntel is the Mesa wrapper and covers AMD; it sits
     # outside nixGL's auto.* set, so it needs no --impure.
     pkgs.nixgl.nixGLIntel

@@ -252,4 +252,28 @@ in
     org.freedesktop.impl.portal.GlobalShortcuts=hyprland
     org.freedesktop.impl.portal.Secret=gnome-keyring
   '';
+
+  # The portal frontend's three services, migrated one at a time. All three
+  # come from a single package; each moves independently because each unit is
+  # placed here at UnitPath position 5, ahead of /usr/lib/systemd/user at 15.
+  #
+  # Copied verbatim rather than re-described: Nix's three units diff identical
+  # to Debian's apart from ExecStart -- same Type=dbus, BusName, Slice and
+  # PartOf. None of the three binaries links libGL, libEGL or libgbm (checked
+  # with ldd), so unlike xdg-desktop-portal-hyprland above they need no nixGL
+  # wrapper.
+  #
+  # The xdg.dataFile entries are not redundant with the package. They matter
+  # from the moment Debian's package is removed and its own activation files
+  # disappear: the session bus searches XDG_DATA_HOME but not the Nix profile,
+  # so ~/.local/share is where Nix's copies have to be. Same reason the gtk
+  # backend above has one.
+
+  # 1 of 3: the permission store. Smallest surface, no visible consumer, and
+  # its data lives outside the package in ~/.local/share/flatpak/db.
+  config.xdg.configFile."systemd/user/xdg-permission-store.service".source =
+    "${pkgs.xdg-desktop-portal}/share/systemd/user/xdg-permission-store.service";
+
+  config.xdg.dataFile."dbus-1/services/org.freedesktop.impl.portal.PermissionStore.service".source =
+    "${pkgs.xdg-desktop-portal}/share/dbus-1/services/org.freedesktop.impl.portal.PermissionStore.service";
 }
