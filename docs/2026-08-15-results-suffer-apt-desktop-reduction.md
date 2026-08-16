@@ -300,3 +300,120 @@ The daemon check was moved here deliberately: removing a package does not kill
 its running process, so `kwalletd6` and `kdeconnectd` both survived their own
 removal until the session ended. Checking before the reboot would have
 reported them present and been read as a failure.
+
+## Phase 3b: the displaced backends
+
+Scope had shrunk before this ran: Phase 2's sweep had already taken
+`xdg-desktop-portal-kde` and `kwallet6`. Two packages remained —
+`xdg-desktop-portal-lxqt`, which had never been used here (`FileChooser`,
+`UseIn=LXQt`), and Debian's `xdg-desktop-portal-gtk`, now redundant.
+
+Neither was mapped by any running process. Removing them took exactly two
+packages.
+
+### After
+
+```
+apt .portal files:              gnome-keyring.portal
+nix .portal files:              gtk.portal   hyprland.portal
+D-Bus activation, apt:          PermissionStore, Secret
+D-Bus activation, XDG_DATA_HOME: …desktop.gtk.service   …desktop.hyprland.service
+
+gtk portal unit:  /home/isutton/.config/systemd/user/xdg-desktop-portal-gtk.service   active
+serving exe:      /nix/store/…-xdg-desktop-portal-gtk-1.15.3/libexec/.xdg-desktop-portal-gtk-wrapped
+/usr code mappings in it:  0
+```
+
+Those two `XDG_DATA_HOME` activation files are the Task 1 review finding doing
+its job. Without them this step would have left D-Bus with no activation file
+for `org.freedesktop.impl.portal.desktop.gtk`, and the first symptom would
+have been Chrome unable to open a file — at the point the change was hardest
+to trace back to its cause.
+
+## Phase 4: apt's quickshell
+
+Gate first: Nix's quickshell was MainPID 3923, a store path, zero `/usr` code
+mappings, and the process answering `GetServerInformation` as
+`quickshell 1.2`. Apt's `/usr/bin/qs` and `/usr/bin/quickshell` were fully
+shadowed.
+
+`quickshell` and `libcpptrace1` were repacked into `/root/pkg-archive` first —
+neither has a download source. Removal took 17 packages in all.
+
+**Nix's quickshell never restarted through any of it**: still MainPID 3923,
+`NRestarts=0`, before and after. The bar, panels and notifications kept
+working because the process serving them was never the one being removed.
+
+### The in-use check had a hole, and this is where it was found
+
+Phase 2's safety rested on a check described in this document as systematic:
+walk every running process, resolve every mapped file and executable to its
+owning package, intersect with the removal list.
+
+It could only read *my own* processes.
+
+```
+processes running as root:     308
+processes running as isutton:  109
+```
+
+`/proc/<pid>/maps` is unreadable for another user's process, so the check
+covered about a quarter of the running system. It found `bluez` — but via
+`mpris-proxy`, which runs as the user. `bluetoothd` itself, running as root,
+was invisible to it. Had `bluez` had only root-owned processes, the check
+would have reported it unused and it would have been swept.
+
+The corrected method unions two sources: `/proc` maps and `exe` for readable
+processes, plus the first field of `ps -eo args` for every process regardless
+of owner, resolved through `dpkg -S`. That made **26 packages newly visible**,
+among them `greetd`, `polkitd`, `network-manager`, `udev`, `udisks2`,
+`upower`, `wpasupplicant`, `cups-daemon`, `docker-ce` and `rtkit`.
+
+None of the 26 were in Phase 2's sweep, so its outcome stands. But it stood on
+the hand-written must-not-appear list, not on the check that was presented as
+replacing the need for one. The measurement that was supposed to end the
+guessing had the guessing built into it.
+
+The corrected check found exactly one in-use package in this phase's sweep:
+`accountsservice`. Running, but consumed by nothing — no installed
+reverse-dependency, no `org.freedesktop.Accounts` reference in `greetd` or
+`tuigreet`, none in the quickshell tree — and reversible from trixie.
+
+## Phase 5: xkbcommon back to a maintained version
+
+Every number was re-measured rather than carried from the spec, because 1035
+packages had been removed since it was written:
+
+```
+xkbcommon dependants:        27   (was 42)
+strongest constraint:        >= 1.0.0   (kitty, foot, deskflow)
+trixie offers:               1.7.0-2
+compositor links:            /nix/store/…-libxkbcommon-1.13.1/lib/libxkbcommon.so.0.13.1
+```
+
+The compositor is immune, so the blast radius was apt applications only:
+Chrome, 1Password, Bitwarden, deskflow, foot, syncthingtray.
+
+Repacked first — `1.13.1-1~bpo13+1` exists only in `/var/lib/dpkg/status`, so
+the repack is the only route back up. The simulation showed two downgrades and
+no removals. Typing was tested in the affected applications, then again after
+a reboot.
+
+### The endpoint
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' | awk '$1=="ii"' | grep -c 'bpo13'
+0
+$ grep -rl backports /etc/apt/sources.list /etc/apt/sources.list.d/
+(no output)
+```
+
+**Zero backports packages, and no backports source to reintroduce them.**
+
+That check is worth one note. The first version of it piped `grep` into `sed`
+and relied on `||` to report success, which never fired: `sed` exits 0 and
+masks `grep`'s exit status, so an empty result and a broken pipeline look
+identical. Counting explicitly is what actually establishes the zero. A check
+that reports success by printing nothing cannot distinguish success from not
+having run — the same fault as `pgrep -x fumon` in spec 6, in a new costume,
+in the final verification of the spec that spent its length on it.
