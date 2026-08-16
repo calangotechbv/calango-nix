@@ -417,3 +417,198 @@ identical. Counting explicitly is what actually establishes the zero. A check
 that reports success by printing nothing cannot distinguish success from not
 having run — the same fault as `pgrep -x fumon` in spec 6, in a new costume,
 in the final verification of the spec that spent its length on it.
+
+## Did it work?
+
+| Question | Before | After |
+|---|---|---|
+| Installed packages | 3256 | **2221** — 1035 removed |
+| Manually-installed | 519 | **373** |
+| Backports packages | 4 | **0**, with no backports source to reintroduce them |
+| `apt-get -s autoremove` | 0, then 466 after Phase 1 | **0** |
+| What serves FileChooser | Debian's `xdg-desktop-portal-gtk` | Nix's, at `~/.config/systemd/user`, 0 `/usr` code mappings |
+| Backend selection | accidental — `gtk.portal` won as a fallback under `UseIn=gnome` | declared in `hyprland-portals.conf` |
+| Portal backends registered | 6 (gtk, kde, kwallet, lxqt, gnome-keyring, hyprland) | 3 — gtk and hyprland from Nix, gnome-keyring from apt |
+| KDE daemons running | `kwalletd6`, `kdeconnectd` | none, and no KDE installed |
+| `fc-match` for the three generic families | Debian's `fonts-noto-core` and `fonts-dejavu-mono` | the Nix store |
+| xkbcommon | `1.13.1-1~bpo13+1`, unmaintainable | `1.7.0-2` from trixie, maintained |
+
+Every row is a win, with one qualification worth stating: the reduction is
+larger than the spec authorised. Phase 1 orphaned a 466-package language stack
+the spec had explicitly placed out of scope, and the decision to sweep it was
+taken mid-execution rather than at design time.
+
+## Every defect, and who owns it
+
+### The portal config filename would never have been read
+
+**Owner: the spec and the plan. Caught by the Task 1 review, before it shipped.**
+
+Covered under Phase 3a. `XDG_CURRENT_DESKTOP=Hyprland` was measured correctly;
+the conclusion that the file should therefore be `Hyprland-portals.conf` was an
+unverified inference laid on top of it. `man 5 portals.conf` says the name is
+lower-cased, and the system's own `lxqt-portals.conf` — under a desktop named
+`LXQt` — was sitting there as a worked example the whole time.
+
+Cost if it had shipped: the declared backend selection silently absent, and
+every later claim in this document about selection being "declared rather than
+accidental" false.
+
+### The gtk D-Bus activation file needed an explicit entry
+
+**Owner: the spec. Caught by the Task 1 review.**
+
+Also under Phase 3a. The reasoning that no `xdg.dataFile` entry was needed
+explained which binary runs *once D-Bus decides to activate*, and said nothing
+about whether D-Bus can find an activation file at all. The two are different
+questions read by different processes under different environments.
+
+The measurement that produced the wrong answer read `XDG_DATA_DIRS` from a
+process found by matching a name pattern, rather than from the process systemd
+reports as the session bus.
+
+Cost if it had shipped: file dialogs in Chrome and Code stop opening at
+Phase 3b, three phases after the cause.
+
+### `kwallet6` was in the wrong task, and a daemon check was in the wrong step
+
+**Owner: the plan. Caught by the pre-flight scan, before Task 1 dispatched.**
+
+`/usr/bin/kwalletd6` comes from `kwallet6`, which the KDE autoremove sweep does
+not pick up on its own — so Phase 2 would have finished claiming both KDE
+daemons were gone while one remained installed. And removing a package does not
+kill its running process, so the daemon-absence check could only ever pass
+after the reboot, not before it.
+
+### The plan predicted 0 autoremovable packages after Phase 1. There were 466.
+
+**Owner: the plan. Caught by running it.**
+
+Covered under Phase 1. The consequence was not the wrong number but the wrong
+scope: Phase 2's bare `apt autoremove` would have swept a language stack the
+spec had excluded, inside a task named for KDE.
+
+### The in-use check covered a quarter of the system
+
+**Owner: me, during execution. Caught two phases after I relied on it.**
+
+Covered under Phase 4. The check that was introduced *specifically to stop this
+project guessing at package names* could not read root-owned processes — 308 of
+them against 109 readable. It found `bluez` by luck, through a user-owned
+helper process.
+
+This is the most instructive defect in the spec, because it was not inherited
+from a plan or a premise. It was built during execution, in direct response to
+the recurring failure, and reproduced the failure inside the fix.
+
+### `bluez` was one command away from being swept
+
+**Owner: the plan, which had no step for this. Caught by inspection, then confirmed by measurement.**
+
+`bluetoothd` runs from it, `bluetooth.service` was active, and the flake's own
+`bt-agent.service` runs against that daemon. It was in the sweep only because
+it is marked `auto` and its last installed reverse-dependency is
+`libreoffice-impress`.
+
+**`bluez` cannot move to Nix.** It runs as root from
+`/usr/lib/systemd/system/bluetooth.service` — a system unit. Standalone Home
+Manager writes `~/.config/systemd/user` only. This is permanent, and it is
+recorded here so a later cleanup does not re-open it.
+
+### The final verification reported success by printing nothing
+
+**Owner: me. Caught immediately, by re-running it differently.**
+
+Covered under Phase 5. `grep | sed` with `|| echo "zero"`: `sed` exits 0 and
+masks `grep`'s status, so an empty result and a broken pipeline are
+indistinguishable. Counting explicitly is what establishes the zero.
+
+Structurally identical to spec 6's `pgrep -x fumon`, which also could not
+distinguish the two states it existed to distinguish — in the closing check of
+the spec that spends its length on exactly this fault.
+
+## The recurring defect, counted again
+
+Spec 6 recorded five instances and named the pattern: *a check that measures a
+proxy because the proxy is easier to reach than the property.* Spec 7 produced
+six more, and the shape has moved again.
+
+Spec 5's instances were in the catalogue. Spec 6's were in the verification.
+Spec 7's are in **the verification of the verification** — the filename
+inference on top of a correct measurement, the `/proc` walk that could not see
+three-quarters of the system, and a zero established by an empty line.
+
+The pattern that actually held every time: **a measurement was taken, and then
+a conclusion was drawn that the measurement did not support.** Not laziness —
+every one of these involved running a real command and reading real output. The
+failure was in the step after.
+
+What worked, consistently: checks that read a running process's own state.
+`/proc/<pid>/maps`, `/proc/<pid>/cmdline`, `NRestarts`, `MainPID`, `busctl`
+name ownership. Every one of those told the truth. Every check that compared a
+path, a name, or an exit code eventually didn't.
+
+## What is still true
+
+### The apt desktop that remains
+
+373 manually-installed packages, 2221 total. The desktop-relevant survivors:
+
+- **The corp five**, permanently: `google-chrome-stable`, `code`, `1password`,
+  `1password-cli`, `endpoint-verification`.
+- **`bluez`**, permanently and for a structural reason, now marked manual.
+- **`gnome-keyring`**, the live Secret provider.
+- **`xdg-desktop-portal`** — the portal *frontend*, still Debian's `1.20.3`,
+  now the only mixed component in the portal stack.
+- **~21 GUI applications** awaiting their own spec: `firefox-esr`,
+  `signal-desktop`, `bitwarden`, `kitty`, `emacs-lucid`, `thunar`,
+  `pcmanfm-qt`, `virt-manager`, `displaycal`, `isoimagewriter`, `seahorse`,
+  `flatseal`, `syncthingtray`, `deskflow`, `bat`, `chafa`, `yt-dlp`, `mise`,
+  `sbcl`, `shellcheck`, `foot`.
+
+`foot` on that list is worth a note: the flake provides `foot` too, and
+`/usr/bin/foot` is what runs. Another shadow nobody has resolved.
+
+### One file outside `$HOME`
+
+```
+$ ls /usr/local/share/wayland-sessions/
+hyprland-nix.desktop
+```
+
+Still the only one, and `/etc/pam.d/greetd` was deliberately not edited — the
+`-auth optional` / `-session optional` prefixes made the dead `pam_kwallet5.so`
+lines inert, and editing a dpkg conffile would have been the worse outcome.
+That decision was tested by a reboot: greetd logged in with no PAM errors.
+
+## What the next spec inherits
+
+**The portal frontend is now the only mixed piece.** Debian's `1.20.3` drives
+two Nix backends. nixpkgs has `1.22.1`. That is a real version change, it owns
+systemd units rather than a D-Bus service file alone, and it sits in the path
+of every portal call including the corp applications'. It is the obvious next
+spec, and it is now the *last* thing standing between the session and being
+entirely Nix's.
+
+**Audio is a strong second.** `pipewire` (3042), `pipewire-pulse` (3047) and
+`wireplumber` (3046) all run as **user** services from Debian units at
+UnitPath position 15 — the exact shape `home/uwsm.nix` already solves, and
+Nix's `wireplumber-0.5.14` is already on the session PATH. Deferred here
+because it is a migration rather than a reduction, the failure mode is "no
+audio", and PipeWire's A2DP path couples to `bluez`, which stays on apt.
+
+**The unmanaged 218 MB of fonts.** 101 hand-copied files at
+`~/.local/share/fonts/calango-desktop`, live in fontconfig, shadowing the
+flake's own `adwaita-fonts`. The largest artefact in `$HOME` that neither apt
+nor Nix owns.
+
+**82 dictionary packages** nobody has justified, untouched by this spec.
+
+**119 packages in `rc` state** — removed, config files retained. Harmless, but
+it is the residue of three specs of removals and nobody has looked at it.
+
+**`/run/opengl-driver`** remains parked and unestablished.
+
+**The rollback rule, extended again.** A previous Home Manager generation was
+already not a recovery path after spec 6. It now additionally supplies the gtk
+portal backend, the portal configuration, and the font baseline.
