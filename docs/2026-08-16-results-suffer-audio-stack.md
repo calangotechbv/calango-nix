@@ -317,3 +317,313 @@ The alias probe is a separate, harder finding: Task 2's planned
 `.source`. `home.activation` with a raw `ln -s` to the sibling unit — already
 an established pattern in this repo — is the mechanism that measured true,
 and Task 2 needs to move to it before anything is switched.
+
+## Phase 1: the switch
+
+### What sd-switch intended
+
+`sd-switch` extracted from the live activation script (0.6.3), **not** from
+`nixpkgs#sd-switch` — the registry and this flake's pinned input give
+different versions, and dry-running with a different binary than the switch
+will use is worthless:
+
+```
+sd-switch 0.6.3, --dry-run --verbose
+  old: /nix/store/03ckq61w77vcp61k12gwx67wddrgz8dd-home-manager-generation
+  new: /nix/store/w0lv4m5b0sgaqfbs7bi0bm201zphpfrr-home-manager-generation
+
+Keeping unchanged units: app-graphical.slice, background-graphical.slice,
+  bt-agent.service, fumon.service, hypridle.service, hyprpolkitagent.service,
+  night-light.service, nm-secret-agent.service, quickshell.service,
+  wayland-session-bindpid@3035.service,
+  wayland-session-envelope@hyprland\x2dnixgl.desktop.target,
+  wayland-session-pre@hyprland\x2dnixgl.desktop.target,
+  wayland-session-xdg-autostart@hyprland\x2dnixgl.desktop.target,
+  wayland-session@hyprland\x2dnixgl.desktop.target,
+  wayland-wm-env@hyprland\x2dnixgl.desktop.service,
+  wayland-wm@hyprland\x2dnixgl.desktop.service,
+  xdg-desktop-portal-gtk.service, xdg-desktop-portal-hyprland.service,
+  xdg-desktop-portal.service, xdg-document-portal.service,
+  xdg-permission-store.service
+Starting units: filter-chain.service, pipewire-pulse.service,
+  pipewire-pulse.socket, pipewire.service, pipewire.socket,
+  xdg-desktop-portal-rewrite-launchers.service
+```
+
+The compositor unit (`wayland-wm@hyprland\x2dnixgl.desktop.service`) is under
+**Keeping unchanged units** and appears in no stop list — the brief's abort
+condition, which would have forced a TTY switch, is not met.
+
+**Nothing is stopped at all.** `wireplumber.service` is correctly absent from
+the start list: it carries `WantedBy=pipewire.service`, so starting pipewire
+pulls it in. `pipewire-session-manager.service` is correctly absent too, for
+a different reason — it is no longer a file in the generation at all; the
+alias is written by an activation hook, not installed as a unit.
+`xdg-desktop-portal-rewrite-launchers.service` in the start list is a
+pre-existing finished oneshot unrelated to this change, a no-op here.
+
+### Warm check
+
+After `home-manager switch --flake .#isutton@suffer`, before the reboot:
+
+```
+Id=wireplumber.service
+Names=wireplumber.service pipewire-session-manager.service
+readlink → wireplumber.service
+```
+
+**The `home.activation` hook produced a genuine alias.** This is the
+vindication of the Task 1 finding: the plan's original `xdg.configFile` entry
+would have had its first hop land in `/nix/store`, which systemd loads as a
+second, independent wireplumber unit under the alias name — the shape
+measured and rejected during the Task 1 probe. A relative `ln -s
+wireplumber.service`, written from `home.activation` after `linkGeneration`,
+instead produces one unit registered under two names. This is a warm check
+and proves less than the cold gate below — socket activation and alias
+registration are both boot-path behaviour a warm restart does not exercise —
+but it is already the answer the whole task hangs on, ahead of schedule.
+
+## Phase 2: the cold gate
+
+The gate below is the second cold boot, captured 2026-08-16T13:57:28-03:00 at
+generation `1b2qxmz8ayp74h3n3lvwigpfpv3q08bq` — after the
+`WIREPLUMBER_DATA_DIR` fix described under item 7. The first cold boot, on
+the generation the switch above actually produced, failed that gate; its
+failure, root cause and fix are the subject of that section.
+
+### 1. Provenance
+
+```
+MainPID=3288
+NRestarts=0
+Id=pipewire.service
+ActiveState=active
+FragmentPath=/home/isutton/.config/systemd/user/pipewire.service
+
+MainPID=3293
+NRestarts=0
+Id=pipewire-pulse.service
+ActiveState=active
+FragmentPath=/home/isutton/.config/systemd/user/pipewire-pulse.service
+
+MainPID=3291
+NRestarts=0
+Id=wireplumber.service
+ActiveState=active
+FragmentPath=/home/isutton/.config/systemd/user/wireplumber.service
+
+MainPID=3292
+NRestarts=0
+Id=filter-chain.service
+ActiveState=active
+FragmentPath=/home/isutton/.config/systemd/user/filter-chain.service
+pipewire         pid=3288    exe=/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/bin/pipewire usr-maps=0
+pipewire-pulse   pid=3293    exe=/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/bin/pipewire usr-maps=0
+wireplumber      pid=3291    exe=/nix/store/gnvd0pfyxahyw4k7m5kki0ad75mzwws8-wireplumber-0.5.14/bin/wireplumber usr-maps=0
+filter-chain     pid=3292    exe=/nix/store/kwcxxq18wrh6s4r5573jy2v2padf8vk3-pipewire-1.6.6/bin/pipewire usr-maps=0
+Id=pipewire.socket
+ActiveState=active
+
+Id=pipewire-pulse.socket
+ActiveState=active
+failed units: 0
+```
+
+Establishes: all four services `active` with `NRestarts=0` from a cold
+boot — the load-bearing figure, since a service that crashed once and came
+back reads `active` too — all four exes resolving into `/nix/store`, and
+**`usr-maps=0` for every one**, against the non-zero counts Phase 0 recorded
+for Debian's binaries (177, 157, 337, 87). Both sockets `active`. Nothing
+failed.
+
+### 2. The alias
+
+```
+Wants=pipewire.service wireplumber.service
+BindsTo=pipewire.service
+After=-.mount pipewire.service wireplumber.service basic.target session.slice pipewire-pulse.socket
+After=session.slice basic.target -.mount wireplumber.service pipewire.service
+Id=wireplumber.service
+Names=wireplumber.service pipewire-session-manager.service
+LoadState=loaded
+FragmentPath=/home/isutton/.config/systemd/user/wireplumber.service
+readlink: wireplumber.service
+```
+
+Establishes: `pipewire-pulse.service`'s `Wants=` names
+`pipewire-session-manager.service`, and that name resolves live to
+`Id=wireplumber.service`, `LoadState=loaded` — against Phase 0's baseline
+reading of `LoadState=not-found` for the same name, which is what makes a
+`loaded` here mean something. `readlink` confirms the on-disk link is the
+bare string `wireplumber.service`, no directory part, no store path: a true
+alias, not a unit that merely mentions the name.
+
+### 3. The seven enablement artifacts
+
+```
+/home/isutton/.config/systemd/user/default.target.wants/filter-chain.service
+/home/isutton/.config/systemd/user/default.target.wants/pipewire-pulse.service
+/home/isutton/.config/systemd/user/default.target.wants/pipewire.service
+/home/isutton/.config/systemd/user/pipewire.service.wants/wireplumber.service
+/home/isutton/.config/systemd/user/sockets.target.wants/pipewire-pulse.socket
+/home/isutton/.config/systemd/user/sockets.target.wants/pipewire.socket
+wants links: 6
+alias: 1   dangling under $U: 0
+Debian's /etc links still present: 6
+```
+
+Establishes: six `.wants` links plus the one alias, counted rather than
+assumed — seven artifacts total. Zero dangling symlinks under
+`~/.config/systemd/user`. Debian's six links under `/etc/systemd/user` are
+still present and still pointing at `/usr/lib/systemd/user`; they are
+untouched by this task and disappear in Task 4. `.wants` links from
+different `UnitPath` entries are unioned rather than shadowed, so both sets
+naming the same unit is expected — the *fragment* actually run is chosen by
+search order, position 5 over position 15.
+
+### 4. Devices and realtime scheduling
+
+```
+49	alsa_card.pci-0000_03_00.1	alsa
+50	alsa_card.pci-0000_03_00.6	alsa
+103	bluez_card.E4_61_F4_29_55_BA	module-bluez5-device.c
+
+57	alsa_output.pci-0000_03_00.6.HiFi__Speaker__sink	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+264	bluez_output.E4_61_F4_29_55_BA.1	PipeWire	s16le 2ch 44100Hz	RUNNING
+
+57	alsa_output.pci-0000_03_00.6.HiFi__Speaker__sink.monitor	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+58	alsa_input.pci-0000_03_00.6.HiFi__Mic2__source	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+59	alsa_input.pci-0000_03_00.6.HiFi__Mic1__source	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+106	bluez_input.E4:61:F4:29:55:BA	PipeWire	float32le 1ch 48000Hz	SUSPENDED
+264	bluez_output.E4_61_F4_29_55_BA.1.monitor	PipeWire	s16le 2ch 44100Hz	RUNNING
+
+Server Name: PulseAudio (on PipeWire 1.6.6)
+pipewire       pid 3288's current scheduling policy: SCHED_OTHER|SCHED_RESET_ON_FORK;pid 3288's current scheduling priority: 0;pid 3288's current runtime parameter: 2800000
+module-rt      pid 3313's current scheduling policy: SCHED_OTHER|SCHED_RESET_ON_FORK;pid 3313's current scheduling priority: 0;pid 3313's current runtime parameter: 2800000
+data-loop.0    pid 3318's current scheduling policy: SCHED_RR|SCHED_RESET_ON_FORK;pid 3318's current scheduling priority: 20
+ActiveState=active
+FragmentPath=/usr/lib/systemd/system/rtkit-daemon.service
+```
+
+Establishes: the same two ALSA cards Phase 0 recorded
+(`pci-0000_03_00.1`, `pci-0000_03_00.6`), plus a third card and its
+sink/source pair for the JBL, which was connected for this capture and was
+not for Phase 0's — one physical sink and three physical sources still hold
+under the ALSA cards, with the bluez entries additional. `Server Name` reads
+`PulseAudio (on PipeWire 1.6.6)`, the version to read — `Server Version`
+stays `15.0.0` before and after this task, since it reports the emulated
+PulseAudio protocol version and not PipeWire's. `data-loop.0` still runs
+`SCHED_RR` at priority 20: `rtkit-daemon.service`, Debian's system unit,
+`active`, granted realtime scheduling over the system bus to a Nix binary.
+By hand: sound from the speakers, **YES**.
+
+### 5. The shell and the Chrome mic rule
+
+```
+lrwxrwxrwx 1 isutton nix-users 129 Aug 16 13:44 /home/isutton/.config/pipewire/pipewire-pulse.conf.d/20-block-source-volume.conf -> /nix/store/xnb16l33hz72zq7lysczknql7d8990da-home-manager-files/.config/pipewire/pipewire-pulse.conf.d/20-block-source-volume.conf
+rule occurrences: 2
+Nix's pipewire-pulse.conf names the drop-in dir: 2
+```
+
+Establishes: the drop-in symlink still resolves into the store, its rule
+matched twice, and Nix's own `pipewire-pulse.conf` names the same drop-in
+directory — the file being present is only a proxy, and the two by-hand
+checks are the property itself. By hand, reported by the user: the
+quickshell volume OSD and audio panel work, **YES** — the first time client
+and server are both Nix packages, built against the same libpipewire. Chrome
+does not walk the microphone gain back up after it is lowered by hand,
+**YES**.
+
+### 6. Bluetooth
+
+```
+plugins on disk: 14  (Debian's libspa-0.2-bluetooth: 9)
+mapped into pipewire with no device connected: 0
+ActiveState=active
+FragmentPath=/usr/lib/systemd/system/bluetooth.service
+```
+
+Establishes: 14 bluez5 plugins on disk against Debian's 9, zero mapped into
+the running pipewire before any Bluetooth device is present — expected,
+since the plugins are `dlopen`ed on demand and linkage alone says nothing —
+and `bluetooth.service` still `active` at Debian's
+`/usr/lib/systemd/system/bluetooth.service`, permanently on apt because
+`bluetoothd` is a system service and standalone Home Manager writes only
+user units. By hand, with the JBL Tune 520BT connected: playback over A2DP,
+**YES**; a real call using the JBL's microphone over HFP, **YES** — the
+codec path Debian's `libspa-0.2-bluetooth` never shipped.
+
+### 7. Script provenance — the fix
+
+**The first cold gate FAILED gate 7.** Nix's wireplumber 0.5.14 binary was
+running Debian's 0.5.8 Lua scripts: 8 `state-routes.lua:119` tracebacks,
+against 0 on the previous boot, when Debian's binary ran Debian's scripts.
+
+Root cause: wireplumber resolves its data tree — the Lua script directory —
+through `XDG_DATA_DIRS`. `wireplumber.service` carries
+`WantedBy=pipewire.service` and starts from `default.target` at user-manager
+start, at 13:27:33; `graphical-session.target`, and with it uwsm's session
+environment update, only reached `active` at 13:27:36 — three seconds later.
+The unit was started, and had already resolved its data tree, before uwsm
+ever set `~/.nix-profile/share` into the session environment.
+
+The Task 2 comment claiming `pkgs.wireplumber` in `home.packages` fixes this
+was **wrong**. The error was made by reading
+`systemctl --user show-environment`, which reports the manager's environment
+*as it is now* — after uwsm has already mutated it — not what a unit
+starting at boot, ahead of that mutation, actually inherited. The
+authoritative source is the unit's own `/proc/<MainPID>/environ`, read at
+its `ActiveEnterTimestamp`. This is the same trap `CLAUDE.md` already
+records for `systemd-analyze --user unit-paths` reporting the caller's
+environment rather than the manager's — walked into again, in a new place.
+
+The fix: a `wireplumber.service.d/10-data-dir.conf` drop-in, installed
+through `xdg.configFile`, setting `WIREPLUMBER_DATA_DIR` to the package's
+store path — proven by hand, running the binary against the unit's own
+broken `XDG_DATA_DIRS` with only `WIREPLUMBER_DATA_DIR` added, before any
+Nix expression was written. The clinching evidence, from the fixed cold
+boot:
+
+```
+state-routes tracebacks this boot: 0
+  previous boot, Nix binary + Debian scripts: 8
+  boot before that, Debian binary + Debian scripts: 0
+XDG_DATA_DIRS=/home/isutton/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/
+WIREPLUMBER_DATA_DIR=/nix/store/gnvd0pfyxahyw4k7m5kki0ad75mzwws8-wireplumber-0.5.14/share/wireplumber
+journal lines: 20
+```
+
+Zero tracebacks — **and** the unit's own `XDG_DATA_DIRS` still has no
+`~/.nix-profile/share` in it, unchanged from the boot that failed. That
+second fact is what makes this evidence rather than coincidence: the
+mechanism that was blamed and corrected (`XDG_DATA_DIRS`) is demonstrably
+still broken, and the drop-in's `WIREPLUMBER_DATA_DIR` is demonstrably what
+is doing the work. The journal is non-empty (20 lines), ruling out an empty
+journal as the reason the traceback count reads zero.
+
+### Gate 8, withdrawn
+
+An `api.alsa.acp.device` create failure was observed during the Task 1
+rehearsal and made into a gate expecting zero failures from cold. The first
+cold boot under the real units produced 2:
+
+```
+api.alsa.acp.device failures, this boot:            2
+api.alsa.acp.device failures, Debian's 0.5.8 boot:  6
+ 0 [Generic        ]: HDA-Intel - HD-Audio Generic
+                      HD-Audio Generic at 0x605c8000 irq 72
+ 1 [Generic_1      ]: HDA-Intel - HD-Audio Generic
+                      HD-Audio Generic at 0x605c0000 irq 73
+ 2 [acp63          ]: acp63 - acp63
+                      HP-HPOmniBook5Laptop16_bc1xxx-Type1ProductConfigId-8E02
+```
+
+Debian's own 0.5.8 boot logged the same failure 6 times — more often, not
+less. It is pre-existing, not a regression. `/proc/asound/cards` lists three
+cards: 0 and 1 are HDA-Intel, 2 is `acp63`, AMD's audio coprocessor; pipewire
+enumerates two, on both stacks.
+
+The gate was invented from the rehearsal without checking the baseline
+first — the same error as item 7, in the other direction: a warning seen
+under Nix, attributed to Nix, without asking what Debian did. It is
+withdrawn.
