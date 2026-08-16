@@ -297,6 +297,18 @@ in
   config.xdg.dataFile."dbus-1/services/org.freedesktop.portal.Desktop.service".source =
     "${pkgs.xdg-desktop-portal}/share/dbus-1/services/org.freedesktop.portal.Desktop.service";
 
+  # 3 of 3: the document portal. This one holds a live fuse.portal mount at
+  # /run/user/1000/doc, and it is how flatpak applications reach files outside
+  # their sandbox -- Slack among them, which is corp software here. Swapping
+  # the binary means the mount is torn down and recreated, so the switch is
+  # followed by a reboot rather than a restart, and the gate is Slack moving a
+  # file rather than the mount merely existing.
+  config.xdg.configFile."systemd/user/xdg-document-portal.service".source =
+    "${pkgs.xdg-desktop-portal}/share/systemd/user/xdg-document-portal.service";
+
+  config.xdg.dataFile."dbus-1/services/org.freedesktop.portal.Documents.service".source =
+    "${pkgs.xdg-desktop-portal}/share/dbus-1/services/org.freedesktop.portal.Documents.service";
+
   # Debian ships four units from this package and enables this one via
   # /etc/systemd/user/graphical-session-pre.target.wants. It runs at every
   # graphical session start and finishes in under a second.

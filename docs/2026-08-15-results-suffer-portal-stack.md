@@ -174,3 +174,74 @@ org.freedesktop.impl.portal.desktop.gtk  PID 3514
 ```
 
 These exist because a process check passes whether or not anything draws.
+
+## Phase 3: the document portal
+
+The phase the spec was written around. `xdg-document-portal` holds a live
+`fuse.portal` mount at `/run/user/1000/doc`, and flatpak Slack — corp software
+here — reaches files outside its sandbox through it.
+
+### Recorded before the switch
+
+```
+portal on /run/user/1000/doc type fuse.portal (rw,nosuid,nodev,relatime,user_id=1000,group_id=1000)
+PID 3485   exe /usr/libexec/xdg-document-portal
+com.slack.Slack   (flathub, system)
+```
+
+Captured first, deliberately. Without a pre-switch record the post-reboot
+check degrades into "a mount exists, looks fine", which is the proxy this
+whole spec argues against.
+
+### Handed over by a reboot, not an unmount
+
+The mount was held by the running Debian process. Tearing down a live
+`fuse.portal` under a running session to swap the binary underneath it is a
+worse operation to reason about than letting the machine restart, so the plan
+switched and rebooted. The dry run showed the same takeover pattern as the
+frontend: `xdg-document-portal.service` in both stop and start lists, because
+the unit is absent from the old generation's managed directory while Debian's
+copy at position 15 is live.
+
+### After the reboot
+
+```
+$ who -b
+system boot  2026-08-16 08:46
+
+$ mount | grep /run/user/1000/doc
+portal on /run/user/1000/doc type fuse.portal (rw,nosuid,nodev,relatime,user_id=1000,group_id=1000)
+
+xdg-document-portal.service
+  FragmentPath  /home/isutton/.config/systemd/user/xdg-document-portal.service
+  ActiveState   active
+  PID           3923   (was 3485)
+  exe           /nix/store/…-1.20.4/libexec/.xdg-document-portal-wrapped
+  usr code mappings  0
+```
+
+All three services now answer from the store:
+
+```
+org.freedesktop.impl.portal.PermissionStore  …/libexec/.xdg-permission-store-wrapped
+org.freedesktop.portal.Desktop               …/libexec/.xdg-desktop-portal-wrapped
+org.freedesktop.portal.Documents             …/libexec/.xdg-document-portal-wrapped
+```
+
+No failed units.
+
+### The gate
+
+**The user uploaded a file to Slack and downloaded one back.** Both
+directions, after the reboot.
+
+That is the property. The mount reappearing is a proxy: a `fuse.portal` mount
+can be present at `/run/user/1000/doc` while a sandboxed application cannot
+traverse it, so "the mount is back" would have passed in a world where Slack
+was broken. A file crossing the sandbox boundary in both directions is the
+only check that distinguishes those two states, and it is the one step in this
+spec a machine could not perform.
+
+Debian's package is still installed at this point, so the whole phase remained
+reversible: removing the document-portal lines from `home/services.nix` and
+switching back would have handed the mount to Debian's units at position 15.
