@@ -105,7 +105,7 @@ let
   '';
 
   unitLinks = lib.listToAttrs (map
-    (n: lib.nameValuePair ".config/systemd/user/${n}" {
+    (n: lib.nameValuePair "systemd/user/${n}" {
       source = "${uwsmUnits}/${n}";
     })
     unitNames);
@@ -116,18 +116,23 @@ in
   # ordering is what makes these win; nothing has to be removed for them to
   # take effect, which is what makes the switch reversible.
   #
-  # home.file rather than systemd.user.*, to avoid re-describing fourteen
-  # upstream units in Nix and drifting from them.
+  # xdg.configFile rather than systemd.user.*, to avoid re-describing fourteen
+  # upstream units in Nix and drifting from them. xdg.configFile rather than
+  # home.file.".config/...": home-manager's own systemd module writes user
+  # units through xdg.configFile, and sd-switch follows xdg.configHome, not a
+  # literal ".config" -- identical today since xdg.configHome defaults to
+  # ~/.config, but a literal path would silently stop being seen if
+  # xdg.configHome were ever set elsewhere.
   #
   # This does NOT keep them away from sd-switch. sd-switch is invoked on
   # $generation/home-files/.config/systemd/user, which is precisely where
-  # home.file entries land, so it sees all fourteen as newly added and acts on
-  # them. That matters because wayland-session-shutdown.target carries
+  # xdg.configFile entries land, so it sees all fourteen as newly added and
+  # acts on them. That matters because wayland-session-shutdown.target carries
   # Conflicts=graphical-session.target: if sd-switch starts it, systemd tears
   # the session down to satisfy the conflict. The protection is sequencing --
   # a dry run that is read, then a first switch from a TTY with no session to
   # lose. See the plan's Task 2 and Task 3.
-  home.file = unitLinks // {
+  xdg.configFile = unitLinks // {
     # fumon.service's enablement, owned here rather than inherited.
     #
     # It is currently enabled by a root-owned symlink at
@@ -140,7 +145,7 @@ in
     # that this link is what actually enables the unit now: the /etc symlink
     # survived the package removal and dangles, and ~/.config wins anyway at
     # position 5 against /etc at position 6.
-    ".config/systemd/user/graphical-session.target.wants/fumon.service".source =
+    "systemd/user/graphical-session.target.wants/fumon.service".source =
       "${uwsmUnits}/fumon.service";
   };
 }

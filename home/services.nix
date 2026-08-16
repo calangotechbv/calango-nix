@@ -202,8 +202,19 @@ in
   # unit already carries an absolute store path in ExecStart and needs no
   # nixGL wrapper (the binary has no libGL, libEGL or libgbm linkage, unlike
   # xdg-desktop-portal-hyprland above). Re-describing it would mean owning a
-  # copy that can drift from upstream.
-  config.home.file.".config/systemd/user/xdg-desktop-portal-gtk.service".source =
+  # copy that can drift from upstream. The verbatim copy also means this unit
+  # does not get the hyprland unit's Restart=on-failure or Slice=session.slice
+  # -- Nix's file simply doesn't set them. That asymmetry is deliberate, not
+  # an oversight: Type=dbus plus the xdg.dataFile activation entry below means
+  # a crashed gtk backend is re-activated on the next portal call, so
+  # Restart=on-failure buys little, and the slice assignment is cosmetic.
+  #
+  # xdg.configFile rather than home.file.".config/...": home-manager's own
+  # systemd module writes user units through xdg.configFile, and sd-switch
+  # follows xdg.configHome, not a literal ".config". Identical today, since
+  # xdg.configHome defaults to ~/.config, but a literal path would silently
+  # stop being seen by sd-switch if xdg.configHome were ever set elsewhere.
+  config.xdg.configFile."systemd/user/xdg-desktop-portal-gtk.service".source =
     "${pkgs.xdg-desktop-portal-gtk}/share/systemd/user/xdg-desktop-portal-gtk.service";
 
   # Same bug as xdg-desktop-portal-hyprland's D-Bus activation file above,

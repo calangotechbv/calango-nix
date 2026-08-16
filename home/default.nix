@@ -120,17 +120,23 @@ in
     # share/fonts. Verified before this was added -- fc-list already listed
     # Adwaita Sans and AdwaitaMono Nerd Font, which exist only in the store.
     #
-    # Note this does NOT cover the 101 hand-copied files in
-    # ~/.local/share/fonts (218 MB, dated 2026-07-15, no Home Manager symlinks
-    # among them). Those predate the migration and belong to neither apt nor
-    # Nix; they are a separate cleanup.
+    # Note this does NOT cover the two hand-copied piles under
+    # ~/.local/share/fonts, neither with Home Manager symlinks among them:
+    # 101 files / 164 MB of Inter and JetBrainsMono at the top level, dated
+    # 2026-07-15, and 18 files / 54 MB of Adwaita under calango-desktop/,
+    # dated 2026-08-01..04 (218 MB combined). Both predate the migration and
+    # belong to neither apt nor Nix; they are a separate cleanup.
     noto-fonts # sans-serif and serif, plus broad script coverage
     dejavu_fonts # the family monospace currently resolves to
     liberation_ttf # Arial/Times/Courier metric substitutes, for web content
   ];
 
-  # Links fonts into ~/.local/share/fonts and writes a fontconfig snippet, so
-  # both Nix and Debian applications find them.
+  # Writes a fontconfig snippet (~/.config/fontconfig/conf.d/10-hm-fonts.conf)
+  # pointing at the Nix profile's share/fonts. It links nothing into
+  # ~/.local/share/fonts -- that directory has zero home-manager symlinks in
+  # it. Because fontconfig is process-local rather than per-packaging-system,
+  # both Nix and Debian applications read the same config and so find the
+  # profile's fonts either way.
   fonts.fontconfig.enable = true;
 
   # Qt6, and so the cheapest proof that quickshell will draw in spec 2.
