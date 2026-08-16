@@ -1116,3 +1116,258 @@ directory — including the four HFP codecs (`cvsd`, `msbc`, `lc3-swb`,
 left, still `active`, from `/usr/lib/systemd/system/bluetooth.service`
 — a system unit, permanently out of Home Manager's reach in the same
 way `rtkit-daemon` is.
+
+## Phase 3b: pactl from Nix
+
+Scope the user added after Task 4's gate passed. It corrected a false
+premise this spec's own design section had recorded.
+
+### The spec was wrong
+
+The spec decided `pulseaudio-utils` stays, on the grounds that "Nix
+ships a rich `pw-*` toolset and no `pactl`." `pkgs.pulseaudio` at the
+pinned input is `17.0` — the same upstream release as Debian's
+`pulseaudio-utils 17.0+dfsg1-2+b1` — and it ships `pactl`. With the
+reason gone, the decision went with it.
+
+### Why it was not a one-line `home.packages` addition
+
+Nix's `pkgs.pulseaudio` bin/ holds 11 binaries in one directory,
+`pactl` and the `pulseaudio` daemon itself both among them:
+
+```
+$ ls -1 /nix/store/igqqqab47468vk06ingdxbanq2w23hjd-pulseaudio-17.0/bin | wc -l
+11
+```
+
+Debian's `pulseaudio-utils` has never shipped that daemon; the
+standalone `pulseaudio` package reads `un` — never installed, on this
+machine, before this task and after it alike. Adding `pkgs.pulseaudio`
+wholesale to `home.packages` would have put a real PulseAudio daemon
+on `PATH` here for the first time.
+
+### Why that matters
+
+`strings` on `libpulse.so.0` yields the bare word `pulseaudio` and no
+absolute store path: autospawn resolves the daemon through `PATH`, by
+name. A client that could not reach `pipewire-pulse` could start a
+real PulseAudio and seize the ALSA devices — the same two-sound-servers
+hazard that put `libcanberra-pulse` into Task 4's removal set. Read the
+other way, the same fact is what makes withholding the daemon from
+`PATH` effective rather than cosmetic: because the lookup is strictly
+by bare name, its absence from `$out/bin` genuinely prevents autospawn
+rather than merely hiding the binary somewhere else it could still be
+found.
+
+### What was built
+
+A `pulseaudioClients` derivation (`pkgs.runCommand "pulseaudio-clients"
+{ } ...`) linking every binary in `${pkgs.pulseaudio}/bin` except the
+daemon, found by iterating the directory rather than by a written list
+of the wanted names:
+
+```
+$ ls -1 "$PC/bin" | wc -l
+10
+$ ls -1 /nix/store/igqqqab47468vk06ingdxbanq2w23hjd-pulseaudio-17.0/bin | wc -l
+11
+# 11 - 1 = 10, matches the exposed count.
+```
+
+Ten binaries exposed against eleven in the source. Three build-time
+guards, each proven to fail by mutation and each restore proven to
+reproduce the identical generation store path
+(`4d6c8p32fn0w6qpbadhppvpy4s0xgckd`):
+
+- Guard 1: the daemon binary this derivation excludes must still exist
+  upstream at `${pkgs.pulseaudio}/bin/pulseaudio`.
+- Guard 2: `$out/bin/pulseaudio` must not exist after the loop.
+- Guard 3: `$out/bin/pactl` must exist.
+
+### The review found the comment overclaimed, and the fix was a new check, not a reworded sentence
+
+The rejected-alternative comment in `home/audio.nix` argued an
+`autospawn = no` entry in `~/.config/pulse/client.conf` was unnecessary
+because guard 2 already "turns that edit into a build failure" for any
+future edit that put the daemon back on `PATH`. False as written: guard
+2 inspects only `pulseaudioClients`' own `$out/bin`. A `pkgs.pulseaudio`
+reference added directly to `home.packages`, alongside
+`pulseaudioClients` rather than instead of it, lands the daemon on
+`PATH` with guard 2 still green — a safety claim the measurement did
+not support, and this project's signature defect — a false claim about
+a guard's reach — wearing new clothes.
+
+The property is profile-wide, not per-derivation, so it now lives in
+`flake.nix` as `checks.${system}.no-pulseaudio-daemon`, in the same
+`pkgs.runCommand` idiom as `no-dangling-home-files` and walking the
+same built generation's `home-path/bin`. Both checks now live inside a
+single `checks.${system} = { ... }` attribute set — two separate
+top-level `checks.${system}.<name>` bindings could not coexist:
+
+```
+error: dynamic attribute 'x86_64-linux' already defined at flake.nix:178:7
+```
+
+Proven by mutation: `pkgs.pulseaudio` was added to `home/audio.nix`'s
+`home.packages`, next to `pulseaudioClients` — the exact regression the
+check exists for — and `nix flake check` failed:
+
+```
+error: builder for '.../portal-stack-no-pulseaudio-daemon.drv' failed with exit code 1;
+       last 10 log lines:
+       > A 'pulseaudio' binary is on the profile's PATH:
+       >   /nix/store/08dc3xxn0mrqhcr6agbgylnnjh64bizm-home-manager-generation/home-path/bin/pulseaudio
+       > libpulse resolves the daemon by bare name through PATH
+       > (autospawn), so its presence here restores the hazard
+       > home/audio.nix's pulseaudioClients derivation exists to
+       > remove: a client that cannot reach pipewire-pulse can
+       > start a real PulseAudio and seize the ALSA devices.
+```
+
+Restored, `nix flake check` passed again and the generation store path
+returned to the pre-mutation one exactly.
+
+### The gate, verified by the controller
+
+```
+$ command -v pactl; readlink -f $(command -v pactl)
+/home/isutton/.nix-profile/bin/pactl
+/nix/store/igqqqab47468vk06ingdxbanq2w23hjd-pulseaudio-17.0/.bin-unwrapped/pactl
+$ command -v pulseaudio   # must find nothing
+exit=1
+$ ls ~/.nix-profile/bin | grep -cx pulseaudio
+0
+$ dpkg-query pulseaudio-utils rtkit pulseaudio
+un  pulseaudio
+un  pulseaudio-utils
+ii  rtkit 0.13-5.1
+```
+
+`pactl` resolves to `/nix/store/…-pulseaudio-17.0/.bin-unwrapped/pactl`;
+`command -v pulseaudio` exits 1; zero `pulseaudio` binaries in the
+profile; `pulseaudio-utils` is `un`; `rtkit` stays `ii`; audio
+unaffected.
+
+## Endpoint
+
+Audio is entirely Nix's: `pipewire 1.6.6`, `wireplumber 0.5.14`, both
+sockets, the filter chain, and 14 bluez5 plugins on disk against
+Debian's `libspa-0.2-bluetooth`'s 9 — measured **loaded into
+wireplumber**, not merely present on disk:
+
+```
+Nix, on disk: 14   Debian's libspa-0.2-bluetooth shipped 9
+loaded into wireplumber (pid 2953): 70 map entries, 14 distinct .so
+```
+
+**Seven** apt packages removed, not the spec's six — the original six
+plus `pulseaudio-utils`:
+
+```
+un  libcanberra-pulse
+un  libspa-0.2-bluetooth
+rc  pipewire 1.4.2-1
+rc  pipewire-bin 1.4.2-1
+rc  pipewire-pulse 1.4.2-1
+un  pulseaudio-utils
+rc  wireplumber 0.5.8-2
+```
+
+One kept deliberately and marked manual: `rtkit` (`ii  rtkit 0.13-5.1`).
+
+`/etc/systemd/user` dangling links: 14 before, 0 after
+(`total links: 14   resolving: 14   dangling: 0   (was 28/14/14)`). Six
+of those fourteen are this migration's own; the other eight predate it,
+inherited from earlier specs.
+
+**The Debian-user-services count, with its denominator stated.** The
+spec predicted 14 → 10. Counted from the filesystem three ways, by each
+unit's own `FragmentPath`:
+
+```
+every .service with a /usr/lib/systemd/user fragment:   37
+  (includes D-Bus-activated units that have never started)
+enabled or linked:                                       7
+active right now:                                        10
+```
+
+The spec's figure was the third, and it holds — but 37 and 7 are
+equally true sentences about the same machine, so the number means
+nothing without the denominator attached. A bare "10" invites the next
+reader to count differently and conclude the migration under-delivered.
+
+None of the remaining ten is audio:
+
+```
+dbus-broker.service
+dconf.service
+flatpak-session-helper.service
+foot-server.service
+gcr-ssh-agent.service
+gnome-keyring-daemon.service
+gvfs-daemon.service
+mpris-proxy.service
+ssh-agent.service
+syncthing.service
+```
+
+`gcr-ssh-agent.service`, `gnome-keyring-daemon.service` and
+`ssh-agent.service` are the secrets and agent cluster the spec's
+Non-goals section names directly; `dbus-broker.service` and
+`foot-server.service` are named directly too (the session bus, and
+"`foot`'s shadow"). `dconf.service`, `flatpak-session-helper.service`,
+`gvfs-daemon.service`, `mpris-proxy.service` and `syncthing.service`
+fall under the spec's catch-all non-goal — the remaining GUI and
+desktop-integration applications, minus the corp set — none of them
+audio, and none of them this spec's target.
+
+## Defects found
+
+Every place this plan's expectation did not match the machine. Several
+are the controller's own error.
+
+1. **The alias could not be an `xdg.configFile` entry.** The plan's
+   design (Phase 1: `systemd/user/pipewire-session-manager.service` →
+   the alias, via `xdg.configFile`) would have installed a second,
+   independent wireplumber unit under the alias name — `xdg.configFile`
+   always emits a link whose first hop lands in `/nix/store`, and
+   systemd decides on the symlink's immediate target, not the fully
+   chased one. See Phase 0's alias probe.
+2. **Phase 0's rehearsal, as written, was not a valid test.** Attempt 1
+   paired Nix's `wireplumber` binary with Debian's data — the session's
+   ordinary `XDG_DATA_DIRS` had no `~/.nix-profile/share/wireplumber` —
+   and produced four `state-routes.lua` tracebacks that read, at the
+   time, as a bug in 0.5.14. It was a version mismatch between binary
+   and script tree, not a defect in either taken alone.
+3. **The `home.packages` comment claiming script provenance was fixed
+   by the package. It was not.** Task 2's comment argued that adding
+   `wireplumber` to `home.packages` alone fixed `XDG_DATA_DIRS` for the
+   running unit. The first cold gate failed with 8 `state-routes.lua`
+   tracebacks. `systemctl --user show-environment` was the wrong
+   instrument: it reports the manager's environment as it is *now*,
+   after uwsm has already mutated it — not what a unit starting at
+   boot, three seconds ahead of that mutation, actually inherited. Fixed
+   with an explicit `WIREPLUMBER_DATA_DIR` drop-in.
+4. **An ACP gate invented from the rehearsal without checking the
+   baseline.** A single `api.alsa.acp.device` create failure during
+   Phase 0 was turned into a zero-failures gate. The first cold boot
+   produced 2 — but Debian's own 0.5.8 boot logged the same failure 6
+   times, more often, not less. Pre-existing, not a regression.
+   Withdrawn.
+5. **Gate 6 named the wrong process.** The plan's check greps
+   `spa-0.2/bluez5` out of pipewire's own `/proc/<pid>/maps`. pipewire
+   never loads the bluez5 plugins — wireplumber does, as the device
+   monitor. Against pipewire the count reads `0` whether Bluetooth
+   works or not: a check that could never have failed either way.
+6. **The spec's "Nix ships no `pactl`."** False at the pinned input;
+   see Phase 3b above.
+7. **The Phase 3 prose that stood on command output never filed.** The
+   `apt-get -s remove` simulation and the "no longer required" list
+   were run and read at removal time, but their raw output was not
+   committed — only prose asserting the figures. Filed after a review
+   caught the gap; both blocks are now in Phase 3 above, marked
+   TRANSCRIBED because the packages they describe are already gone and
+   the commands cannot be re-run to reproduce them.
+8. **A comment that overstated a guard's reach.** See Phase 3b: the
+   rejected-alternative comment above `pulseaudioClients` claimed guard
+   2 already closed off a future regression it could not see.

@@ -1470,3 +1470,30 @@ Checks that compared a path, a name or an exit code have eventually lied in
 every spec of this project. The deeper pattern is not laziness: in each case a
 real command was run and real output was read, and the error was in the
 conclusion drawn afterwards, which the measurement did not support.
+
+## Corrections
+
+Measurement overtook parts of this plan after it was written. Left
+unrewritten, as the record of what was argued at the time; see
+`docs/2026-08-16-results-suffer-audio-stack.md` for the evidence.
+
+- **The alias step (Phase 1: `systemd/user/pipewire-session-manager.service`
+  via `xdg.configFile`) does not work.** `xdg.configFile`'s first hop always
+  lands in `/nix/store`, and systemd decides on a symlink's immediate target;
+  the plan's design would have installed a second, independent wireplumber
+  unit under the alias name. The mechanism that measured true is a raw
+  `ln -s` from `home.activation`. See Phase 0 in the results document.
+- **Step 6's `home.packages` comment ("this line alone changes nothing at
+  runtime") is false for `wireplumber`.** Adding it to `home.packages` is
+  what puts Nix's Lua scripts ahead of Debian's on `XDG_DATA_DIRS`; without
+  it, Nix's `wireplumber` binary ran Debian's older scripts and threw. See
+  Phase 0, Attempt 1, and Phase 2, item 7, in the results document.
+- **Step 4's premise ("Nix ships a rich `pw-*` toolset and no `pactl`") is
+  wrong.** `pkgs.pulseaudio` at the pinned input is `17.0`, the same
+  upstream release as Debian's `pulseaudio-utils`, and it ships `pactl`.
+  See Phase 3b in the results document.
+- **Step 11's Gate 6 checks the wrong process.** `grep -c
+  'spa-0.2/bluez5' /proc/$pw/maps` against pipewire's own PID reads `0`
+  whether Bluetooth works or not — pipewire never loads the bluez5 plugins,
+  wireplumber does, as the device monitor. See Gate 6 in the results
+  document's Phase 3 section.

@@ -330,3 +330,24 @@ recovery never needs a TTY.
 - Six fewer apt packages.
 - Debian user services down from 14 to 10, leaving the secrets and agent
   cluster, the session bus, flatpak's own two, and the miscellaneous five.
+
+## Corrections
+
+Measurement overtook parts of this spec after it was written. Left
+unrewritten, as the record of what was argued at the time; see
+`docs/2026-08-16-results-suffer-audio-stack.md` for the evidence.
+
+- **"`pulseaudio-utils` stays" was wrong.** The stated reason — "Nix ships a
+  rich `pw-*` toolset and no `pactl`" — is false at the pinned input:
+  `pkgs.pulseaudio` is `17.0`, the same upstream release as Debian's
+  `pulseaudio-utils 17.0+dfsg1-2+b1`, and ships `pactl`. With the reason
+  gone, the decision went with it; the spec's Task 4 removal set grew from
+  six packages to seven. See Phase 3b in the results document.
+- **The Phase 1 alias entry ("`systemd/user/pipewire-session-manager.service`
+  → the alias, pointing at Nix's `wireplumber.service`", installed via
+  `xdg.configFile`) cannot work as written.** `xdg.configFile`'s first hop
+  always lands in `/nix/store`, and systemd decides on a symlink's immediate
+  target, not the fully chased one — the plan's design would have installed
+  a second, independent wireplumber unit under the alias name. The
+  mechanism that measured true is a raw `ln -s` from `home.activation`. See
+  Phase 0 in the results document.

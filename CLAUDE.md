@@ -20,8 +20,10 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` includes `no-dangling-home-files` (see `flake.nix`). Run it
-after touching any `.source` in `home/portals.nix` or `home/uwsm.nix`.
+`nix flake check` now runs **two** checks (see `flake.nix`):
+`no-dangling-home-files` and `no-pulseaudio-daemon`. Run it after touching any
+`.source` in `home/portals.nix` or `home/uwsm.nix`, or anything in
+`home/audio.nix`'s `home.packages`.
 
 ---
 
@@ -137,9 +139,12 @@ dbus-run-session -- env XDG_CURRENT_DESKTOP=Hyprland \
 
 **Removing a Debian package that ships a systemd *user* unit leaves a dangling
 root-owned `/etc/systemd/user/*.wants` symlink.** dpkg's helper creates them;
-dpkg does not own them. Seen with `fumon`, `ydotool` and `rewrite-launchers`;
-eight are dangling right now, five of them under
-`graphical-session.target.wants/`. Sweep with:
+dpkg does not own them. Seen with `fumon`, `ydotool`, `rewrite-launchers` and
+the audio removal. The census taken across specs has moved 8 → 14 → 0: the
+audio spec's own removal took the dangling total to 14 (its six audio links
+plus the eight inherited), and a subsequent sweep cleared all fourteen — the
+count right now is zero, all of them unowned per `dpkg -S`. It will rise again
+the next time a package shipping a user unit is removed. Sweep with:
 
 ```sh
 for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do [ -e "$f" ] || echo "$f"; done
@@ -156,6 +161,47 @@ for this.
 **fontconfig builds a process's font map at startup.** A running application
 cannot see newly installed fonts and keeps deleted ones mmapped — it looks fine
 until it is next launched. Restart applications before removing font packages.
+
+**A systemd alias symlink must point at a sibling inside a unit directory.**
+systemd decides from the link's *immediate* target, not the fully chased one.
+A link into `/nix/store` loads as a second, independent unit with its own
+`FragmentPath`; a relative link to the sibling gives one unit under two
+names. `xdg.configFile` always emits `~/.config/… -> /nix/store/<home-manager-files>/…`,
+so it can never express an alias — and neither can `mkOutOfStoreSymlink`,
+which routes hop 1 through the same store. Home Manager's
+`modules/systemd.nix` has no `Install.Alias` handling and sd-switch never
+calls `enable`. The only mechanism is a raw `ln -s` from `home.activation`.
+The failure is silent: `Wants=` and `After=` naming a unit that does not
+exist are dropped along with their ordering, and `--state=failed` stays empty.
+
+**`systemctl --user show-environment` is not what a boot-path unit
+inherited.** It reports the manager's environment *as it is now*, after uwsm
+has set the session environment. Units pulled in by `default.target` or
+`sockets.target` start before that — measured here, three seconds before
+`graphical-session.target` — so their `XDG_DATA_DIRS` has no
+`~/.nix-profile/share`. The authoritative source is the unit's own
+`/proc/<MainPID>/environ`. Same trap as `systemd-analyze --user unit-paths`
+above, in a new place.
+
+**wireplumber resolves its scripts and config through `XDG_DATA_DIRS`;
+pipewire does not.** pipewire uses a compiled-in datadir and
+`PIPEWIRE_CONFIG_DIR`. So a Nix wireplumber will happily execute Debian's Lua
+scripts, and the resulting API-mismatch tracebacks read as an upstream bug in
+the new version. `home/audio.nix` pins it with a `wireplumber.service.d`
+drop-in setting `WIREPLUMBER_DATA_DIR`. Do not assume the two halves of a
+subsystem find their data the same way.
+
+**PipeWire's bluez5 SPA plugins are loaded by wireplumber, not pipewire.**
+Checking `/proc/<pipewire-pid>/maps` for them returns 0 whether Bluetooth
+works or not — a check that cannot fail. The session manager's maps are where
+they appear.
+
+**An apt removal orphans packages the Nix side still needs.**
+`apt-get -s remove` prints a "no longer required" list that is easy to skim
+past. Removing the audio set orphaned `rtkit` and `pulseaudio-utils`. Neither
+goes at removal time; both go to some later `apt autoremove`, by which point
+the breakage gets blamed on the version bump. Read that list and
+`apt-mark manual` what is still in use.
 
 ---
 
@@ -188,6 +234,17 @@ until it is next launched. Restart applications before removing font packages.
 - 218 MB of fonts under `~/.local/share/fonts` are owned by neither apt nor
   Nix; `~/.local/share/fonts/calango-desktop/` shadows the flake's
   `adwaita-fonts`.
+- **`rtkit` cannot move to Nix,** for the same architectural reason as
+  `bluez`: `rtkit-daemon` runs from
+  `/usr/lib/systemd/system/rtkit-daemon.service`, a *system* unit, and
+  standalone Home Manager writes only `~/.config/systemd/user`. It grants
+  pipewire's `data-loop.0` thread `SCHED_RR` priority 20 — measured under
+  Nix's pipewire. Marked manual so `autoremove` cannot take it. Do not
+  re-open this.
+- `pulseaudio-utils` is gone; `pactl` comes from Nix through
+  `home/audio.nix`'s `pulseaudioClients`, which withholds the daemon
+  deliberately. Never add `pkgs.pulseaudio` to `home.packages` —
+  `flake.nix`'s `no-pulseaudio-daemon` check exists to stop exactly that.
 
 ---
 
