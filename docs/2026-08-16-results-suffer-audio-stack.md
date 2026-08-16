@@ -877,6 +877,73 @@ installing a unit file, but the symlink itself belongs to no package
 dpkg tracks, so removing the package that shipped the unit never removes
 the link.
 
+TRANSCRIBED, before the removal — no longer re-derivable, since the
+links themselves are now gone. The RE-DERIVED block above was captured
+after the sweep had already run, so on its own it shows only the
+result, not the starting point:
+
+```
+$ for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do
+    [ -L "$f" ] && [ ! -e "$f" ] && printf '%-72s -> %s\n' "$f" "$(readlink "$f")"; done
+
+/etc/systemd/user/default.target.wants/filter-chain.service              -> /usr/lib/systemd/user/filter-chain.service
+/etc/systemd/user/default.target.wants/pipewire-pulse.service            -> /usr/lib/systemd/user/pipewire-pulse.service
+/etc/systemd/user/default.target.wants/pipewire.service                  -> /usr/lib/systemd/user/pipewire.service
+/etc/systemd/user/gnome-session.target.wants/org.freedesktop.IBus.session.GNOME.service -> /usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service
+/etc/systemd/user/graphical-session.target.wants/fumon.service           -> /usr/lib/systemd/user/fumon.service
+/etc/systemd/user/graphical-session.target.wants/hypridle.service        -> /usr/lib/systemd/user/hypridle.service
+/etc/systemd/user/graphical-session.target.wants/hyprpaper.service       -> /usr/lib/systemd/user/hyprpaper.service
+/etc/systemd/user/graphical-session.target.wants/hyprpolkitagent.service -> /usr/lib/systemd/user/hyprpolkitagent.service
+/etc/systemd/user/graphical-session.target.wants/kde-baloo.service       -> /usr/lib/systemd/user/kde-baloo.service
+/etc/systemd/user/pipewire.service.wants/wireplumber.service             -> /usr/lib/systemd/user/wireplumber.service
+/etc/systemd/user/sockets.target.wants/pipewire-pulse.socket             -> /usr/lib/systemd/user/pipewire-pulse.socket
+/etc/systemd/user/sockets.target.wants/pipewire.socket                   -> /usr/lib/systemd/user/pipewire.socket
+/etc/systemd/user/sockets.target.wants/pk-debconf-helper.socket          -> /usr/lib/systemd/user/pk-debconf-helper.socket
+/etc/systemd/user/sockets.target.upholds/drkonqi-coredump-launcher.socket -> /usr/lib/systemd/user/drkonqi-coredump-launcher.socket
+dangling: 14
+
+$ census
+total links: 28   resolving: 14   dangling: 14
+
+$ dpkg -S each dangling path
+unowned: /etc/systemd/user/default.target.wants/filter-chain.service
+unowned: /etc/systemd/user/default.target.wants/pipewire-pulse.service
+unowned: /etc/systemd/user/default.target.wants/pipewire.service
+unowned: /etc/systemd/user/gnome-session.target.wants/org.freedesktop.IBus.session.GNOME.service
+unowned: /etc/systemd/user/graphical-session.target.wants/fumon.service
+unowned: /etc/systemd/user/graphical-session.target.wants/hypridle.service
+unowned: /etc/systemd/user/graphical-session.target.wants/hyprpaper.service
+unowned: /etc/systemd/user/graphical-session.target.wants/hyprpolkitagent.service
+unowned: /etc/systemd/user/graphical-session.target.wants/kde-baloo.service
+unowned: /etc/systemd/user/pipewire.service.wants/wireplumber.service
+unowned: /etc/systemd/user/sockets.target.wants/pipewire-pulse.socket
+unowned: /etc/systemd/user/sockets.target.wants/pipewire.socket
+unowned: /etc/systemd/user/sockets.target.wants/pk-debconf-helper.socket
+unowned: /etc/systemd/user/sockets.target.upholds/drkonqi-coredump-launcher.socket
+```
+
+Twenty-eight links total, fourteen resolving, fourteen dangling — exactly
+half dead before the sweep, none after. The pair of blocks together is
+the story: the same census, before and after. `dpkg -S` claimed **none**
+of the fourteen, which is the load-bearing result — the direct
+confirmation of the mechanism `CLAUDE.md` describes, that dpkg's helper
+creates these links and dpkg itself does not own them, which is exactly
+why they survive package removal at all rather than being cleaned up
+with it.
+
+Six of the fourteen are this migration's own. The other eight predate
+it: `fumon`, `hypridle` and `hyprpolkitagent` are units this flake now
+provides and already enables through its own links under
+`~/.config/systemd/user`, so those `/etc` copies were redundant as well
+as dead; `hyprpaper`, `kde-baloo`, IBus
+(`org.freedesktop.IBus.session.GNOME.service`), `pk-debconf-helper` and
+drkonqi come from packages earlier specs removed.
+
+One methodological note: the sweep re-derived the list at run time with
+`[ -L "$f" ] && [ ! -e "$f" ]` rather than consuming the printed list, so
+a link that had become live between listing and removal could not have
+been caught in it.
+
 They are inert regardless. The links that actually matter sit at
 `UnitPath` position 5 (`~/.config/systemd/user`); these six sit at
 position 15 (`/etc/systemd/user`, resolving toward
