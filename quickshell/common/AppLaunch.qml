@@ -42,19 +42,32 @@ Singleton {
   // and says nothing.
   readonly property string appPath: "@appPath@"
 
-  // stderr is collected rather than discarded, and this is not cosmetic.
+  // stderr carries the LAUNCHER's diagnosis and nothing else.
   //
-  // Before this, run()'s shell ended in `>/dev/null 2>&1`, and systemd-run's
+  // Before this, run()'s shell ended in `>/dev/null 2>&1` and systemd-run's
   // `Failed to find executable foot: No such file or directory` went into it.
-  // The panel failed for a full day across a live session and produced exactly
-  // zero log lines -- 214 entries, 92 of which could not launch, and nothing
-  // anywhere said so. A launcher that cannot say why it failed costs more than
-  // the failure.
+  // The panel failed for a full day across a live session and produced zero log
+  // lines -- 92 of 214 entries could not launch and nothing anywhere said so.
+  //
+  // The obvious repair, letting the shell's stderr through, was tried and is
+  // wrong. systemd-run --scope *execs* into the application, so after a
+  // successful launch that same fd belongs to the app for as long as it runs.
+  // Measured: opening foot from the panel logged
+  // `AppLaunch: warn: wayland.c:1854: compositor does not implement the
+  // xdg-toplevel-icon protocol` -- foot's own harmless warning, attributed to
+  // the launcher, buffered in this collector until foot exited, because
+  // onStreamFinished fires on stream close. Every launched application would
+  // have accumulated its output here and reported it as a launch error.
+  //
+  // So the shell resolves the target itself, before handing anything to
+  // systemd-run, and reports only that. The application's own streams go back
+  // to /dev/null where they belong: quickshell is not its logger, and systemd
+  // already gives each app a scope of its own.
   Process {
     id: launchProc
     running: false
     stderr: StdioCollector {
-      onStreamFinished: if (text.trim().length > 0) console.warn("AppLaunch:", text.trim())
+      onStreamFinished: if (text.trim().length > 0) console.warn(text.trim())
     }
   }
 
@@ -93,9 +106,16 @@ Singleton {
     // it creates the unit, so --setenv=PATH=... is too late and was measured to
     // do nothing. Prefixed rather than replaced so the unit's own closure stays
     // reachable; appended would let Debian's copy of a Nix tool win.
+    // $1 is the target to resolve, consumed by the shift; everything after it
+    // is systemd-run's own argv. Passed separately rather than parsed back out
+    // of the argv, because the token after `--` is positional and a
+    // --working-directory in front of it would move it.
     launchProc.command = ["sh", "-c",
-      'PATH="' + root.appPath + ':$PATH" setsid systemd-run --user --scope "$@" >/dev/null & exit 0',
-      "sh"].concat(args, argv);
+      'target=$1; shift; export PATH="' + root.appPath + ':$PATH"; ' +
+      'command -v "$target" >/dev/null 2>&1 || { ' +
+      'echo "AppLaunch: cannot resolve \'$target\' on PATH" >&2; exit 1; }; ' +
+      'setsid systemd-run --user --scope "$@" >/dev/null 2>&1 & exit 0',
+      "sh", argv[0]].concat(args, argv);
     launchProc.running = true;
     return true;
   }
@@ -115,7 +135,10 @@ Singleton {
   function exec(argv) {
     if (!argv || argv.length === 0) return false;
     launchProc.command = ["sh", "-c",
-      'export PATH="' + root.appPath + ':$PATH"; exec setsid "$@" >/dev/null',
+      'export PATH="' + root.appPath + ':$PATH"; ' +
+      'command -v "$1" >/dev/null 2>&1 || { ' +
+      'echo "AppLaunch: cannot resolve \'$1\' on PATH (fallback)" >&2; exit 1; }; ' +
+      'exec setsid "$@" >/dev/null 2>&1',
       "sh"].concat(argv);
     launchProc.running = true;
     return true;
