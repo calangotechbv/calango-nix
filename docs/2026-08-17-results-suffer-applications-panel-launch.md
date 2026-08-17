@@ -29,31 +29,48 @@ $ PATH="$QPATH" command -v foot        # $QPATH from the running process's envir
 MISSING
 ```
 
-## How much of the panel was affected — not asserted here
+## How much of the panel was affected
 
-The handover reported 214 entries, 122 launching and 92 not, measured on
-2026-08-15 by loading the real config in a second windowless quickshell.
+**57 of the 59 bare-name entries could not launch.** Counted 2026-08-17:
 
-**This document does not restate that figure and does not offer a replacement.**
-Three attempts were made to re-census the population and they did not reconcile:
+```
+188 unique desktop ids  =  127 absolute Exec  +  59 bare-name  +  2 no Exec
 
-- A flat walk of `applications/` in each data directory gave 81 unique ids, 20
-  absolute, 59 bare.
-- A recursive walk gave 177 unique ids, 121 absolute, 54 bare — the difference
-  being 107 `screensavers/*.desktop` entries in a subdirectory, which a flat walk
-  misses and which are valid desktop ids under the XDG naming rule.
-- The recursive resolution counts then failed to add up: 53 resolving plus 3
-  failing against 54 bare entries. The arithmetic does not close, so the parsing
-  is wrong somewhere — most likely `Exec` values carrying quotes, or the subdir id
-  mangling colliding during deduplication.
+of the 59 bare-name entries, resolvable on
+  quickshell.service's own PATH (before)   2
+  PATH plus appPath          (after)      56
+  neither                                  3        56 + 3 = 59
+```
 
-A census whose totals do not reconcile is not evidence, and the earlier
-`92 of 214` was produced by a method this document did not reproduce. So the
-scale of the defect is recorded as unquantified here. **What the fix rests on is
-the mechanism and the named cases below, neither of which needs a census.**
+Getting to that took three attempts, and the two failures are worth recording
+because the second one nearly cost the census entirely.
 
-Two code comments previously quoted `57 of 59` from the flat walk. They now cite
-the same caveat as this section.
+- A **flat** walk of `applications/` gave 81 ids, 20 absolute, 59 bare. The bare
+  count and the whole 2 / 56 / 3 split were already correct here; only the totals
+  were low, because 107 `screensavers/*.desktop` entries live in a subdirectory
+  and are valid ids under the XDG naming rule.
+- A **recursive** walk gave 177 ids, 121 absolute, 54 bare, and its resolution
+  counts did not add up — 53 plus 3 against 54. An earlier draft of this section
+  concluded from that that "the parsing is wrong somewhere", withdrew the census
+  entirely, and asserted no figure at all.
+- That conclusion was wrong, and the review caught it. The recursive walk used
+  `find` **without `-L`**, so it silently dropped the 13 symlinked entries that
+  the flat walk had followed — which is also why `177 − 81` is 96 rather than the
+  107 that same passage named. With `find -L` the census closes exactly, as above.
+
+So the withdrawal diagnosed the document's own script and blamed the concept.
+The lesson is narrow and worth keeping: `find` does not follow symlinks unless
+told to, and in a tree where Nix supplies entries through
+`~/.nix-profile/share/applications` most of what you care about *is* a symlink.
+
+The handover's `92 of 214` is a different method on a different day and this
+document does not reconcile the two. The `188` above counts every id the search
+path exposes, including 16 marked `NoDisplay=true` that the panel never shows —
+16 and not the 14 an earlier draft gave, because that figure came from the same
+symlink-dropping walk. Every number in this section was recounted with `find -L`
+after that was found; no figure here survives from before it.
+
+Two code comments cite `57 of 59` with a pointer to this section.
 
 ## The named cases, each checked
 
@@ -287,11 +304,17 @@ distinguishes the two contexts.
    with a comment asserting the opposite. Found by the review.
 6. **`CLAUDE.md`'s "count explicitly" rule is wrong inside a Nix builder** and
    cost a build failure with no diagnostic.
-7. **This document's own census did not reconcile across three methods**, and no
-   figure is asserted as a result. The first attempt also set `IFS=:` and then
-   wrote two paths separated by a space, so the first directory silently did not
-   exist — `IFS` splits on the separator only, and a space stops being one once
-   you have set that.
+7. **This document's own census failed three ways, and the third failure was a
+   wrong conclusion about the second.** Attempt one set `IFS=:` and then wrote
+   two paths separated by a space, so the first directory silently did not exist
+   — `IFS` splits on the separator only, and a space stops being one once you
+   have set that. Attempt two used `find` without `-L`, dropping 13 symlinked
+   entries, which is why its totals would not add up. An earlier draft then
+   concluded the *parsing* was wrong, withdrew the census entirely, and named a
+   `177 − 81 = 107` difference that is actually 96. All three of those are the
+   same defect this file exists to record: the measurement was real and the
+   conclusion drawn after it was not supported. With `find -L` the census closes
+   exactly and is stated above.
 8. **This document predicted the wrong outcome for all three unresolvable
    entries**, having checked their `Exec` lines and not their `NoDisplay` or
    `Terminal` keys. Two are never shown in the panel and the third resolves

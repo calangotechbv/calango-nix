@@ -4,14 +4,17 @@ let
   # The PATH that *launched applications* are resolved against. It is not this
   # unit's PATH and must not be confused with runtimeDeps below -- that list
   # answers "what does the shell run?", and this one answers "what can the
-  # shell's users run?". One list was made to serve both, and 57 of the 59
-  # bare-name desktop entries on this machine could not launch as a result --
-  # counted on 2026-08-17; the handover cited 92 of 214 from a different method
-  # two days earlier, and the two are not comparable. `systemd-run` resolves
-  # the executable in
-  # its own process, against its own PATH, before it creates the unit, so an
-  # entry whose Exec is a bare `foot` was handed to a PATH assembled to satisfy
-  # `awk` and `nmcli`. See docs/2026-08-15-handover-suffer-applications-panel-launch.md.
+  # shell's users run?". One list was made to serve both, and 57 of this
+  # machine's 59 bare-name desktop entries could not launch as a result --
+  # counted 2026-08-17 with `find -L`, which matters; see the results doc, whose
+  # census took three attempts and whose second one dropped every symlinked
+  # entry. The handover's 92 of 214 is a different method two days earlier and
+  # the two are not reconciled.
+  #
+  # `systemd-run` resolves the executable in its own process, against its own
+  # PATH, before it creates the unit, so an entry whose Exec is a bare `foot`
+  # was handed a PATH assembled to satisfy `awk` and `nmcli`. See
+  # docs/2026-08-15-handover-suffer-applications-panel-launch.md.
   #
   # Session directories, not store paths, and deliberately so: these are the
   # directories a desktop entry's author could reasonably expect, and the same
@@ -288,8 +291,9 @@ in
       # the reason is KillMode=process below and ONLY that.
       #
       # It is not that this cgroup is empty of applications. It is not: at this
-      # branch's own 13:08:08 restart systemd logged roughly twenty chrome
-      # processes inside quickshell.service's cgroup. Anything reached through
+      # branch's own 13:08:08 restart systemd logged 33 distinct chrome pids
+      # "remains running after unit stopped" inside quickshell.service's cgroup
+      # (counted from the journal, not estimated). Anything reached through
       # AppLaunch.exec() -- the fallback path -- has no scope of its own either,
       # by construction. Only AppLaunch.run() creates one. So the claim that
       # made a restart look free was false, and the setting that actually makes
