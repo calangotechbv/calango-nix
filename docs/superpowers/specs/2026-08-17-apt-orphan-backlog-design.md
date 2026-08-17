@@ -202,3 +202,71 @@ desktop, possibly the ability to log in. Those are not symmetric, so:
   automated check.
 - That reaching zero prevents recurrence. Phase 7's warning makes regrowth
   visible; only reading the orphan list at each future removal prevents it.
+
+## Corrections
+
+Appended after execution. The prose above is left as it was argued at the time.
+
+**The scope table's per-bin figures are not reproducible, and neither document
+should be cited for one.** The design reads 76 / 30 / 9 / 8 / 7 / 4 / 3 and the
+audit's re-derivation reads 77 / 30 / 9 / 8 / 6 / 4 / 3. Both sum to 137 and both
+partition the same set; they disagree on two packages because the bins are
+applied in an order that the design did not fix. `libfm-qt-l10n` matches `^lib`
+and `l10n$`, and `lxqt-menu-data` matches `^lxqt` and `-data$`. The design
+already warned that a first attempt summed to 150 through overlapping patterns;
+the residual defect is subtler — the patterns do partition, but only under an
+ordering the document never states. The census total and the count of thirty in
+"everything else" are the figures that survive either ordering.
+
+**The union in-use check has a second limit the spec does not name: it is blind
+to interpreted programs.** The spec's "What this spec does not claim" says the
+check sees only this moment, which is true and was the limit anticipated. The
+limit that actually bit is different in kind and worse, because it does not go
+away by measuring at a better moment: `system-config-printer` was in the census
+*and* its `applet.py` was running throughout, and neither `/proc` nor
+`ps -eo args` saw it — `exe` and `argv[0]` are both `/usr/bin/python3`, and the
+script is `read()` rather than mmapped. `python3-cups` appeared only because it
+is a compiled extension module; `python3-cupshelpers` is pure Python and was
+missed identically. So of the printer cluster's three genuinely live packages the
+instrument found two. Had Phase 3's hits been treated as the complete live set —
+which the spec does not instruct, but which is the obvious shortcut — two
+packages would have gone from under a running process. The hand-read of the
+thirty (Phase 5) is what caught it, which is the argument for keeping that phase
+even when the automated check looks clean.
+
+**The design missed one keeper, and it is one no phase of this method could have
+measured.** `libpipewire-0.3-modules` fills the compiled-in module directory of
+Debian's `libpipewire-0.3.so` — a plugin directory, which apt cannot model as a
+dependency and which no process holds until a plugin is loaded. The client
+library is kept installed by `libfluidsynth3` and `qemu-system-gui`, both `ii`
+and both outside the census, and neither was running. It was found by reading the
+dependency chain, not by any instrument. With its eight transitive `Depends` it
+is the entire unconditional keeper list: 9 packages, 12166 KiB. This is the
+concrete case the conservatism rule was written for, and it is worth noting that
+the rule's justification is stronger than the spec states — for this shape of
+dependency there is no measurement to be conservative *instead* of.
+
+**Phase 4's decision list was right about which packages are decisions and the
+user removed all three clusters.** Printer applet and GUI (14), `gvfs-fuse` (1),
+screensaver (6). Endpoint: 128 removed, 9 marked manual, census `0`.
+
+**Phase 6's reboot check was taken and passed.** The spec correctly says absence
+is only measurable once the session ends; before the reboot `gvfsd-fuse`,
+`deskflow` and the printer applet were all still running against deleted files.
+After it, zero failed units on either manager, zero processes of removed
+packages, and the gvfs mount gone. One detail the spec could not have
+anticipated: the printer applet's `/proc/<pid>/exe` carried **no** `(deleted)`
+marker, because `exe` was the surviving interpreter — so the cheap tell for a
+stale process does not work for a script.
+
+**A side finding, on `CLAUDE.md`'s dangling-link sweep rather than on this
+spec.** The documented loop `[ -e "$f" ] || echo "$f"` prints
+`/etc/systemd/user/*.upholds/*` on this machine: `sockets.target.upholds/` is the
+only `.upholds` directory and it is empty, so the glob never expands and the loop
+counts the literal pattern. `CLAUDE.md` had described the empty-directory case
+but predicted the opposite symptom — invisibility, which is what happens to the
+equally empty `pipewire.service.wants/` only because its glob's *siblings*
+expand. Both symptoms are real and which one occurs depends on the siblings.
+`CLAUDE.md` now carries a `-L`-guarded loop, proven able to fail. The real
+dangling count is `0` before and after this spec's 128-package removal, as the
+audit predicted.
