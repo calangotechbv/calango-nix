@@ -43,7 +43,49 @@ let
   # share/dbus-1/services directory at all -- confirmed again here, see the
   # xdg.dataFile comment below for why that matters. So unlike seahorse,
   # gammastep needs no D-Bus activation file.
-  guiPackages = [ pkgs.seahorse pkgs.gammastep ];
+  #
+  # signal-desktop and bitwarden-desktop are plain migrations off apt, and the
+  # first members here that are not GTK applications at all. Both are Electron:
+  # one binary each (bin/signal-desktop, bin/bitwarden), zero wrapped binaries,
+  # zero share/gsettings-schemas directories and no share/dbus-1/services. The
+  # nixpkgs attribute for the second is bitwarden-desktop -- plain
+  # `pkgs.bitwarden` throws `'bitwarden' has been renamed to/replaced by
+  # 'bitwarden-desktop'`. Their .desktop ids are signal.desktop and
+  # bitwarden.desktop, NOT Debian's signal-desktop.desktop; flake.nix's
+  # gui-desktop-ids requires both by those names.
+  #
+  # Neither needs the nixGL wrapper: the user ran both binaries bare from a
+  # terminal in the live Hyprland session before any of this was written and
+  # both windows drew. That was measured rather than inferred, because `ldd` is
+  # worthless for the question -- Electron dlopens its GL and platform plugins.
+  #
+  # Having no wrapper is what makes them the first entries in wrapExemptions
+  # below.
+  guiPackages = [
+    pkgs.seahorse
+    pkgs.gammastep
+    pkgs.signal-desktop
+    pkgs.bitwarden-desktop
+  ];
+
+  # The packages that legitimately need no GSettings wrapper, each with the
+  # reason it needs none. Consumed by wrappedGuiApps below, in both directions.
+  #
+  # Explicit, and deliberately NOT derived. The derived rule -- "ships no
+  # schemas of its own, therefore nothing to wrap" -- is what this guard
+  # shipped with in spec 10, and the gammastep comment above disproves it in
+  # this same file: zero schema directories of its own, two on each of its two
+  # wrappers, both from dependencies. Deriving a second rule would be the same
+  # mistake wearing a different predicate, so the key is a name a human had to
+  # type and the value is a sentence a human had to justify.
+  #
+  # Keyed by lib.getName, which is the pname, so an entry survives a version
+  # bump without being re-approved -- and only a version bump. A rename is a
+  # new package as far as this table is concerned, which is the right default.
+  wrapExemptions = {
+    signal-desktop = "Electron, not GTK. Ships one binary, zero wrapped binaries and zero GSettings schemas; there is no schema for a wrapper to reach.";
+    bitwarden-desktop = "Electron, not GTK. Same shape as signal-desktop: one binary, no wrapper, no schemas.";
+  };
 
   # Assert that every GUI package here is wrapped for GSettings schemas.
   #
@@ -67,27 +109,86 @@ let
   # shell script and the other an ELF, and a check that only understands one
   # would pass vacuously on the other.
   #
-  # No exemption for a package that ships no schemas of its own. There was
-  # one -- `[ ! -d "$pkg/share/gsettings-schemas" ]`, justified as "nothing to
-  # find and nothing to wrap" -- and the gammastep comment above disproves
-  # that justification in this same file: zero schema directories of its own,
-  # two on each wrapper's XDG_DATA_DIRS prefix, both from dependencies. A GTK
-  # application that missed wrapGAppsHook would have taken that exempt path
-  # and aborted at startup anyway, which is precisely the failure this guard
-  # exists to make into a build error.
+  # There IS an exemption, and its shape is the whole point. There was once a
+  # derived one -- `[ ! -d "$pkg/share/gsettings-schemas" ]`, justified as
+  # "nothing to find and nothing to wrap" -- and the gammastep comment above
+  # disproves that justification in this same file: zero schema directories of
+  # its own, two on each wrapper's XDG_DATA_DIRS prefix, both from
+  # dependencies. A GTK application that had merely missed wrapGAppsHook would
+  # have taken that exempt path and aborted at startup anyway, which is
+  # precisely the failure this guard exists to make into a build error. So it
+  # was deleted, with the prediction that a legitimately unwrapped application
+  # would eventually need a deliberate one.
   #
-  # So every guiPackages member must have a wrapped binary. Both do today, per
-  # this derivation's own build log -- `ok (1 wrapped): ...-seahorse-47.0.1`
-  # and `ok (2 wrapped): ...-gammastep-2.0.11` -- so the stronger requirement
-  # costs nothing, and a future non-GTK application that genuinely needs no
-  # wrapper becomes an exemption someone has to write down here rather than
-  # one it receives silently.
+  # signal-desktop and bitwarden-desktop are that case, and the exemption they
+  # get is keyed by NAME, from the wrapExemptions table above. The reason it is
+  # by name rather than derived is not that no correct predicate exists -- it
+  # is that a predicate exempts every future package that happens to satisfy
+  # it, including the one that satisfies it by accident, and nobody is asked a
+  # question at that moment. A name in a table has to be typed by someone who
+  # then has to write the sentence next to it.
+  #
+  # And it is checked in BOTH directions, which is what separates this from an
+  # allowlist. An allowlist only grows, and an entry that has stopped being
+  # true goes on excusing a package that has started needing the check --
+  # silently, because nothing ever re-reads it. So an exempt package that
+  # acquires a wrapped binary upstream fails this build and demands its entry
+  # be deleted.
+  #
+  # All three failure branches were proven by mutation rather than by reading,
+  # each with the mutation confirmed by a count before the build ran. Deleting
+  # signal-desktop's entry gives `signal-desktop has no wrapped binary in
+  # bin/.`; adding seahorse, which IS wrapped, gives `seahorse is on
+  # wrapExemptions but ships 1 wrapped binary(ies).`; exempting all four
+  # reaches the anti-vacuity anchor with `every guiPackages member is on
+  # wrapExemptions.`. Three checks in this project have passed while the
+  # property they stood for was false, which is why none of them is trusted
+  # unmutated.
+  #
+  # Today's verdict, from this derivation's own build log:
+  # `ok (1 wrapped): seahorse`, `ok (2 wrapped): gammastep`,
+  # `ok (exempt): signal-desktop`, `ok (exempt): bitwarden-desktop`.
+  #
+  # The name in those lines is lib.getName's, passed in from Nix, not the store
+  # path's basename: the basename carries the hash and the version, so it could
+  # never be compared against a table key that is meant to survive a rebuild.
   wrappedGuiApps = pkgs.runCommand "gui-apps-schema-wrapped" { } ''
     fail=0
-    for pkg in ${lib.concatStringsSep " " (map toString guiPackages)}; do
-      name="$(basename "$pkg")"
+    exempt="${lib.concatStringsSep " " (lib.attrNames wrapExemptions)}"
+
+    check() {
+      name="$1"
+      pkg="$2"
 
       wrapped="$(find "$pkg/bin" -maxdepth 1 -name '.*-wrapped' 2>/dev/null | wc -l)"
+
+      # Written as an `if`, not `[ ... ] && is_exempt=1`. A builder runs with
+      # errexit on, and CLAUDE.md's rule for that is to put the test in a
+      # condition, which set -e exempts, rather than let its exit status be
+      # the statement's own.
+      is_exempt=0
+      for e in $exempt; do
+        if [ "$e" = "$name" ]; then is_exempt=1; fi
+      done
+
+      if [ "$is_exempt" -eq 1 ]; then
+        # The staleness half, which an ordinary allowlist does not have. An
+        # exemption that has stopped being true is worse than no exemption:
+        # it goes on excusing a package that has started needing the check.
+        # Upstream adding wrapGAppsHook must break this build, not pass.
+        if [ "$wrapped" -gt 0 ]; then
+          echo "$name is on wrapExemptions but ships $wrapped wrapped binary(ies)." >&2
+          echo "  The exemption has gone stale. It was written because this" >&2
+          echo "  package had nothing to wrap; upstream now wraps it, so it" >&2
+          echo "  should be checked like every other member. Delete its entry" >&2
+          echo "  from wrapExemptions in home/gui-apps.nix." >&2
+          fail=1
+          return 0
+        fi
+        echo "ok (exempt): $name" >&2
+        return 0
+      fi
+
       if [ "$wrapped" -eq 0 ]; then
         echo "$name has no wrapped binary in bin/." >&2
         echo "  nixpkgs relocates GSettings schemas to" >&2
@@ -96,14 +197,40 @@ let
         echo "  needing a schema -- its OWN or a dependency's -- would abort" >&2
         echo "  at startup with \"Settings schema ... is not installed\"." >&2
         echo "  Expected a .<name>-wrapped sibling in bin/ from wrapGAppsHook." >&2
-        echo "  If this package is genuinely not a GTK application, exempt it" >&2
-        echo "  by name and say why -- NOT by whether it ships schemas of its" >&2
-        echo "  own, which gammastep shows is the wrong question." >&2
+        echo "  If this package is genuinely not a GTK application, add it to" >&2
+        echo "  wrapExemptions in home/gui-apps.nix BY NAME, WITH ITS REASON" >&2
+        echo "  -- NOT by whether it ships schemas of its own, which" >&2
+        echo "  gammastep shows is the wrong question." >&2
         fail=1
-      else
-        echo "ok ($wrapped wrapped): $name" >&2
+        return 0
       fi
+
+      echo "ok ($wrapped wrapped): $name" >&2
+    }
+
+    ${lib.concatMapStringsSep "\n    "
+        (p: ''check "${lib.getName p}" "${p}"'') guiPackages}
+
+    # Anti-vacuity anchor, the same one gui-desktop-ids and
+    # no-pulseaudio-daemon carry. Every member could be exempt, and then this
+    # guard would have asserted nothing while still printing four ok lines.
+    nonexempt=0
+    for e in ${lib.concatStringsSep " " (map lib.getName guiPackages)}; do
+      hit=0
+      for x in $exempt; do
+        if [ "$x" = "$e" ]; then hit=1; fi
+      done
+      if [ "$hit" -eq 0 ]; then nonexempt=$((nonexempt+1)); fi
     done
+    if [ "$nonexempt" -eq 0 ]; then
+      echo "every guiPackages member is on wrapExemptions." >&2
+      echo "  Nothing was required to have a wrapper, so this guard's pass" >&2
+      echo "  is vacuous. Either the table has grown past its purpose or the" >&2
+      echo "  last GTK application left guiPackages; decide which, on" >&2
+      echo "  purpose." >&2
+      exit 1
+    fi
+
     [ "$fail" -eq 0 ] || exit 1
     # A directory, not `touch "$out"`. gui-apps-guard below symlinks to this
     # output, and that symlink is what home.packages carries into

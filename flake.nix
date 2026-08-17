@@ -339,7 +339,9 @@
             required="org.gnome.seahorse.Application.desktop seahorse-launcher
             gammastep.desktop gammastep-launcher
             gammastep-indicator.desktop gammastep-indicator-launcher
-            eu.calangotech.CalangoOpen.desktop mimeapps-http-https-texthtml-about-unknown-handler"
+            eu.calangotech.CalangoOpen.desktop mimeapps-http-https-texthtml-about-unknown-handler
+            signal.desktop mimeapps-sgnl-and-signalcaptcha-handler
+            bitwarden.desktop bitwarden-launcher"
 
             # Anti-vacuity anchor, the same one no-pulseaudio-daemon and
             # no-dangling-home-files each carry: a positive check is only
