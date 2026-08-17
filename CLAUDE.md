@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Ten specs are done and written up in
+standalone Home Manager. Eleven specs are done and written up in
 `docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -123,6 +123,26 @@ Dependency scans over `dpkg-query` include `rc` packages too; filter to `ii`
 when grep matched nothing, so "the property holds" and "the pipeline broke" are
 indistinguishable. Count explicitly (`| wc -l`) and compare the number.
 
+**But that rule inverts inside a Nix builder, and following it there fails the
+build with no diagnostic.** A builder runs with `-e` and `pipefail` both on:
+
+```sh
+# inside a runCommand
+echo $-              # ehB
+set -o | grep pipefail   # pipefail        on
+```
+
+So `n="$(grep -rl … | wc -l)"` aborts on *grep's* exit status when grep matches
+nothing, rather than yielding `0`, and a bare `n="$(grep -c … )"` aborts the
+assignment before any message can print. The guard reads as a counting guard and
+behaves as an unconditional failure. Spec 11 wrote it that way *because* of the
+rule above and spent a build on it.
+
+Inside a builder, put the grep in a **condition**, which `set -e` exempts:
+`if grep -rq … ; then` — which is how `home/foot.nix`'s token guard has always
+been written. Count explicitly in an interactive shell; test by condition in a
+builder.
+
 **`pgrep` on a Nix binary.** Nix wraps binaries, so the process name is
 `.fumon-wrapped` or `.Hyprland-wrapp` (truncated at 15 chars). `pgrep -x fumon`
 matches nothing in both the working and the broken state.
@@ -130,6 +150,58 @@ matches nothing in both the working and the broken state.
 ---
 
 ## Mechanisms that are not what they look like
+
+**sd-switch restarts a unit when the unit *file* changes, not when the files the
+unit reads change.** So a change confined to a config directory a service loads
+at startup leaves the unit byte-identical, sd-switch correctly does nothing, and
+the service keeps serving the previous generation from a store path that no
+longer has a symlink pointing at it. The switch succeeds, the new files are on
+disk, and the change has no effect.
+
+This was true of **every** quickshell change this flake ever made until spec 11;
+the ones that appeared to work did so because the session happened to be
+restarted for another reason. Measured right after a switch whose whole purpose
+was to change `AppLaunch.qml`:
+
+```sh
+grep -n appPath ~/.config/quickshell/common/AppLaunch.qml   # the new value, present
+systemctl --user show quickshell.service -p NRestarts -p ActiveEnterTimestamp
+# NRestarts=0
+# ActiveEnterTimestamp=Mon 2026-08-17 06:11:42 -03    <- hours before the switch
+```
+
+The fix is to make the unit's text depend on the config, by naming its store
+path — `home/quickshell.nix`'s `Unit.X-Restart-Triggers = [ "${quickshellConfig}" ]`.
+The path changes when the contents change, so the unit changes with it. `X-` keys
+are otherwise ignored by systemd, which is why this is the conventional spelling.
+Prove it by mutation: a one-line comment in any file of the tree must move the
+store path.
+
+Note `NRestarts=0` after such a switch is not evidence against a restart —
+sd-switch stops and starts the unit, and a fresh start resets that counter.
+`ActiveEnterTimestamp` is the property that moves.
+
+**`systemd-run` and `uwsm app` both resolve the executable in their own process,
+against their own `PATH`, before any unit exists.** So a service with a curated
+`PATH` cannot launch anything outside that closure, and `--setenv=PATH=…` cannot
+help — it sets the *unit's* environment, which is decided after the resolution
+already failed. Both were measured on this machine from quickshell's real
+environment; `uwsm app` is not an escape hatch from this and fails the same way,
+though its message is better because it names the entry as well as the missing
+binary. The `PATH` has to be widened in the *launching shell*, which is what
+`quickshell/common/AppLaunch.qml` does with `appPath` from
+`home/quickshell.nix`. Widen it there and not in the unit's own `PATH`: two
+`command -v` probes in that shell fail deliberately, and would start finding
+Debian's copies.
+
+**A guard that greps a file for a string can be satisfied by that file's own
+comments.** Spec 11's first `appPath` guard checked that `AppLaunch.qml`
+contained `/usr/bin`; one of the comments in that very file explains that the
+unit's `PATH` has no `/usr/bin`, so the guard matched its own prose and could
+never fail. Deleting `/usr/bin` from the list built green. Read the *value* — the
+property line, the assignment, the substituted field — and compare whole
+elements, not substrings: `/usr/bin` is a substring of nothing else in that list,
+but `/bin` is a substring of four of its six entries.
 
 **A relative `ExecStart` does not use the manager's `PATH`.** systemd resolves
 it against a search path fixed when systemd was compiled:
@@ -460,6 +532,17 @@ reasoning about the comment.
   `home/audio.nix`'s `pulseaudioClients`, which withholds the daemon
   deliberately. Never add `pkgs.pulseaudio` to `home.packages` —
   `flake.nix`'s `no-pulseaudio-daemon` check exists to stop exactly that.
+- **The Applications panel resolves launched apps against `appPath`, which is a
+  second and deliberately different list from `runtimeDeps`.** `runtimeDeps`
+  answers "what does the shell run?"; `appPath` answers "what can the shell's
+  users run?". One list served both until spec 11, and 57 of 59 bare-name desktop
+  entries could not launch as a result — silently, because the diagnostic went to
+  `/dev/null`. Do not merge them, and do not add `/usr/bin` to `runtimeDeps`:
+  `ddcutil` and `swww` are probed with `command -v` there and are meant to fail.
+  The launcher's own failures now print `AppLaunch: cannot resolve …`; a launched
+  application's own output does not, on purpose, because
+  `systemd-run --scope` execs into the app and that stderr would otherwise be
+  quickshell's for the app's whole lifetime.
 - **There is deliberately no foot server.** `pkgs.foot` ships
   `foot-server.service` and `foot-server.socket`, but they land in
   `~/.nix-profile/share/systemd/user`, which is not on the manager's UnitPath
@@ -553,6 +636,20 @@ passed because every id it actually listed was one no handler references, so its
 stated purpose was unreachable by its own mechanism. Same species as spec 6's
 three checks, and caught by a reviewer rather than by production. Read a
 check's declared scope against the paths it really searches.
+
+**And check what could satisfy it besides the property.** Spec 11 made this the
+third of the shape and the cheapest to have avoided: its `appPath` guard grepped
+`AppLaunch.qml` for `/usr/bin`, and that file's own comments contain the string,
+so the guard read its own prose. It was written, built green, and would have
+shipped as a check that could not fail — except that the rule above forced a
+mutation, and the mutation passed. Before trusting a guard, ask what else in the
+haystack answers to the needle.
+
+The three instances now have one shape between them. Spec 6's checks looked at
+the wrong thing, spec 10's looked in the wrong place, and spec 11's found the
+right string in the wrong role. All three passed. All three were caught by
+mutation or by a reviewer, never by the check itself — which is the argument for
+mutating every guard rather than only the ones that look risky.
 
 The deeper pattern is not laziness. In every one of these cases a real command
 was run and real output was read; the error was in the *conclusion drawn
