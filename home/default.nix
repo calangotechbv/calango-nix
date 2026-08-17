@@ -37,6 +37,69 @@ let
       nixgl.wrap "hyprpolkitagent" "${pkgs.hyprpolkitagent}/libexec/hyprpolkitagent"
     } "$out/libexec/hyprpolkitagent"
   '';
+
+  # Fails the build when a site outside lib/nixgl.nix spells the GL wrapper out
+  # for itself. In home.packages rather than in flake.nix's checks on purpose:
+  # the person who adds a wrapper is editing a module and building a
+  # generation, and may never run `nix flake check`. A home.packages guard runs
+  # on every generation build, which is strictly more often.
+  #
+  # The needle is built by concatenation, and that is not a style choice. The
+  # literal `${…}` form cannot be written here: unescaped, Nix interpolates it
+  # and the guard searches for an expanded store path that appears in no source
+  # file, passing for ever. Escaped as `\${…}`, the source bytes of THIS file
+  # contain the needle, so the guard matches itself and fails for ever. Split
+  # across a `+`, the needle exists only at build time. Step 3 of this task
+  # verifies that by counting.
+  #
+  # homeSrc is the whole home/ directory, so this rebuilds whenever any module
+  # changes. It is one grep; that is the intended trade.
+  nixglSingleSource =
+    pkgs.runCommand "nixgl-single-source"
+      {
+        homeSrc = ./.;
+        libSrc = ./../lib/nixgl.nix;
+        needle = "$" + "{pkgs.nixgl.nixGLIntel}";
+      }
+      ''
+        fail=0
+
+        # A condition, not a bare command. A builder runs with errexit, and a
+        # grep that matches nothing exits 1 -- which here is the PASSING case.
+        if grep -rn -F -- "$needle" "$homeSrc" >&2; then
+          echo "" >&2
+          echo "A module above names the nixGL wrapper directly." >&2
+          echo "  Every wrapper on this machine must come from lib/nixgl.nix," >&2
+          echo "  which exports wrap, wrapBin and bin. Five sites spelled it" >&2
+          echo "  out before spec 14 and nothing read the fifth, so changing" >&2
+          echo "  the GL wrapper silently left one behind." >&2
+          echo "  Use nixgl.wrap for a script, nixgl.wrapBin for a package," >&2
+          echo "  or nixgl.bin if neither fits -- home/session.nix is the one" >&2
+          echo "  site that needs the raw path, and it says why." >&2
+          fail=1
+        fi
+
+        # The anti-vacuity anchor, the same one gui-desktop-ids,
+        # no-pulseaudio-daemon and wrappedGuiApps each carry. Without it this
+        # guard passes when lib/nixgl.nix has stopped naming nixGLIntel at all
+        # -- at which point the check above is asserting nothing about
+        # anything.
+        if ! grep -q -F -- "$needle" "$libSrc"; then
+          echo "lib/nixgl.nix does not name the nixGL wrapper." >&2
+          echo "  The check above therefore proves nothing: it reports that" >&2
+          echo "  no module names a string that nothing names. Either the" >&2
+          echo "  helper moved, or this machine stopped using nixGL. Decide" >&2
+          echo "  which, on purpose, and update this guard with it." >&2
+          fail=1
+        fi
+
+        [ "$fail" -eq 0 ] || exit 1
+
+        # A directory, not `touch "$out"`. home/gui-apps.nix records that a
+        # file output makes pkgs.buildEnv fail with "is a file and can't be
+        # merged into an environment".
+        mkdir -p "$out"
+      '';
 in
 {
   home.packages = with pkgs; [
@@ -147,6 +210,10 @@ in
     noto-fonts # sans-serif and serif, plus broad script coverage
     dejavu_fonts # the family monospace currently resolves to
     liberation_ttf # Arial/Times/Courier metric substitutes, for web content
+
+    # Not a program. A build-time assertion that rides in home.packages so it
+    # runs on every generation build. See nixglSingleSource above.
+    (pkgs.runCommand "nixgl-guard" { } "ln -s ${nixglSingleSource} $out")
   ];
 
   # Writes a fontconfig snippet (~/.config/fontconfig/conf.d/10-hm-fonts.conf)
