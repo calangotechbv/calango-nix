@@ -1141,8 +1141,14 @@ sorted — into a stable `lib.toposort`, so any pair of entries with no stated
 relation is ordered alphabetically. Measured on the built script with only
 the one edge declared — generation
 `/nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation`, the one
-this task first produced — every hook after `linkGeneration` sat in exactly
-alphabetical order:
+this task first produced — every hook after `linkGeneration` sat in
+alphabetical order *except* the one pair with a real edge between them:
+`desktopDatabase` (302) before `defaultBrowser` (308), which `defaultBrowser`
+itself declares with `entryAfter [ "desktopDatabase" ]` and has since the
+branch base `3afbf7a` (`git show 3afbf7a:home/apps.nix | grep -n entryAfter`
+prints both hooks' edges). Corrected here after the whole-branch review: the
+listing below always showed that pair, and the sentence above it used to say
+"exactly alphabetical", which the listing contradicts.
 
 ```
 $ G=/nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation
@@ -1742,10 +1748,33 @@ not from a pipeline — `… | tail -1; echo $?` reports `tail`'s status with
 count of the flake checks is updated from two to three by this task, along
 with the list of edits that should trigger a re-run.
 
-The two guards that ride in `home.packages` rather than in `checks` —
-`wrappedGuiApps` and `dbusActivatableGuiApps` — are not in that three.
-They run whenever the generation is built, which is strictly more often
-than `nix flake check` is invoked.
+The guards that ride in `home.packages` rather than in `checks` are not in
+that three. They run whenever the generation is built, which is strictly
+more often than `nix flake check` is invoked. Two of them are this task's,
+`wrappedGuiApps` and `dbusActivatableGuiApps`; enumerated by syntax rather
+than from this sentence, there is a third, and "the two guards" was the
+wording here until the whole-branch fix round:
+
+```
+$ grep -c 'home.packages = ' home/*.nix | grep -v ':0$' | wc -l
+10
+$ grep -n 'home.packages = ' home/*.nix
+home/lf.nix:82:  config.home.packages = [ lfWrapped ];
+home/services.nix:67:  config.home.packages = [ nmSecretAgent ];
+home/apps.nix:107:  config.home.packages = [ calangoOpen codeShim ];
+home/default.nix:35:  home.packages = with pkgs; [
+home/audio.nix:385:  home.packages = [ pkgs.pipewire pkgs.wireplumber pulseaudioClients ];
+home/gtk.nix:130:  config.home.packages = [ applyGtkTheme ];
+home/session.nix:145:  home.packages = [ hyprland-nixgl hyprland-nixgl-session ];
+home/quickshell.nix:103:  config.home.packages = [ pkgs.quickshell ];
+home/gui-apps.nix:264:  home.packages = guiPackages ++ [
+home/hyprland.nix:171:  config.home.packages = [ hyprlock-nixgl ];
+```
+
+`home/audio.nix:385` carries `pulseaudioClients`, whose derivation body
+holds three `exit 1` guards of its own — a package-producing derivation is
+a guard too. `CLAUDE.md` records both that and the command that counts
+those three.
 
 ### Residue: no dangling `/etc/systemd/user` symlinks
 
@@ -2018,6 +2047,178 @@ Six files in each directory, the same six names: five from
 `home/gui-apps.nix`. A defect entry about a miscount restating the miscount
 is the sharpest available illustration of why a number belongs next to the
 command that produced it.
+
+**16. A derived exemption that the same file already disproved.** Found by the
+whole-branch review, fixed in the round after it. `wrappedGuiApps` exempted any
+`guiPackages` member shipping no `share/gsettings-schemas` directory of its
+own — `[ ! -d "$pkg/share/gsettings-schemas" ]`, on the reasoning that there
+was then "nothing to find and nothing to wrap". `home/gui-apps.nix`'s own
+`gammastep` comment contained the disproof, in the same `let` block, above the
+guard it exempted:
+
+```
+$ G=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+$ find $G -path '*gsettings-schemas*' | wc -l
+0
+$ for b in gammastep gammastep-indicator; do \
+    grep -oE "/nix/store/[^']*/share/gsettings-schemas/[^']*" $G/bin/$b \
+      | sort -u | wc -l; done
+2
+2
+```
+
+Zero schema directories of its own, two on each wrapper's `XDG_DATA_DIRS`
+prefix — gtk+3's and gsettings-desktop-schemas', both from dependencies. So the
+schemas that matter to a package need not be the package's own, and a GTK
+application that missed `wrapGAppsHook` would have taken the exempt path,
+printed `ok (no schemas)`, and aborted at startup with `Settings schema … is
+not installed`: the exact failure the guard exists to turn into a build error.
+The measurement was right and the conclusion drawn from it was not licensed by
+it, which is the closing pattern in `CLAUDE.md` and the same species as defect
+9 above.
+
+Fixed by deleting the exemption. Every `guiPackages` member must now have a
+wrapped binary, and both do:
+
+```
+gui-apps-schema-wrapped> ok (1 wrapped): 7kw783zcy9kdanj1fgx3fc4gwj1jyxbn-seahorse-47.0.1
+gui-apps-schema-wrapped> ok (2 wrapped): bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+```
+
+**Proven strictly stronger, not merely different**, by putting one unwrapped,
+schema-free package into `guiPackages` and building both versions of the guard
+against it. `pkgs.hello` — 1 binary, 0 wrapped siblings, 0 schema directories.
+With the exemption gone:
+
+```
+$ grep -c 'guiPackages = \[ pkgs.seahorse pkgs.gammastep pkgs.hello \];' home/gui-apps.nix
+1
+gui-apps-schema-wrapped> ok (1 wrapped): …-seahorse-47.0.1
+gui-apps-schema-wrapped> ok (2 wrapped): …-gammastep-2.0.11
+gui-apps-schema-wrapped> i270m2h1mhfm9fh4iqif6qvaq488lhlv-hello-2.12.3 has no wrapped binary in bin/.
+error: builder for '/nix/store/s9ygpvyvi17chamhphsdr2xj568ni0wa-gui-apps-schema-wrapped.drv' failed with exit code 1
+```
+
+With the exemption branch pasted back and the same `guiPackages`, the identical
+tree builds green and says so about the package that would have crashed:
+
+```
+$ grep -c 'ok (no schemas)' home/gui-apps.nix
+1
+gui-apps-schema-wrapped> ok (1 wrapped): …-seahorse-47.0.1
+gui-apps-schema-wrapped> ok (no schemas): …-gammastep-2.0.11
+gui-apps-schema-wrapped> ok (no schemas): …-hello-2.12.3
+```
+
+Both mutations were then reverted and the file compared against a copy taken
+before either was applied (`sha256sum` equal,
+`eeaa215b29a0d4e38f64cb6389032bdc49edbbf848373f0085e90b384753cbc6`). Note the
+counts were taken *before* each build: a `sed` or a patch that matches nothing
+exits 0, so "the mutation is in the file" is its own measurement.
+
+**17. Deferred and now recorded: the wrapped-binary test counts wrappers but
+never compares them to the number of binaries.** `home/gui-apps.nix`'s
+`wrapped="$(find "$pkg/bin" -maxdepth 1 -name '.*-wrapped' … | wc -l)"` is
+tested `-eq 0`, so a package with N binaries passes on 1 wrapper. Task 2
+deferred this, the ledger carried it, and the code is unchanged — defensible
+today, because both members are fully wrapped (`seahorse` 1/1, `gammastep`
+2/2), and no longer defensible silently.
+
+The exposure, measured on the two named follow-on candidates rather than
+assumed:
+
+```
+$ VM=/nix/store/fka6dyxn9kfxafarm0m845b3hppyxqhz-virt-manager-5.1.0
+$ ls -1 $VM/bin | wc -l; find $VM/bin -maxdepth 1 -name '.*-wrapped' | wc -l
+4
+4
+$ BW=/nix/store/l3dy6i7lxh2vs5k3q3cylbkm57gchg52-bitwarden-desktop-2026.7.0
+$ ls -1 $BW/bin | wc -l; find $BW/bin -maxdepth 1 -name '.*-wrapped' | wc -l
+1
+0
+```
+
+`virt-manager` is the multi-binary case: four binaries (`virt-clone`,
+`virt-install`, `virt-manager`, `virt-xml`), four wrappers today, so an
+upstream change that wrapped only the GUI entry point would pass this test
+while `virt-install` lost its schemas. **Any migration that adds
+`virt-manager` — or any other multi-binary package — to `guiPackages` must
+strengthen this test to compare the wrapper count against the binary count
+first.**
+
+`bitwarden` is a different exposure than the one the ledger predicted, and the
+correction is worth keeping: it is not multi-binary. In this flake's pinned
+nixpkgs the attribute is also gone — `pkgs.bitwarden` throws `'bitwarden' has
+been renamed to/replaced by 'bitwarden-desktop'` — and `bitwarden-desktop`
+ships one binary with **zero** wrappers. Under the guard as it now stands,
+adding it fails the build. That is the intended behaviour, not a regression —
+its one binary is a script that execs Electron, not a GTK program:
+
+```
+$ grep -o 'electron[^"]*' $BW/bin/bitwarden | head -1
+electron-41.9.1/bin/electron
+```
+
+So it is the first legitimate named exemption
+the stronger guard will need, and defect 16 is the reason it will be written
+down in `home/gui-apps.nix` instead of granted silently by a `[ ! -d … ]` test.
+
+**18. Three committed statements that their own cited measurement
+contradicted.** All three were found by the whole-branch review and all three
+are text, not behaviour:
+
+- `home/apps.nix`'s ordering comment said every hook after `linkGeneration`
+  "sat in exactly alphabetical order" and then listed eight of the ten. The
+  built script has `desktopDatabase` (302) before `defaultBrowser` (308),
+  forced by `defaultBrowser`'s own `entryAfter [ "desktopDatabase" ]`, and it
+  has ten hooks — `pipewireSessionManagerAlias` (394) and `reloadSystemd`
+  (407) were the two omitted. The comment now quotes
+  `grep -n 'Activating %s' "$A"/activate | sed -n '4,14p'` and its eleven
+  lines. The prose at the top of Phase 3's ordering section carried the same
+  "exactly alphabetical" word over its own contradicting listing and is
+  corrected in place.
+- The same file's `mimeapps.list` comment said "6 unique ids … the rest are"
+  and then named four, omitting `eu.calangotech.KBrowserSelector.desktop` —
+  one of the two ids the hook actually warns about and this module's own
+  displaced entry. It also glossed `slack.desktop` as "flatpak Slack", which
+  is the opposite of Phase 3's own finding above: flatpak exports
+  `com.slack.Slack.desktop`, a different id, and that difference is *why* the
+  association is dead. The comment now prints all six ids from
+  `sed -n 's/^[^=]*=//p' … | sort -u` and states the distinction. The
+  `defaultBrowser` comment below it was carrying "six associations (slack,
+  bitwarden, claude-cli, signal x2)" — a count matched by no name list and by
+  nothing on disk; it now says 7 of the 12 assignment lines, all but the 5
+  naming `CalangoOpen` (`grep -c 'CalangoOpen' ~/.config/mimeapps.list` → 5,
+  `grep -c '^[^=]*=' ~/.config/mimeapps.list` → 12). The word "root-owned"
+  was dropped from the `KBrowserSelector` description in that comment:
+  `~/.config/mimeapps.list` is `isutton:nix-users` and the `.desktop` it names
+  exists nowhere on the search path, so nothing measurable supports it.
+- `CLAUDE.md`'s own passage from the previous fix round said
+  `pulseaudioClients` "carries three `exit 1` guards" with no command that
+  yields 3 — the obvious `grep -c 'exit 1' home/audio.nix` yields **9**. It now
+  carries both commands and both numbers, scoped to the derivation body.
+
+**19. `gui-desktop-ids` had no anti-vacuity anchor.** The other three guards
+each assert they are looking somewhere before drawing a conclusion; this one
+would pass with an empty `required` list, because the loop then runs zero
+times and `$fail` stays 0. Anchored on a non-blank-line count of `required`
+rather than on a fixed number, so adding an id needs no second edit. Proven by
+mutation, count first:
+
+```
+$ grep -c '^            required=""$' flake.nix
+1
+$ grep -c 'org.gnome.seahorse.Application.desktop seahorse-launcher' flake.nix
+0
+gui-desktop-ids> the required .desktop id list is empty.
+gui-desktop-ids>   Nothing would be looked up in either tree, the loop
+gui-desktop-ids>   below would run zero times, and this check would pass
+gui-desktop-ids>   no matter what the flake ships -- a check that cannot
+gui-desktop-ids>   fail is worse than no check, because it reads as one.
+error: builder for '/nix/store/l9rgi4klg7z32f8yhwj641gzrfdjxbmi-gui-desktop-ids.drv' failed with exit code 1
+```
+
+Reverted afterwards, `sha256sum flake.nix` equal to the pre-mutation copy.
 
 ### Open: every gamma client on this machine is refused
 
