@@ -257,6 +257,34 @@ in
       # once guarded cannot happen, and it stays as a statement of what the
       # unit needs rather than as a guard.
       ConditionEnvironment = "WAYLAND_DISPLAY";
+
+      # Restart this unit when the QML changes, and not only when the unit
+      # itself does.
+      #
+      # sd-switch decides what to restart by diffing unit *files*. This unit's
+      # text mentioned nothing about quickshellConfig, so a change confined to
+      # the QML left the unit byte-identical and sd-switch correctly did
+      # nothing -- while quickshell went on serving the previous generation's
+      # config from a store path that no longer had a symlink pointing at it.
+      #
+      # Measured, and the reason this line exists: after the switch that fixed
+      # the launcher PATH, ~/.config/quickshell resolved to the new
+      # quickshell-config and the new appPath was on disk, yet
+      # `systemctl --user show quickshell.service` reported NRestarts=0 and an
+      # ActiveEnterTimestamp of 06:11:42 -- hours earlier. The fix was correct
+      # and inert. Every quickshell change before this one had the same
+      # property, so any that appeared to work did so because the session had
+      # been restarted for another reason.
+      #
+      # Naming the store path is what makes it work: the path changes whenever
+      # the config's contents change, so the unit text changes with it. An
+      # `X-` key is otherwise ignored by systemd, which is why this is the
+      # conventional way to express it.
+      #
+      # A restart here is cheap and does not take applications down with it:
+      # KillMode=process below is already set, and every app launched through
+      # common/AppLaunch.qml lives in its own scope rather than this cgroup.
+      X-Restart-Triggers = [ "${quickshellConfig}" ];
     };
     Service = {
       Type = "simple";
