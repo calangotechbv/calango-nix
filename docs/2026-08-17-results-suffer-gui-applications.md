@@ -1622,3 +1622,382 @@ nothing above should be read as having answered them:
   states — see the defect above.
 
 The user-gate command block for both lives with Task 4's report.
+
+## Endpoint
+
+Measured 2026-08-17, after Tasks 1-4, with nothing switched or removed by
+this task.
+
+### Eight fewer apt packages, in three different dpkg states
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' \
+    seahorse gammastep thunar thunar-volman pcmanfm-qt emacs-lucid deskflow kitty
+dpkg-query: no packages found matching seahorse
+dpkg-query: no packages found matching gammastep
+dpkg-query: no packages found matching deskflow
+dpkg-query: no packages found matching kitty
+un  emacs-lucid 
+rc  pcmanfm-qt 2.1.0-2
+rc  thunar 4.20.2-1+deb13u1
+rc  thunar-volman 4.20.0-1
+```
+
+Eight packages, not one of them `ii`, so the spec's prediction of eight
+holds. Reporting that as "eight removed" would flatten a distinction this
+repository has paid for, because those eight sit in **three** different
+dpkg states:
+
+- **No record at all** — `seahorse`, `gammastep`, `deskflow`, `kitty`.
+  `dpkg-query -W` finds no matching package to report on.
+- **`rc`** — `thunar`, `thunar-volman`, `pcmanfm-qt`. Want `r`emove, state
+  `c`onfig-files: removed with conffiles retained, which is exactly what
+  `apt remove` leaves behind and exactly why a bare
+  `dpkg-query -W -f='${Version}'` is forbidden here — it prints a version
+  and exits `0` for all three of these. This machine carries 120 such
+  records.
+- **`un`** — `emacs-lucid`, alone. Want unknown, state not-installed:
+  dpkg holds a record for the name with no selection recorded against it
+  and nothing installed, not even conffiles. Note its version column is
+  empty where the three `rc` rows still carry one.
+
+**Why `emacs-lucid` reads `un` where its three siblings read `rc` is not
+established here, and neither is why four of the eight have no record at
+all.** What is measured is that a single command produced all three
+outcomes:
+
+```
+$ grep -B1 -A3 'apt remove thunar' /var/log/apt/history.log
+Start-Date: 2026-08-17  07:47:34
+Commandline: apt remove thunar pcmanfm-qt emacs-lucid deskflow kitty
+Requested-By: isutton (1000)
+Remove: deskflow:amd64 (1.26.0.0), emacs-lucid:amd64 (1:30.1+1-6), kitty:amd64 (0.41.1-2+deb13u1), thunar-volman:amd64 (4.20.0-1), pcmanfm-qt:amd64 (2.1.0-2), thunar:amd64 (4.20.2-1+deb13u1)
+End-Date: 2026-08-17  07:47:38
+```
+
+One `apt remove`, no `purge` anywhere in that history entry, six packages,
+three resulting states. So the state is a property of each package rather
+than of how it was removed — but which property, this task did not
+measure. Do not read the three-way split as evidence of three different
+removals.
+
+### GUI candidates still on apt, counted from the filesystem
+
+```
+$ for p in $(apt-mark showmanual); do
+    case "$p" in 1password|1password-cli|code|google-chrome-stable|endpoint-verification) continue;; esac
+    dpkg -L "$p" 2>/dev/null | grep -q '/usr/share/applications/.*\.desktop' && echo "$p"
+  done | sort
+bitwarden
+displaycal
+firefox-esr
+flatseal
+fresh-editor
+hx
+isoimagewriter
+signal-desktop
+syncthingtray
+vim-common
+virt-manager
+```
+
+Eleven, against the spec's inventory of eighteen. The difference is
+exactly the seven this plan touched — `seahorse` and `gammastep` migrated,
+`kitty`, `thunar`, `pcmanfm-qt`, `emacs-lucid` and `deskflow` removed.
+`thunar-volman` never appeared in the inventory: it ships no
+`.desktop` file and rode along with Thunar, which is why the endpoint is
+eight packages against eleven inventory rows retired.
+
+Of the eleven, two stay on apt permanently (`flatseal`, absent from
+nixpkgs; `fresh-editor`, a downgrade there) and two need none of this
+spec's mechanisms (`vim-common`, `hx` — terminal programs with no draw
+path). The seven the spec calls follow-on work are the remainder.
+
+### The flake checks: three, green
+
+```
+$ sg nix-users -c 'nix flake check' >/tmp/t5-fc.out 2>&1; echo "exit=$?"
+exit=0
+$ grep -n 'checking derivation' /tmp/t5-fc.out
+4:checking derivation checks.x86_64-linux.no-dangling-home-files...
+7:checking derivation checks.x86_64-linux.no-pulseaudio-daemon...
+9:checking derivation checks.x86_64-linux.gui-desktop-ids...
+$ tail -1 /tmp/t5-fc.out
+running 3 flake checks...
+```
+
+Output is redirected and the exit status read from the redirected command,
+not from a pipeline — `… | tail -1; echo $?` reports `tail`'s status with
+`pipefail` off, and cannot show a failing build at all. `CLAUDE.md`'s
+count of the flake checks is updated from two to three by this task, along
+with the list of edits that should trigger a re-run.
+
+The two guards that ride in `home.packages` rather than in `checks` —
+`wrappedGuiApps` and `dbusActivatableGuiApps` — are not in that three.
+They run whenever the generation is built, which is strictly more often
+than `nix flake check` is invoked.
+
+### Residue: no dangling `/etc/systemd/user` symlinks
+
+Six apt packages were removed on this branch, so the census `CLAUDE.md`
+tracks was re-taken:
+
+```
+$ n=0; for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do
+    [ -e "$f" ] || { echo "$f"; n=$((n+1)); }; done; echo "dangling=$n"
+/etc/systemd/user/*.upholds/*
+dangling=1
+```
+
+**That one line is the loop's own artifact, not a dangling link.** The
+`*.upholds/*` glob matched nothing, so the shell left the pattern
+uninterpolated and `[ -e ]` failed on a literal `*`. The directory it
+would have searched does exist and is empty:
+
+```
+$ ls -1d /etc/systemd/user/*.upholds
+/etc/systemd/user/sockets.target.upholds
+$ ls -1 /etc/systemd/user/*.upholds/ | wc -l
+0
+```
+
+The `*.wants/*` half **did** expand — twelve entries, every one of them
+present — so the real count of dangling symlinks is **zero**, unchanged
+from the audio spec's sweep. `CLAUDE.md` already records this blind spot
+for `pipewire.service.wants/`; `sockets.target.upholds/` is a second
+instance of it, and here it made the loop print a line that reads exactly
+like a finding. None of the six removals shipped a systemd *user* unit,
+which is why the count did not rise.
+
+### What this endpoint does not include
+
+Three things are outstanding, and none of them may be read as passing:
+
+- **Night light is degraded.** Every gamma client on this machine is
+  refused by Hyprland; see the open defect below. The user has deferred
+  the re-login test and directed the work to proceed on the assumption
+  that gammastep functions. That is an assumption pending a check.
+- **The by-hand launcher and tray confirmation for `gammastep` has not
+  been run** — launching `gammastep-indicator` from the launcher, and
+  toggling night light from the shell panel to see the screen warm.
+- **Task 4's Steps 5 and 6 have not been run**; both need a real
+  `home-manager switch`. The flake-check half of Step 6 is green above;
+  the activation-warning half is not measured, and its expected value is
+  at least 2, not the `0` the brief stated.
+
+## Defects found
+
+Recorded without softening, including the controller's own errors and the
+findings that came from reviewers rather than from production. The two
+defects in the *plan* that Task 1 found are in "Defects found in the plan"
+above and are not repeated here; this section is the spec's, the briefs',
+and the controller's.
+
+### In the spec
+
+**1. Mechanism 2 was wrong: nothing needed building.** The spec's
+"GSettings schemas, which nixpkgs relocates out of `XDG_DATA_DIRS`"
+correctly measured the relocation — schemas really do live at
+`share/gsettings-schemas/<name>/glib-2.0/schemas`, a path GLib never
+searches — and then concluded that this repository had no mechanism to
+handle it and needed one, offering two candidate shapes to choose between.
+That conclusion was never checked. `wrapGAppsHook` already produces a
+`bin/<name>` wrapper per package that prefixes `XDG_DATA_DIRS` with every
+schema directory the application needs; the four directories on the live
+seahorse process's own `XDG_DATA_DIRS`, quoted in Phase 1's gate, are that
+wrapper's work. So the whole "wrapper versus merged directory, and what
+happens to `gschemas.compiled` on collision" question the spec posed does
+not arise. What shipped in its place is a *guard* that each `guiPackages`
+member is wrapped, which is a different artefact from the one the spec
+specified — and a smaller one.
+
+The relocation half of mechanism 2 is the part worth keeping: a package
+that misses the hook aborts with `Settings schema … is not installed`,
+which reads as a broken package rather than a missing environment.
+
+**2. The spec never named the two-independent-search-orders risk.** It
+records a "second, milder half" of mechanism 3 — that during a migration
+both trees are on `XDG_DATA_DIRS` and launchers show duplicate entries
+until Debian's package goes — and treats duplicate entries as cosmetic.
+The real hazard is that the winning `.desktop` entry and the winning
+binary are chosen by **two different search paths**: `XDG_DATA_DIRS`
+decides which entry a launcher reads, and a bare-name `Exec=` is then
+resolved through `PATH`. With both packages installed those can disagree,
+so a Nix `.desktop` can run a Debian binary or the reverse. Task 1
+measured the `PATH` side (`~/.nix-profile/bin` at 30, `/usr/bin` at 34)
+and `seahorse`'s `Exec=seahorse %u` is exactly the bare-name shape. Same
+species as spec 6's `fumon` and the foot server. Removing the apt package
+is therefore part of making the outcome deterministic, not tidying up
+afterwards — which is a different reason for the removal than the one the
+spec gives.
+
+**3. The Phase 3 check could not have existed as written.** The spec's
+build-time half asks `flake.nix` to assert, "for a list of `mimeapps.list`
+ID → package pairs", that the package ships that `.desktop` file — and its
+activation-time half to read the real file. A flake check builds in the
+Nix sandbox, where `~/.config/mimeapps.list` and `/usr/share/applications`
+are both invisible, so the build-time half can never see the list it is
+supposed to be checking against. To the spec's credit it says the obvious
+form is not implementable and splits the property in two; what it did not
+notice is that its own build-time half still names `mimeapps.list` as the
+source of the pairs. The shipped `gui-desktop-ids` asserts a
+hand-maintained `required` list instead, each entry carrying the reason it
+is required, and the correspondence to `mimeapps.list` is a human's to
+keep. That is weaker than the spec implies, and the activation hook is
+what covers the gap.
+
+### In the task briefs
+
+**4. Task 4's Step 6 expected zero unresolved ids; the real file has at
+least two.** `eu.calangotech.KBrowserSelector.desktop` and `slack.desktop`
+both fail to resolve, measured in Phase 3 above. Both are pre-existing and
+neither is this flake's to fix. Had `mimeappsIds` been fatal, it would have
+aborted every switch on this machine from its first build — the case for
+non-fatal, made by measurement rather than by argument.
+
+**5. Task 4's brief named a function where it meant a property.** It
+specified `entryBetween`; the implementer used
+`entryAfter [ "linkGeneration" "installPackages" "defaultBrowser" ]` and
+argued that nothing in the DAG consumes this hook's output, so its
+`before` list would be empty and `entryBetween [] xs` is by definition
+`entryAfter xs`. Declaring an empty edge would state a constraint that does
+not exist. The substance the brief wanted — ordering stated rather than
+inherited from an attribute-name tie-break — was delivered; the deviation
+was accepted.
+
+**6. Task 5's own brief omitted `kitty` from the endpoint command while its
+prediction named it among the eight.** Run as written, the command would
+have reported seven rows and invited the conclusion that the spec's
+prediction of eight had missed by one. `kitty` was added before running
+it; the eight-row transcript is at the top of this section.
+
+### In execution
+
+**7. The plan's Nix was written down without ever being built, twice
+over.** `wrappedGuiApps` ended with `touch "$out"`, and `pkgs.buildEnv`
+refuses to merge a store path that is a file, so the generation could never
+have built; and a comment inside that derivation's own `''…''` string
+naming `${wrappedGuiApps}` produced `infinite recursion encountered`.
+Both are recorded in Phase 1. Same class as spec 9's `/dev/null` mask: the
+runtime layer probed by hand, the build layer assumed.
+
+**8. Seahorse could not be launched at all, and `CLAUDE.md` had recorded
+the trap since spec 7.** `DBusActivatable=true` takes the launch off both
+`XDG_DATA_DIRS` and `PATH` onto a third path — D-Bus activation — and the
+session bus's own `XDG_DATA_DIRS` has no `~/.nix-profile/share`. The plan
+was reasoning about the two search orders it discusses and never noticed
+that neither is consulted. Full account in Phase 1. Task 4's
+`dbusActivatableGuiApps` closes the class.
+
+**9. A check whose declared scope exceeded what it read.**
+`gui-desktop-ids` claimed to cover the ids that `mimeapps.list` names *and*
+this flake provides, but read only `home-path/share/applications`. The one
+id satisfying both halves today,
+`eu.calangotech.CalangoOpen.desktop`, is an `xdg.dataFile` entry and lands
+in `home-files/.local/share/applications` — so the check's stated purpose
+was unreachable by its own mechanism. It passed because every id it
+actually listed was one no handler references. This is the same species as
+spec 6's three checks that passed while the property they stood for was
+false, and it was caught by a **reviewer**, not by production. The fix
+widened the check to both trees and added `CalangoOpen` to `required`,
+with each branch proven by mutating it.
+
+**10. A shell comment inside a Nix string is part of the derivation; a Nix
+comment outside one is not.** Both claims were made on this branch. The
+first — that a comment in a Nix expression, inside a `lib.makeBinPath`
+list, does not change the derivation — is true. The second, that the D-Bus
+guard's derivation was byte-identical across two generations, was asserted
+on the same reasoning and is false: the comment in question sat inside a
+`''…''` string, so it is part of `buildCommand`, and the implementer
+disproved its own claim by diffing the two derivations. `inputDrvs`,
+`inputSrcs`, `args`, `builder` and `system` were identical; `buildCommand`
+and the `out` path differed by one comment line. The distinction is which
+side of the string boundary the comment is on, and it is now in
+`CLAUDE.md`.
+
+**11. The recurring defect recurred, inside a controller ruling.** Ruling
+11 held that the mid-session restart of the night-light client at 08:57 was
+the first such restart the machine had ever logged — generalised from a
+40-line journal window containing only the four immediately preceding
+boots. Over the full journal that is false: warning-free mid-session
+toggles ran on 08-13 16:06, 08-14 17:29, 08-15 10:30 and 08-15 23:17. The
+ruling was withdrawn and replaced, but not before it reached a committed
+document. `CLAUDE.md`'s closing section already names this pattern — a real
+command run, real output read, and a conclusion drawn afterwards the
+measurement did not license. A ruling is the worst place for it, because
+the rest of the task is built on the ruling rather than on the sentence.
+
+**12. The union-instrument rule was violated again, on a branch whose
+`CLAUDE.md` already forbids it.** The first gate evidence's decisive step
+was a bare comment — `# /proc walk: no gammastep process anywhere` — with
+no command, no output, and an exe-only walk behind it, which `CLAUDE.md`
+calls insufficient because it covers roughly a quarter of this machine's
+processes. A reviewer reproduced the hazard and found a `gammastep` by
+`ps -eo args` that the exe walk had missed. Re-measured with the union of
+`ps -eo args` over full command lines and a `/proc` cmdline walk, the
+finding held — but the original was not evidence.
+
+**13. Two other documented traps were walked into.** `pgrep -x seahorse`
+found nothing because Nix wraps the binary and `comm` truncates to
+`.seahorse-wrapp`; and the `mimeappsIds` hook's three real ordering
+dependencies were satisfied only by an alphabetical tie-break, the same
+defect `home/audio.nix`'s `pipewireSessionManagerAlias` already paid for.
+Both are documented in `CLAUDE.md` by name. The second was latent — the
+live order was correct — which is exactly when it is cheap to fix.
+
+**14. Two implementers were dispatched against `home/gui-apps.nix`
+concurrently, which the process forbids.** Task 3's agent committed at
+08:31 and the Task 2 fix agent began editing after it; the worktree
+happened to be clean between them. Had the order differed, one would have
+clobbered the other. The only mitigation actually in place was a warning
+in the dispatch telling the second agent to re-read the file and stop
+rather than revert. The outcome was luck, not design.
+
+**15. A count was stated wrongly twice before being measured.**
+`home/portals.nix` was described as declaring three `xdg.dataFile`
+activation entries, then four; it declares five, and the merged profile
+holds five service files. The two quantities are different questions and
+were finally checked separately, both answering five.
+
+### Open: every gamma client on this machine is refused
+
+**This is not resolved and must not be presented as resolved.**
+
+After the migration, `night-light.service`'s client and any hand-run
+gammastep both print `Warning: Zero outputs support gamma adjustment.` /
+`Warning: 1/1 output(s) do not support gamma adjustment.` The full
+measurement is in Phase 2; what the close-out needs to carry is the
+shape of what is and is not known:
+
+- **The trigger is unidentified.** It is not the package: the store path
+  `bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11` is byte-identical
+  across generations 33, 34 and 35, and Task 3 added a comment and a
+  `home.packages` entry, neither of which the unit reads. It is not the
+  toggle path: the same store path in the same unit ran the same
+  stop → `off`-execing-nothing → new-client-a-second-later → restart
+  sequence warning-free at **2026-08-15 10:30:39** under generation 18,
+  which names that same path in its `Environment=PATH`.
+- **A competing live client is ruled out**, by the union instrument
+  `CLAUDE.md` requires — `ps -eo args` over full command lines plus a
+  `/proc` cmdline walk, both quoted in Phase 2, with the unit inactive.
+  A lone fresh client still fails, so the refusal is state held on the
+  compositor side rather than a client-side race.
+- **A gamma control leaked by Task 1's own interrupted hand-run probes is
+  NOT ruled out.** Task 1 had the user run
+  `$GS/bin/gammastep -m wayland -O 4000`, interrupted with Ctrl-C, and
+  `$GS/bin/gammastep-indicator`, both inside the same login session that
+  is now refusing every client. If that is the cause, then **this
+  branch's own verification activity caused the breakage** — a real cost
+  of the work, not a fault in `pkgs.gammastep`. A monitor re-apply is a
+  second unseparated candidate: the live scale is 1.25 against the 1.5
+  `hypr/hosts/suffer.lua` documents, so the Quickshell monitor panel
+  applied a mode during this session.
+- **The re-login test was deferred by the user**, who could not log out
+  and directed the work to proceed on the assumption that gammastep
+  functions. That assumption is honoured for sequencing only. It is a
+  pending check, not a pass, and the recovery path through
+  `hyprctl keyword monitor` is unprobed because this Hyprland build
+  rejects the command outright.
+
+Owner: not this flake. It belongs with the applications-panel defect as
+follow-up work.

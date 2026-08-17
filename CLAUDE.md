@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Eight specs are done and written up in
+standalone Home Manager. Nine specs are done and written up in
 `docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. This
 file exists because the same mistakes kept recurring across them; everything
 below has been paid for at least once.
@@ -20,10 +20,17 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` now runs **two** checks (see `flake.nix`):
-`no-dangling-home-files` and `no-pulseaudio-daemon`. Run it after touching any
-`.source` in `home/portals.nix` or `home/uwsm.nix`, or anything in
-`home/audio.nix`'s `home.packages`.
+`nix flake check` now runs **three** checks (see `flake.nix`):
+`no-dangling-home-files`, `no-pulseaudio-daemon` and `gui-desktop-ids`. Run it
+after touching any `.source` in `home/portals.nix` or `home/uwsm.nix`, anything
+in `home/audio.nix`'s `home.packages`, `guiPackages` in `home/gui-apps.nix`, the
+`applications/` `xdg.dataFile` entries in `home/apps.nix`, or the `required`
+list in `flake.nix`.
+
+Two further build-time guards ride in `home.packages` rather than in `checks` —
+`home/gui-apps.nix`'s `wrappedGuiApps` and `dbusActivatableGuiApps` — so they
+run on every generation build, which is strictly more often than
+`nix flake check` is invoked, and they do not appear in that count of three.
 
 ---
 
@@ -268,6 +275,47 @@ the instructive part: "rescued from autoremove" is not "kept forever", and
 the standing fact further down that `pulseaudio-utils` is gone is that same
 package at a later phase, not a contradiction of this one.
 
+**nixpkgs relocates GSettings schemas, and then wraps the binary to find
+them.** Schemas live at `share/gsettings-schemas/<name>/glib-2.0/schemas`, a
+path GLib never searches — but `wrapGAppsHook` produces a `bin/<name>` wrapper
+that prefixes `XDG_DATA_DIRS` with every schema directory the application
+needs, so a Nix GTK application works on Debian with no help from this flake.
+The thing to check is that the wrapper *exists*: a package that missed the hook
+aborts at startup with `Settings schema … is not installed`, which reads as a
+broken package rather than a missing environment. Detect it by the
+`.<name>-wrapped` sibling in `bin/`, not by grepping the binary —
+`makeWrapper` emits a shell script and `makeBinaryWrapper` an ELF, and a check
+that understands only one passes vacuously on the other.
+`flake.nix`'s `gui-desktop-ids` and `home/gui-apps.nix`'s guard are the two
+halves of this.
+
+**A `.desktop` file's winning entry and its winning binary are chosen by two
+different search paths.** `XDG_DATA_DIRS` decides which `.desktop` a launcher
+reads; a bare-name `Exec=` is then resolved through `PATH`. While both a Debian
+and a Nix package are installed, those can disagree — Nix's `.desktop` running
+Debian's binary, or the reverse. Same shape as spec 6's `fumon`. Removing the
+apt package is part of making it deterministic, not cleanup afterwards.
+
+**`.desktop` ids are not stable across the Debian/Nix boundary.** nixpkgs'
+`signal-desktop` ships `signal.desktop` where Debian's ships
+`signal-desktop.desktop`, and `~/.config/mimeapps.list` names the Debian id for
+`x-scheme-handler/sgnl` and `x-scheme-handler/signalcaptcha`. Migrating Signal
+without checking kills both handlers silently. Some ids *are* identical —
+`firefox-esr.desktop`, `org.gnome.seahorse.Application.desktop` — which is
+worse than none being identical, because it invites the assumption.
+
+**A Nix comment and a shell comment are not the same thing, and the difference
+is which side of the string boundary it is on.** A `#` comment in a Nix
+expression — inside a `lib.makeBinPath` list, say — does not reach the
+derivation and cannot change its hash. A `#` comment inside a `''…''` string
+that becomes `buildCommand` **is** part of the derivation, so editing it moves
+the output path. Both claims were made on the same branch, the second one
+asserting byte-identical derivations across generations; it was disproved by
+diffing them, where `inputDrvs`, `inputSrcs`, `args`, `builder` and `system`
+were identical and `buildCommand` differed by exactly one comment line. If you
+want to know whether a comment mattered, diff the derivation rather than
+reasoning about the comment.
+
 ---
 
 ## Standing facts about this machine
@@ -384,6 +432,45 @@ package at a later phase, not a contradiction of this one.
   hazard for the quickshell theme switcher (see `home/foot.nix`, which records
   that a theme change already fails to reach an *open* window). Adopt it only
   after testing that interaction.
+- **`seahorse` is Nix's; `gnome-keyring` and `gcr4` are Debian's, and that is
+  correct rather than half-finished.** The coupling is D-Bus — `libsecret`
+  talking to `org.freedesktop.secrets`, a stable cross-version API — not shared
+  libraries. Nix's seahorse links Nix's own gcr inside its own process. This is
+  the first client in this project to cross the boundary while its daemon did
+  not, and it is the template for the remaining GUI applications.
+- **`gammastep` is entirely Nix's.** It was a two-provenance split until spec
+  10: `pkgs.gammastep` reached the night-light unit through
+  `home/services.nix`'s `nightLightPath` but never through `home.packages`, so
+  the unit ran 2.0.11 while a shell got Debian's 2.0.9. `nightLightPath` still
+  names it explicitly on purpose — a unit that resolves its own binaries does
+  not depend on `PATH` order.
+- **`flatseal` and `fresh-editor` stay on apt.** `flatseal` is absent from
+  nixpkgs and is really a flatpak; nixpkgs' `fresh-editor` is 0.3.6 against
+  Debian's 0.4.7, so moving it would be a downgrade.
+- **`~/.config/mimeapps.list` has at least two dead associations, and they are
+  not this flake's.** `eu.calangotech.KBrowserSelector.desktop` — the stale
+  root-owned entry `home/apps.nix`'s `defaultBrowser` hook displaced in
+  `[Default Applications]`, still named by both `[Added Associations]` lines,
+  and present nowhere on disk — and `slack.desktop`, where the only Slack entry
+  on the search path is flatpak's `com.slack.Slack.desktop`, a different id.
+  "At least two" rather than exactly two: the count was measured in one shell's
+  `XDG_DATA_DIRS`, not the activation script's, and a narrower search path can
+  only report more missing ids. This is why `home/apps.nix`'s `mimeappsIds`
+  hook is **non-fatal by requirement rather than by convenience** — a fatal
+  version would now abort every switch on this machine over associations this
+  flake does not own and never will.
+- **Night light is degraded, with the trigger unidentified.** Since
+  2026-08-17 08:57 every gamma client on this machine is refused by Hyprland
+  (`Zero outputs support gamma adjustment`), including `night-light.service`'s
+  own. It is not the package — the same store path in the same unit toggled
+  warning-free on 08-15 10:30:39 under generation 18 — and a competing live
+  client is ruled out by the union instrument. A gamma control leaked by spec
+  10's own interrupted hand-run probes is **not** ruled out, nor is a monitor
+  re-apply (live scale 1.25 against the 1.5 in `hypr/hosts/suffer.lua`).
+  The re-login test that would separate them was deferred by the user and has
+  **not** been run; `hyprctl keyword monitor` is rejected by this Hyprland
+  build, so that recovery path is unprobed. Do not read "proceed assuming it
+  works" as a measurement.
 
 ---
 
@@ -405,7 +492,31 @@ a warm start.
 while the property they stood for was false, and two guards in `home/uwsm.nix`
 were only trusted after being verified by mutation.
 
+**And prove it against the property it claims to cover, not just against
+itself.** Spec 10's `gui-desktop-ids` was proven able to fail by mutation and
+still did not do what it said: it declared coverage of the ids
+`mimeapps.list` names *and* this flake provides, while reading only
+`home-path/share/applications` — and the single id satisfying both halves is an
+`xdg.dataFile` entry landing in `home-files/.local/share/applications`. It
+passed because every id it actually listed was one no handler references, so its
+stated purpose was unreachable by its own mechanism. Same species as spec 6's
+three checks, and caught by a reviewer rather than by production. Read a
+check's declared scope against the paths it really searches.
+
 The deeper pattern is not laziness. In every one of these cases a real command
 was run and real output was read; the error was in the *conclusion drawn
 afterwards*, which the measurement did not support. Enumerate by syntax, never
 by a remembered list of names — including inside a document that says so.
+
+**Spec 10 reproduced this inside a controller ruling**, which is worse than in a
+comment: a ruling is what the rest of a task is built on. The ruling held that a
+mid-session restart of the night-light client was the first the machine had ever
+logged, generalised from a 40-line journal window containing only the four
+preceding boots; the full journal shows warning-free mid-session toggles on
+08-13, 08-14 and twice on 08-15. It was withdrawn, but not before reaching a
+committed document. And the union-instrument rule above — that a process-absence
+claim must union `ps -eo args` over *full* command lines with a `/proc` walk —
+was violated on that same branch despite already being written here: an exe-only
+walk backed the decisive step, and a reviewer found a process it had missed. A
+rule being documented is not a rule being followed; check the instrument against
+this file when the claim is load-bearing.

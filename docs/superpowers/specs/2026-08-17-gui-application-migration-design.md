@@ -311,3 +311,74 @@ compositor.
   agreed as a precondition — `thunar`, `pcmanfm-qt`, `emacs-lucid`, `deskflow`.
   `thunar-volman` comes along with Thunar, making eight.
 - Seven GUI applications reduced to mechanical follow-on work.
+
+## Corrections
+
+Appended 2026-08-17, after execution. The prose above is deliberately left as
+it was argued at the time — rewriting it would erase that mechanism 2 was
+wrong. Every measurement behind the corrections below, and the full defect
+list, is in `docs/2026-08-17-results-suffer-gui-applications.md`.
+
+**Mechanism 2 did not need building.** The relocation this spec measured is
+real — nixpkgs puts schemas under `share/gsettings-schemas/<name>/`, which GLib
+never searches — but the conclusion that nothing on this machine handled it was
+never checked, and it is false. `wrapGAppsHook` already produces a per-package
+`bin/<name>` wrapper that prefixes `XDG_DATA_DIRS` with every schema directory
+the application needs. So the choice this spec posed between "wrap the binary"
+and "assemble one merged schema directory", including the `gschemas.compiled`
+collision question, does not arise. What shipped instead is a build-time
+*guard* that each `guiPackages` member is wrapped — a smaller artefact than the
+mechanism specified here, and a different one.
+
+**Mechanism 3 named the cosmetic half of its risk and missed the serious one.**
+The spec's "second, milder half" — duplicate launcher entries while both trees
+are on `XDG_DATA_DIRS` — is real and harmless. The hazard it does not name is
+that the winning `.desktop` entry and the winning binary are chosen by **two
+independent search paths**: `XDG_DATA_DIRS` picks the entry, and a bare-name
+`Exec=` is then resolved through `PATH`. With both packages installed those can
+disagree, so a Nix entry can run a Debian binary or the reverse — the same
+shape as spec 6's `fumon`. `seahorse`'s entry is exactly the bare-name form
+(`Exec=seahorse %u`), and `~/.nix-profile/bin` was measured at PATH position 30
+against `/usr/bin` at 34. This makes the apt removal part of correctness rather
+than tidying afterwards, which is a different reason than the one given above.
+
+**A third search path exists that this spec discusses nowhere.**
+`org.gnome.seahorse.Application.desktop` declares `DBusActivatable=true`, so a
+launcher never runs `Exec=` at all and asks the session bus to activate the
+name instead. The bus's own `XDG_DATA_DIRS` carries no `~/.nix-profile/share`,
+so the activation file inside the package was invisible and seahorse could not
+be launched by any launcher. The remedy — an `xdg.dataFile` entry under
+`dbus-1/services/` — was already recorded in `CLAUDE.md` since spec 7 and
+already applied five times in `home/portals.nix`. A fourth build-time guard,
+`dbusActivatableGuiApps`, now covers the class for every `guiPackages` member.
+
+**Phase 3's build-time check could not exist as specified.** This spec
+correctly says the obvious single-check form is not implementable in the Nix
+sandbox, then specifies a build-time half over "`mimeapps.list` ID → package
+pairs" — which still names a file the sandbox cannot see. What shipped asserts
+a hand-maintained `required` list, each entry carrying the reason it is
+required, and searches **two** trees rather than one, because this flake ships
+`.desktop` entries through both `home.packages` and `xdg.dataFile`. The
+correspondence between that list and `mimeapps.list` is a human's to keep; the
+non-fatal activation hook is what covers the gap. The first version of the
+check read one tree only, which made its own stated purpose unreachable by its
+own mechanism, and a reviewer rather than the build is what caught it.
+
+**Phase 2's gate looked for a child process that cannot exist.**
+`quickshell/night-light/run.sh:112` is `exec "$@"`, so `night-light.service`'s
+`MainPID` *is* gammastep and has no children. The gate reads `MainPID`'s own
+`exe` instead.
+
+**The endpoint's "eight fewer apt packages" holds, and conceals three dpkg
+states.** Four have no dpkg record at all, three are `rc` (removed, conffiles
+retained), and `emacs-lucid` alone is `un` — all six of the removals from one
+`apt remove` with no `purge`. The eight-package figure is right; "eight
+removed" would flatten a distinction this project checks for deliberately.
+
+**The endpoint's gammastep bullet is true on provenance and the machine's
+night light is currently broken.** The split is closed and apt has no
+`gammastep` at all, but since 2026-08-17 08:57 Hyprland refuses every gamma
+client on this machine. The trigger is unidentified; a gamma control leaked by
+this spec's own interrupted GL probes is not ruled out, which would mean the
+verification activity caused it. The re-login test that would separate the
+candidates was deferred and has not been run.
