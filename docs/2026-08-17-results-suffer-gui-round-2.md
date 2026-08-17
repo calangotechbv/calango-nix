@@ -30,10 +30,15 @@ and unwrapped, from a terminal inside the live Hyprland session:
 
 > ## The conclusion, after two corrections — read this before the rest
 >
-> **Neither application needs its own nixGL wrapper. Both need nixGL's
-> environment, and both were inheriting it from the compositor's wrap.** The GL
-> gate ran inside a session that already exported those variables, so it could
-> never have distinguished "needs no nixGL" from "already has nixGL".
+> **Neither application needs its own nixGL wrapper. `signal-desktop` needs
+> nixGL's environment — measured — and both were inheriting it from the
+> compositor's wrap.** The GL gate ran inside a session that already exported
+> those variables, so it could never have distinguished "needs no nixGL" from
+> "already has nixGL".
+>
+> Only Signal was run stripped. Bitwarden's dependence is **inferred** from it
+> being the same Electron shape, not shown. Do not upgrade that inference to a
+> measurement by repetition.
 >
 > Session children inherit; systemd units do not, which is why five things carry
 > their own wrap. Do **not** scrub the session inheritance — a follow-up spec to
@@ -201,6 +206,13 @@ it, which is exactly what the change was for.
 For anything Electron in future, the instrument is: walk the process tree, prefer
 an open fd on `/dev/dri/render*`, and treat `libgallium` rather than `*_dri.so` as
 the driver's name.
+
+**This particular evidence is no longer re-derivable**: pid 385003 is gone and
+Slack is not running, so a later reader cannot re-run it against the same process.
+The instrument above is re-derivable, and two details still corroborate today —
+the flatpak runtime ships mesa 26.1.6 while ours is 26.1.5, so a Slack mapping
+26.1.6 is demonstrably not using ours. Re-measure rather than cite this block if
+the question matters again.
 
 **And this override is not owned by this flake.** It lives at
 `~/.local/share/flatpak/overrides/com.slack.Slack`, alongside six others written
@@ -397,6 +409,14 @@ was false and on nothing else.
 every guiPackages member is on wrapExemptions.
 error: builder for '…-gui-apps-schema-wrapped.drv' failed with exit code 1
 ```
+
+**That transcript is abridged, and the abridgement matters.** Exempting
+`seahorse` and `gammastep` also trips the *staleness* branch for both, since both
+are wrapped, so the real output carries two staleness failures alongside the
+vacuity line. This mutation therefore does not isolate the anti-vacuity anchor —
+it shows the anchor fires, not that it is the only thing firing. Isolating it
+would need a `guiPackages` whose every member is genuinely unwrapped, which this
+machine cannot currently produce.
 
 The plan asked for two directions — an unexempted package with no wrapper, and
 an exempt package that has gained one — and missed the case where the table

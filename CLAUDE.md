@@ -824,24 +824,30 @@ reasoning about the comment.
   # a plain shell in the session: 5 of 5
   # quickshell.service        5 of 5   from its OWN wrap
   # hyprpolkitagent.service   5 of 5   from its OWN wrap
-  # night-light.service       0 of 5   gammastep needs no GL
-  # xdg-desktop-portal.service 0 of 5  wrapped, yet has none -- unexplained, see below
+  # night-light.service       0 of 5
+  # xdg-desktop-portal.service 0 of 5   unwrapped unit -- see below
+  # xdg-desktop-portal-hyprland.service 5 of 5   from its OWN wrap
   ```
+
+  There are **two** portal units and only one is wrapped.
+  `xdg-desktop-portal-hyprland.service` -- the backend, the one this file's list
+  means -- has `ExecStart` = `…-xdg-desktop-portal-hyprland-nixgl` and 5 of 5.
+  `xdg-desktop-portal.service`, the frontend, has `ExecStart` = the bare
+  `…-xdg-desktop-portal-1.20.4/libexec/xdg-desktop-portal` and 0 of 5, which is
+  the ordinary case for an unwrapped unit and not an anomaly. An earlier version
+  of this entry measured the frontend, did not notice it was the wrong unit, and
+  recorded its expected zero as an open question.
 
   That is *why* the units are wrapped: a unit cannot inherit from the compositor,
   because the manager's environment never carried these. `home/default.nix:8-16`
   records hyprpolkitagent crashing for exactly this reason.
 
   **Not every Nix GUI binary needs them.** `foot` is Nix's, draws through wayland
-  shm rather than GL, and `home/default.nix:52-54` keeps it as the control for
+  shm rather than GL, and `home/default.nix:53-55` keeps it as the control for
   precisely this: if foot opens and a GL client does not, the fault is the GL
   wrapper. And the only application measured under a stripped environment is
   `signal-desktop`; `bitwarden`, `seahorse` and `gammastep` were never stripped,
   so their dependence is inferred, not shown.
-
-  **Open, and do not paper over it:** `xdg-desktop-portal.service` is nixGL-wrapped
-  yet its MainPID has 0 of 5. Either the wrap is not reaching the process the unit
-  tracks, or the portal re-execs. Worth a look before anyone trusts the wrap there.
 
   An earlier version of this entry said four applications "draw without it" and
   concluded the parenthetical list was the whole rule. Signal draws without its
