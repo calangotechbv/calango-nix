@@ -53,7 +53,12 @@ sed -n "/pulseaudioClients = pkgs.runCommand/,/^  '';$/p" home/audio.nix | grep 
 ```
 
 A package-producing derivation can be a guard too, which is exactly what a
-remembered list of "the guards" misses.
+remembered list of "the guards" misses. `home/default.nix`'s
+`nixglSingleSource` is the fourth, added by the nixGL consolidation, and it is
+a different shape again: not a package at all, but a `runCommand` that greps
+the tree's own source text for a literal wrapper call and fails the build if
+one turns up outside `lib/nixgl.nix` — the first guard here that inspects
+source text rather than a built package's contents.
 
 ---
 
@@ -70,6 +75,31 @@ sg nix-users -c 'nix eval --raw nixpkgs#xdg-desktop-portal.version'
 ```
 
 Reaching for `nixpkgs#` has produced a wrong version at least three times.
+
+**`grep` here is not GNU grep.** The interactive shell defines `grep` as a
+function backed by ugrep, and it silently returns `0` for a pattern containing
+`${` even against a file that provably holds it:
+
+```sh
+grep -c '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix            # 0   -- the function
+/usr/bin/grep -cF '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix  # 1   -- the truth
+```
+
+Spec 14 published a command whose stated output was `5`; run as written it
+printed nothing at all, because every line was filtered as `:0`. The number was
+right — one occurrence per module, re-derived — and the instrument beside it was
+not. Nothing warns you: a count that should be `1` reads `0`, and `0` is exactly
+what "the property holds" looks like for a negative check. Use `/usr/bin/grep`
+explicitly, with `-F` for a literal, whenever a count is load-bearing. Inside a
+Nix builder the shell is the real one and this does not apply.
+
+**`wrapProgram --prefix PATH : "a:b:c"` prepends the entries one at a time,**
+so they end up in the wrapper in reverse of the order you wrote them. Measured
+on `home/lf.nix`'s `lfPath`, declared `file, xdg-utils, glib, coreutils` and
+emitted `coreutils, glib, xdg-utils, file`. All four still land before the
+ambient `PATH`, which is the property that matters, so this is harmless until
+two entries ship a binary of the same name — at which point the loser is the
+one you would have expected to win.
 
 **The systemd user unit search path.** `systemd-analyze --user unit-paths`
 computes the list from the *caller's* environment and reports 18 entries,
@@ -812,9 +842,32 @@ reasoning about the comment.
   measurements below are what each claim rests on.
 
   Five things carry their own wrapper — the compositor, quickshell, hyprlock,
-  hyprpolkitagent and the hyprland portal. Enumerate with
-  `grep -rn 'bin/nixGLIntel' home/*.nix`, which returns 5; a bare `nixGLIntel`
-  grep returns 10 and counts prose.
+  hyprpolkitagent and the hyprland portal, all through `lib/nixgl.nix` as of
+  the nixGL consolidation. The old enumeration, `grep -rn 'bin/nixGLIntel'
+  home/*.nix`, now returns 0 — every site spells `nixgl.wrap`, `nixgl.wrapBin`
+  or `nixgl.bin` instead, and none of them names `nixGLIntel` by hand. The
+  obvious replacement is not clean either:
+
+  ```sh
+  /usr/bin/grep -rn 'nixgl\.\(wrap\|wrapBin\|bin\)' home/*.nix   # 7, not 5
+  /usr/bin/grep -c 'pkgs.nixgl.nixGLIntel' lib/nixgl.nix          # 2, not 1
+  ```
+
+  Both over-count for the same reason spec 11's `AppLaunch.qml` guard once
+  matched its own prose: `nixglSingleSource`'s failure message, in
+  `home/default.nix`, spells out `nixgl.wrap`, `nixgl.wrapBin` and `nixgl.bin`
+  by name so a person reading a broken build knows what to write instead — two
+  lines that answer to the enumeration pattern without being a call site. And
+  `lib/nixgl.nix`'s own header comment names `pkgs.nixgl.nixGLIntel` in prose,
+  above the one line that actually defines it. The five real call sites are
+  `home/default.nix:37`, `home/hyprland.nix:104`, `home/portals.nix:38`,
+  `home/quickshell.nix:204` and `home/session.nix:118`; the one real
+  definition is `lib/nixgl.nix:21`. Asking for the literal interpolated form
+  collapses both counts to the true number in one command:
+
+  ```sh
+  /usr/bin/grep -rnF '${pkgs.nixgl.nixGLIntel}' home lib   # 1
+  ```
 
   **Session children inherit the five variables. Units do not.** Measured:
 
@@ -868,11 +921,16 @@ reasoning about the comment.
   every one the Applications panel starts. A spec to scrub it was one command from
   being written.
 
-  Two comments in the tree still carry the retired reasoning and are known stale:
-  `home/default.nix:18-20` ("every Nix GUI application on this machine needs the
-  wrapper", generalised from two crashes) and `home/gui-apps.nix:57-60`, which
-  justifies the wrapper exemption with the bare-run inference this entry retired.
-  Both are true enough to be misleading. Fix them with the nixGL consolidation.
+  **gammastep-indicator's wrapper is load-bearing, and GI_TYPELIB_PATH is what
+  carries it.** Spec 13 left this open and the note that carried it forward
+  described `.gammastep-indicator-wrapped` as a 16-line stub with no toolkit
+  token. That is the python launcher; the wrapper is its 118-line sibling
+  `bin/gammastep-indicator`. Adding its variables back to the bare stub one at
+  a time — adding, not stripping, because a shell with none of them set
+  returns the same failure whatever you strip — gives GI_TYPELIB_PATH alone as
+  sufficient and XDG_DATA_DIRS as irrelevant. The indicator reads no GSettings
+  schema from any source. So "ships no schemas" is not just an unsafe
+  exemption predicate, it is not the right question at all.
 
   `ldd` still cannot answer the per-application question: it `dlopen`s its
   platform and GL plugins, so `ldd` is clean for a binary that aborts on first
@@ -893,6 +951,15 @@ reasoning about the comment.
   application with `flatpak override --user --unset-env=…`, never by scrubbing the
   session. Do not mount `/nix/store` into the sandbox either: a host mesa against
   the runtime's own glibc is worse than the fallback.
+
+  **This flake does not own those overrides, deliberately.**
+  `~/.local/share/flatpak/overrides/` held seven files on 2026-08-17 and six
+  were 61-byte browser overrides from 2026-08-06, for applications not
+  installed as flatpaks and owned by nobody. One Home Manager-managed file
+  among them reproduces the `pipewire-session-manager.service` alias shape:
+  unmanageable by `no-dangling-home-files`, and dangling for ever when its
+  module leaves. Run the override by hand for every flatpak application, and
+  record it here.
 - Recurring shape: a Nix library resolving a NixOS-only path
   (`/run/opengl-driver/lib`, `/run/wrappers/bin/polkit-agent-helper-1`,
   `/run/wrappers/bin/unix_chkpwd`). Fixed with scoped overlays in `flake.nix`,
