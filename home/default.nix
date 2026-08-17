@@ -1,6 +1,8 @@
 { pkgs, ... }:
 
 let
+  nixgl = import ./../lib/nixgl.nix { inherit pkgs; };
+
   # Qt Quick builds an OpenGL scenegraph the moment it shows its first window,
   # so a Nix Qt6 application needs the same GL wrapper the compositor needs.
   # Wrapping the compositor is not enough: a systemd user unit runs whatever
@@ -15,19 +17,24 @@ let
   # No dialog is ever presented, so PAM's conversation returns no password.
   # The cause is the same /run/opengl-driver/lib that Task 6 rung 1 hit.
   #
-  # This generalises: every Nix GUI application on this machine needs the
-  # wrapper, quickshell in spec 2 included. Only the compositor was in spec 1's
-  # sights, which is why it took a crash to notice.
-  nixglWrap =
-    name: exe:
-    pkgs.writeShellScript name ''
-      exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${exe} "$@"
-    '';
-
+  # The rule is about UNITS, not about applications. An earlier version of this
+  # comment said "every Nix GUI application on this machine needs the wrapper",
+  # generalised from two crashes, and that is false. A session child inherits
+  # the five GL variables from the compositor's own wrap -- a plain shell in
+  # the session carries 5 of 5 -- while a systemd user unit inherits none of
+  # them, because the user manager never carried them:
+  #
+  #   systemctl --user show-environment | grep -cE '^(LIBGL_DRIVERS_PATH|…)='
+  #   # 0
+  #
+  # So the things that wrap themselves are the session and four units, and a
+  # session child needs no wrapper of its own. foot is the control and is Nix's
+  # own counterexample: it draws through wayland shm rather than GL and needs
+  # no wrapper at all (see the home.packages comment below).
   hyprpolkitagent-nixgl = pkgs.runCommand "hyprpolkitagent-nixgl" { } ''
     mkdir -p "$out/libexec"
     ln -s ${
-      nixglWrap "hyprpolkitagent" "${pkgs.hyprpolkitagent}/libexec/hyprpolkitagent"
+      nixgl.wrap "hyprpolkitagent" "${pkgs.hyprpolkitagent}/libexec/hyprpolkitagent"
     } "$out/libexec/hyprpolkitagent"
   '';
 in

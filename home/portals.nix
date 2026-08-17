@@ -1,6 +1,8 @@
 { pkgs, ... }:
 
 let
+  nixgl = import ./../lib/nixgl.nix { inherit pkgs; };
+
   # Established by a linkage check on the real binary plus the user manager's
   # environment -- NOT by analogy with quickshell, which is what Task 4 was
   # told not to do.
@@ -33,10 +35,8 @@ let
   # through nixGL, which a verbatim copy of upstream's unit cannot express, so
   # owning a copy that can drift from upstream is the cost of the wrapper, not
   # a side effect nobody noticed.
-  portal-nixgl = pkgs.writeShellScript "xdg-desktop-portal-hyprland-nixgl" ''
-    exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
-      ${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland "$@"
-  '';
+  portal-nixgl = nixgl.wrap "xdg-desktop-portal-hyprland-nixgl"
+    "${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland";
 in
 {
   # Debian's /usr/lib/systemd/user/xdg-desktop-portal-hyprland.service names

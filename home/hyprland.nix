@@ -5,6 +5,7 @@ let
   # inline so the module and the substitutions cannot drift apart.
   hyprState = "${config.home.homeDirectory}/.local/state/hypr";
   quickshellState = "${config.home.homeDirectory}/.local/state/quickshell";
+  nixgl = import ./../lib/nixgl.nix { inherit pkgs; };
 
   hyprConfig = pkgs.runCommand "hypr-config" { } ''
     cp -r ${./../hypr} "$out"
@@ -100,9 +101,7 @@ let
   # there is nothing to make the bare invocation look supported. Do not create
   # ~/.config/hypr/hyprlock.conf; the store config named by --config below is
   # the only one that carries the working PAM service.
-  hyprlock-nixgl = pkgs.writeShellScriptBin "hyprlock" ''
-    exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel ${pkgs.hyprlock}/bin/hyprlock "$@"
-  '';
+  hyprlock-nixgl = nixgl.wrapBin "hyprlock" "${pkgs.hyprlock}/bin/hyprlock";
 in
 {
   options.calango = {

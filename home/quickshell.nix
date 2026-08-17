@@ -1,6 +1,8 @@
 { config, lib, pkgs, ... }:
 
 let
+  nixgl = import ./../lib/nixgl.nix { inherit pkgs; };
+
   # The PATH that *launched applications* are resolved against. It is not this
   # unit's PATH and must not be confused with runtimeDeps below -- that list
   # answers "what does the shell run?", and this one answers "what can the
@@ -199,10 +201,7 @@ let
   # Qt Quick builds its scenegraph on first window show. Unwrapped, this unit
   # would reach "active (running)" and then abort with status=6/ABRT the
   # moment the bar tried to map -- exactly what hyprpolkitagent did in spec 1.
-  quickshell-nixgl = pkgs.writeShellScript "quickshell-nixgl" ''
-    exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
-      ${pkgs.quickshell}/bin/quickshell "$@"
-  '';
+  quickshell-nixgl = nixgl.wrap "quickshell-nixgl" "${pkgs.quickshell}/bin/quickshell";
 in
 {
   options.calango.quickshellConfig = lib.mkOption {
