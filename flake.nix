@@ -340,6 +340,25 @@
             gammastep-indicator.desktop gammastep-indicator-launcher
             eu.calangotech.CalangoOpen.desktop mimeapps-http-https-texthtml-about-unknown-handler"
 
+            # Anti-vacuity anchor, the same one no-pulseaudio-daemon and
+            # no-dangling-home-files each carry: a positive check is only
+            # evidence if it looked at something. Empty `required` and the
+            # loop below runs zero times, $fail stays 0 and this derivation
+            # passes without touching either tree -- a check that cannot
+            # fail. Counted by non-blank lines rather than compared against a
+            # fixed number, so adding an id needs no edit here.
+            count="$(echo "$required" | grep -c '[^[:space:]]' || true)"
+            if [ "$count" -eq 0 ]; then
+              echo "the required .desktop id list is empty." >&2
+              echo "  Nothing would be looked up in either tree, the loop" >&2
+              echo "  below would run zero times, and this check would pass" >&2
+              echo "  no matter what the flake ships -- a check that cannot" >&2
+              echo "  fail is worse than no check, because it reads as one." >&2
+              echo "  Restore the ids, or delete this whole check on purpose" >&2
+              echo "  and say why." >&2
+              exit 1
+            fi
+
             echo "$required" | while read -r id why; do
               [ -n "$id" ] || continue
               if [ ! -e "$apps/$id" ] && [ ! -e "$files/$id" ]; then
