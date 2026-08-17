@@ -854,3 +854,423 @@ further toggle after the gate moved `MainPID` again, and by the time of
 the union-instrument measurement above the unit was `inactive` with
 `MainPID=0` because the last toggle switched it off. The warning recurs
 whenever it is switched back on.
+
+## Phase 3: the .desktop identity checks
+
+Task 4 adds two `.desktop` identity checks and a third, unrelated-looking
+guard that belongs with them. It was scheduled last on purpose: with no
+migrated application, every one of them would have passed vacuously.
+
+### Why this is two layers and not one
+
+The obvious form — a flake check that reads `~/.config/mimeapps.list` and
+`/usr/share/applications` and asserts every id it names resolves — cannot
+exist. A flake check builds in the Nix sandbox, where both of those paths
+are impure and invisible; there is no flag that makes them visible without
+giving up the property that makes a flake check worth having. So the
+property splits by what each layer can see:
+
+- **`flake.nix`'s `gui-desktop-ids`**, fatal, at build time, over the ids
+  *this flake itself ships* — which live in the built generation's
+  `home-path/share/applications` and are therefore inside the sandbox.
+- **`home/apps.nix`'s `mimeappsIds` activation hook**, non-fatal, at switch
+  time, over the ids *the live file names* — which is the only layer that
+  can read `~/.config/mimeapps.list` at all.
+
+This is the same trap spec 9 paid for with the `/dev/null` mask: the runtime
+question was probed by hand and passed, and the build question — whether Nix
+would even accept the shape — was assumed. Here the build question is asked
+first and answers "not like that", which is why the design has two halves
+rather than one.
+
+### Layer 1: `gui-desktop-ids`, the third flake check
+
+`flake.nix` now carries a third check beside `no-dangling-home-files` and
+`no-pulseaudio-daemon`. It reads `${suffer.activationPackage}/home-path/share/applications`
+— the same generation, and the same `activationPackage` binding, the other
+two already trust — and asserts three ids are present, each with the reason
+it is required: `org.gnome.seahorse.Application.desktop`,
+`gammastep.desktop`, `gammastep-indicator.desktop`.
+
+None of those three is named by any handler in `mimeapps.list` today, and the
+check does not pretend otherwise. Its purpose is the failure that arrives the
+moment a package is *added*: nixpkgs' `signal-desktop` ships
+`signal.desktop` where Debian's ships `signal-desktop.desktop`, and
+`mimeapps.list` names the Debian id for both `x-scheme-handler/sgnl` and
+`x-scheme-handler/signalcaptcha` (confirmed in the live file, quoted below).
+Migrate Signal without noticing and both handlers stop resolving, with
+nothing on stderr. The machinery is in place now, exercising the ids the
+flake does ship, so the follow-on applications cannot be added without it.
+
+Unlike the two checks beside it, this one carries no "does the directory
+exist" preamble, and that is a difference in the *direction of the
+assertion*, not an inconsistency. Those two are negative checks — nothing
+dangling, no `pulseaudio` binary — where a directory that stopped existing
+yields an empty result that reads as a pass, which is why each opens by
+proving it is looking somewhere. This one is positive: every id in
+`required` must be present, so an `$apps` that does not exist makes the
+first `[ ! -e ... ]` true and the check fails on its first entry. Path drift
+is loud here by construction rather than by a guard.
+
+Baseline before the change, for the count:
+
+```
+$ sg nix-users -c 'nix flake check' 2>&1 | tail -1
+running 2 flake checks...
+exit=0
+```
+
+**Proven able to fail.** The mutation was confirmed to have landed with an
+explicit count before the check was run against it — the brief's `sed`
+matches twelve literal leading spaces, and a `sed` that matches nothing
+still exits 0, so without the count a check that never engaged would have
+been recorded as a check proven to fail:
+
+```
+$ sed -i 's/^            gammastep.desktop gammastep-launcher/            gammastep-WRONG.desktop gammastep-launcher/' flake.nix
+$ grep -c 'gammastep-WRONG' flake.nix
+1
+
+$ sg nix-users -c 'nix flake check' 2>&1 | tail -8
+       last 5 log lines:
+       > missing .desktop id: gammastep-WRONG.desktop (needed for: gammastep-launcher)
+       >   The package that should ship it does not, or ships it
+       >   under a different name. nixpkgs and Debian do not
+       >   always agree on the id -- signal-desktop is the known
+       >   case. Check what the package actually ships.
+$ echo "exit=$?"
+exit=1
+```
+
+Restored, and the restoration confirmed by count in both directions:
+
+```
+$ sed -i 's/^            gammastep-WRONG.desktop gammastep-launcher/            gammastep.desktop gammastep-launcher/' flake.nix
+$ grep -c 'gammastep-WRONG' flake.nix
+0
+$ grep -c '^            gammastep.desktop gammastep-launcher' flake.nix
+1
+
+$ sg nix-users -c 'nix flake check' 2>&1 | tail -1; echo "exit=$?"
+running 3 flake checks...
+exit=0
+
+$ grep -n 'checking derivation' /tmp/fc3.out
+5:checking derivation checks.x86_64-linux.no-dangling-home-files...
+8:checking derivation checks.x86_64-linux.no-pulseaudio-daemon...
+10:checking derivation checks.x86_64-linux.gui-desktop-ids...
+```
+
+Three named checks, exit 0. The `evaluation warning: 'system' has been
+renamed` line on a green run is pre-existing and untouched.
+
+### Layer 2: `mimeappsIds`, the activation hook
+
+`home/apps.nix` gains a non-fatal `home.activation.mimeappsIds`, ordered
+`entryAfter [ "linkGeneration" ]` — the same anchor `desktopDatabase` uses,
+and for the same reason: the `.desktop` entries this flake ships do not
+exist in `~/.local/share/applications` until `linkGeneration` has run, so a
+hook ordered before it would report them missing.
+
+Non-fatal is a requirement, not a convenience, and the live file is why. Its
+full contents:
+
+```
+$ cat ~/.config/mimeapps.list
+[Added Associations]
+x-scheme-handler/http=eu.calangotech.KBrowserSelector.desktop;
+x-scheme-handler/https=eu.calangotech.KBrowserSelector.desktop;
+
+[Default Applications]
+x-scheme-handler/http=eu.calangotech.CalangoOpen.desktop
+x-scheme-handler/https=eu.calangotech.CalangoOpen.desktop
+x-scheme-handler/slack=slack.desktop
+x-scheme-handler/bitwarden=bitwarden.desktop
+x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+x-scheme-handler/sgnl=signal-desktop.desktop
+x-scheme-handler/signalcaptcha=signal-desktop.desktop
+text/html=eu.calangotech.CalangoOpen.desktop
+x-scheme-handler/about=eu.calangotech.CalangoOpen.desktop
+x-scheme-handler/unknown=eu.calangotech.CalangoOpen.desktop
+```
+
+Most of those ids belong to applications this flake does not own and never
+will — flatpak Slack, bitwarden, `claude-code-url-handler`, Signal. Whether
+they resolve is none of this flake's business, and it must never be the
+reason a switch aborts.
+
+#### The hook is in the built script, and `DRY_RUN` cannot exercise it
+
+```
+$ NEW=/nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation
+$ grep -n 'mimeappsIds' "$NEW/activate"
+372:_iNote "Activating %s" "mimeappsIds"
+
+$ grep -n 'linkGeneration\|mimeappsIds\|desktopDatabase\|defaultBrowser' "$NEW/activate"
+270:_iNote "Activating %s" "linkGeneration"
+302:_iNote "Activating %s" "desktopDatabase"
+308:_iNote "Activating %s" "defaultBrowser"
+372:_iNote "Activating %s" "mimeappsIds"
+
+$ DRY_RUN=1 "$NEW/activate" 2>&1 | grep -c -i 'mimeapps'
+4
+$ DRY_RUN=1 "$NEW/activate" 2>&1 | grep -i -A3 'mimeappsIds'
+Activating mimeappsIds
+/nix/store/...-bash-interactive-5.3p9/bin/sh -c
+  list="$HOME/.config/mimeapps.list"
+  [ -r "$list" ] || exit 0
+```
+
+The hook is present and correctly ordered after `linkGeneration`. What the
+dry run does **not** do is run it: under `DRY_RUN` the `run` wrapper prints
+the command instead of executing it, which is the whole point of `run` and
+is why no warning appears above. So this output proves the hook exists and
+proves nothing about whether it can fire.
+
+#### Proving the hook's logic can fire, without a switch
+
+A check nobody has seen fail is not a check, and `DRY_RUN` cannot make this
+one fail. The body was therefore extracted **from the built activation
+script**, byte-identically, and run standalone against a synthetic `HOME` —
+so what was tested is the shipped text, not a retyped paraphrase of it:
+
+```
+$ sed -n '374,387p' "$NEW/activate" > "$T/hook.sh"
+$ diff <(sed -n '374,387p' "$NEW/activate") "$T/hook.sh" && echo identical
+identical
+
+$ cat "$T/fakehome/.config/mimeapps.list"
+x-scheme-handler/ok=present.desktop
+x-scheme-handler/probe=definitely-not-installed.desktop
+
+$ HOME="$T/fakehome" XDG_DATA_DIRS="$T/datadir" sh "$T/hook.sh"; echo "exit=$?"
+mimeapps.list names a missing .desktop id: definitely-not-installed.desktop
+1 unresolved id(s) in mimeapps.list -- handlers for them will do nothing
+exit=0
+```
+
+Both halves in one run: it names the id that does not resolve, stays silent
+about the one that does (`present.desktop`, which was created in
+`$T/datadir/applications`), and exits `0` — the non-fatal requirement, at
+the level of the script's own exit status.
+
+**What this does not establish.** It does not establish that the hook fires
+during a real `home-manager switch`, nor what it will say there. The
+environment a switch hands the activation script is not this shell's, and
+`CLAUDE.md` names that exact trap twice — `systemctl --user show-environment`
+is not what a boot-path unit inherited, and `systemd-analyze --user
+unit-paths` computes from the caller. Step 5 of the brief is the measurement
+that would settle it, and it needs a switch. It is outstanding; see below.
+
+#### A defect in the brief: Step 6 expects zero warnings, and the real file has two
+
+The same shipped body, run read-only against the **real**
+`~/.config/mimeapps.list` in this shell's environment:
+
+```
+$ echo "$XDG_DATA_DIRS"
+/home/isutton/.nix-profile/share:/home/isutton/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
+
+$ sh "$T/hook.sh"; echo "exit=$?"
+mimeapps.list names a missing .desktop id: eu.calangotech.KBrowserSelector.desktop
+mimeapps.list names a missing .desktop id: slack.desktop
+2 unresolved id(s) in mimeapps.list -- handlers for them will do nothing
+exit=0
+
+$ stat -c '%y %n' ~/.config/mimeapps.list
+2026-08-14 17:23:10.467658973 -0300 /home/isutton/.config/mimeapps.list
+```
+
+The file was not modified — the `mtime` above predates this task by three
+days. Both ids were then checked independently of the hook, by counting
+matches across the same search path and by a direct `find`:
+
+```
+$ for id in eu.calangotech.KBrowserSelector.desktop slack.desktop; do ... done
+eu.calangotech.KBrowserSelector.desktop -> 0
+slack.desktop -> 0
+
+$ find /usr/share/applications /usr/local/share/applications \
+    ~/.local/share/applications -maxdepth 1 \
+    -name 'eu.calangotech.KBrowserSelector.desktop' | wc -l
+0
+
+$ (the only Slack entry that does exist)
+/var/lib/flatpak/exports/share/applications/com.slack.Slack.desktop
+```
+
+So the check is right and the brief's expectation is wrong. Two real,
+pre-existing dead handlers:
+
+- `eu.calangotech.KBrowserSelector.desktop` is the stale root-owned entry
+  `home/apps.nix`'s `defaultBrowser` hook was written to displace. It is
+  displaced in `[Default Applications]` — `http` and `https` there name
+  `eu.calangotech.CalangoOpen.desktop` — but the two `[Added Associations]`
+  lines still name it, and it exists nowhere on disk.
+- `x-scheme-handler/slack=slack.desktop` names an id flatpak does not
+  export. The installed entry is `com.slack.Slack.desktop`.
+
+Neither is this flake's to fix, which is the case for non-fatal made
+concretely rather than hypothetically: had this been a fatal check, it would
+have blocked every switch on this machine from its first build.
+
+**The count at the gate may not be 2, and 2 must not be read as the gate's
+result.** This run used this shell's `XDG_DATA_DIRS`, not the activation
+script's. A *smaller* search path can only find fewer entries and so report
+more missing ids, and both of these are missing even against the widest path
+available here, so the gate's count will be at least 2 — but it could be
+higher, and only the switch can say. Step 6's stated expectation of `0` is
+corrected to "at least 2, and the switch succeeds anyway".
+
+### The third guard: every D-Bus activation file must be declared
+
+Task 2 shipped a single hand-written `xdg.dataFile` entry for
+`org.gnome.seahorse.Application.service`, after seahorse turned out not to
+be launchable at all: its `.desktop` carries `DBusActivatable=true`, so a
+launcher never runs `Exec=` and asks the session bus to activate the name
+instead — and the bus's own `XDG_DATA_DIRS` has no `~/.nix-profile/share`,
+so the copy inside the package was invisible to it. The comment on that
+entry said plainly that nothing but a human noticing stood behind it, and
+named Task 4 as the owner of the gap. `home/gui-apps.nix` now closes it with
+`dbusActivatableGuiApps`, a build-time guard shaped like the `wrappedGuiApps`
+schema guard beside it: every `guiPackages` member that ships a
+`share/dbus-1/services/*.service` file must have a matching `xdg.dataFile`
+entry.
+
+It iterates `guiPackages` members individually — `${pkg}/share/dbus-1/services/`
+per package — and deliberately does **not** read
+`~/.nix-profile/share/dbus-1/services` or the generation's merged
+`home-path`. That directory is a merged view, and measuring it says why:
+
+```
+$ ls -1 ~/.nix-profile/share/dbus-1/services/
+org.freedesktop.impl.portal.desktop.gtk.service
+org.freedesktop.impl.portal.desktop.hyprland.service
+org.freedesktop.impl.portal.PermissionStore.service
+org.freedesktop.portal.Desktop.service
+org.freedesktop.portal.Documents.service
+org.gnome.seahorse.Application.service
+```
+
+Five of those six are `home/portals.nix`'s, not this module's. A guard
+reading the merge would demand `xdg.dataFile` entries on behalf of packages
+`home/gui-apps.nix` does not own, and would report a portals regression as a
+gui-apps failure. (Task 2's comment said "home/portals.nix's three
+`xdg.dataFile` entries"; the file has five, and the count is corrected in
+place.)
+
+The *declared* side is read off `config.xdg.dataFile`'s own attribute names
+rather than kept in a parallel list, filtering on the `dbus-1/services/`
+prefix and stripping it before comparison. That is the whole
+configuration's declared set, portals' five included, and that is
+deliberate: the property that matters is that the file lands in
+`XDG_DATA_HOME`, the only place the bus looks, and any module putting it
+there satisfies it. A wider declared set can only make the guard more
+permissive, never produce a false failure. Reading `config` to build
+something that feeds `home.packages` is not a cycle here — every
+`xdg.dataFile` definition in this flake is a literal and none reads
+`home.packages` — but this plan has already shipped one `infinite
+recursion` from a self-referencing binding, so the shape was built rather
+than reasoned about, and it evaluates.
+
+**What it found.** Non-vacuous today, from its own build log:
+
+```
+$ sg nix-users -c 'nix log /nix/store/lr3iy85l09hwvskqwilzgzl8bbkwnzyv-gui-apps-dbus-activation.drv'
+ok (declared): 7kw783zcy9kdanj1fgx3fc4gwj1jyxbn-seahorse-47.0.1 -> org.gnome.seahorse.Application.service
+ok (no activation files): bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+```
+
+One real comparison and one derived exemption: `pkgs.seahorse` ships exactly
+one `.service` file and it is declared; `pkgs.gammastep` ships no
+`share/dbus-1/services` directory at all (`ls` on it exits 2). So today's
+single hand-written entry is complete — confirmed by a guard rather than
+asserted by a comment, which is what the Task 2 comment asked for.
+
+Like `wrappedGuiApps`, it rides in `home.packages` rather than being a flake
+check, so the flake-check count stays at three. And like it, its output is
+`mkdir -p "$out"` and not `touch "$out"`: `pkgs.buildEnv` refuses to merge a
+store path that is a file, which is the error Phase 1 hit on the first build
+of this plan. The two `gui-desktop-ids` and `dbusActivatableGuiApps` outputs
+are opposite on purpose — the flake check is not in `home.packages` and its
+`touch "$out"` is correct.
+
+**Proven able to fail, twice.** First the property itself, by renaming the
+`xdg.dataFile` attribute so seahorse's real file has no match — mutation
+confirmed by count first, per the same discipline as Layer 1:
+
+```
+$ sed -i 's|...org.gnome.seahorse.Application.service".source =|...org.gnome.seahorse.WRONG.service".source =|' home/gui-apps.nix
+$ grep -c 'org.gnome.seahorse.WRONG.service' home/gui-apps.nix
+1
+
+$ sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | tail -20
+error: builder for '/nix/store/cdj9ymjfrc49536v7c2s7dzy0kqi0m88-gui-apps-dbus-activation.drv' failed with exit code 1;
+       last 13 log lines:
+       > 7kw783zcy9kdanj1fgx3fc4gwj1jyxbn-seahorse-47.0.1 ships org.gnome.seahorse.Application.service but no xdg.dataFile declares it.
+       >   A .desktop with DBusActivatable=true is never launched
+       >   through Exec= or PATH -- the launcher asks the session bus
+       ...
+       >     xdg.dataFile."dbus-1/services/org.gnome.seahorse.Application.service".source =
+       >       "${pkg}/share/dbus-1/services/org.gnome.seahorse.Application.service";
+       > ok (no activation files): bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+error: 1 dependencies of derivation '.../gui-apps-dbus-guard.drv' failed to build
+error: 1 dependencies of derivation '.../home-manager-path.drv' failed to build
+```
+
+Then its own anti-vacuity anchor. The guard's exemption path — "this package
+ships no activation files" — is exactly where a layout change would hide: if
+`share/dbus-1/services` ever moved, every package would take that path and
+the guard would pass having compared nothing. So it counts what it examined
+and refuses a zero, the same way `no-pulseaudio-daemon` asserts `pactl` is
+present before concluding `pulseaudio` is absent. Drifting the path proves
+that block fires:
+
+```
+$ sed -i 's|dir="$pkg/share/dbus-1/services"|dir="$pkg/share/dbus-1/NOPE"|' home/gui-apps.nix
+$ grep -c 'dbus-1/NOPE' home/gui-apps.nix
+1
+
+$ sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | grep -E 'vacuous|No guiPackages|exempt path|failed with exit'
+error: builder for '/nix/store/xkd0k9nd3816203f1y0hwcvajczy1mq1-gui-apps-dbus-activation.drv' failed with exit code 1;
+       > No guiPackages member ships a share/dbus-1/services/*.service.
+       >   Every entry took the 'no activation files' exempt path, so
+       >   would be vacuous. Today seahorse ships exactly one such file,
+```
+
+Both mutations restored, each confirmed by a count in both directions, and
+the generation reproduced byte-for-byte at the same store path it had before
+either mutation:
+
+```
+$ grep -c 'org.gnome.seahorse.WRONG' home/gui-apps.nix
+0
+$ grep -c '^  xdg.dataFile."dbus-1/services/org.gnome.seahorse.Application.service".source =' home/gui-apps.nix
+1
+$ grep -c 'dbus-1/NOPE' home/gui-apps.nix
+0
+$ grep -c '^      dir="$pkg/share/dbus-1/services"$' home/gui-apps.nix
+1
+
+$ sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."isutton@suffer".activationPackage'
+/nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation
+```
+
+### Outstanding: the two gate items that need a switch
+
+Task 4 stops at the switch boundary. Neither of the following was run, and
+nothing above should be read as having answered them:
+
+- **Step 5 — the activation hook firing during a real switch.** Proving the
+  hook's *logic* warns (above) is not proving the *hook* warns. It needs a
+  bogus id appended to `~/.config/mimeapps.list`, a real
+  `home-manager switch`, the warning observed in the switch's own output,
+  the switch succeeding anyway, and the file restored byte-identically
+  afterwards. `~/.config/mimeapps.list` was **not** mutated by this task.
+- **Step 6 — the gate.** The warning count on the real, unmutated file
+  during a switch, and `nix flake check` green afterwards. The flake check
+  half is green here (three checks, exit 0). The warning-count half is not
+  measured, and its expected value is **at least 2**, not the `0` the brief
+  states — see the defect above.
+
+The user-gate command block for both lives with Task 4's report.
