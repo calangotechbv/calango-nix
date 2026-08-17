@@ -886,63 +886,156 @@ rather than one.
 ### Layer 1: `gui-desktop-ids`, the third flake check
 
 `flake.nix` now carries a third check beside `no-dangling-home-files` and
-`no-pulseaudio-daemon`. It reads `${suffer.activationPackage}/home-path/share/applications`
-— the same generation, and the same `activationPackage` binding, the other
-two already trust — and asserts three ids are present, each with the reason
-it is required: `org.gnome.seahorse.Application.desktop`,
-`gammastep.desktop`, `gammastep-indicator.desktop`.
+`no-pulseaudio-daemon`, on the same generation and through the same
+`activationPackage` binding the other two already trust. It asserts four ids
+are present, each with the reason it is required:
+`org.gnome.seahorse.Application.desktop`, `gammastep.desktop`,
+`gammastep-indicator.desktop`, and `eu.calangotech.CalangoOpen.desktop`.
 
-None of those three is named by any handler in `mimeapps.list` today, and the
-check does not pretend otherwise. Its purpose is the failure that arrives the
-moment a package is *added*: nixpkgs' `signal-desktop` ships
-`signal.desktop` where Debian's ships `signal-desktop.desktop`, and
-`mimeapps.list` names the Debian id for both `x-scheme-handler/sgnl` and
-`x-scheme-handler/signalcaptcha` (confirmed in the live file, quoted below).
-Migrate Signal without noticing and both handlers stop resolving, with
-nothing on stderr. The machinery is in place now, exercising the ids the
-flake does ship, so the follow-on applications cannot be added without it.
+#### Two trees, because this flake ships `.desktop` entries two ways
+
+The check searches both of these, and an id found in either satisfies the
+requirement:
+
+```
+home-path/share/applications           <- home.packages, merged by buildEnv
+home-files/.local/share/applications   <- xdg.dataFile entries
+```
+
+That is not symmetry for its own sake. The first version of this check read
+`home-path` only, which made its own stated purpose — "the ids
+`mimeapps.list` names AND this flake provides" — unreachable by its own
+mechanism, because the single id satisfying both halves lives in the other
+tree:
+
+```
+$ grep -n 'CalangoOpen' home/apps.nix
+129:  config.xdg.dataFile."applications/eu.calangotech.CalangoOpen.desktop".source =
+130:    "${desktopEntries}/eu.calangotech.CalangoOpen.desktop";
+
+$ NEW=/nix/store/mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation
+$ ls -1 "$NEW/home-path/share/applications/"
+footclient.desktop
+foot.desktop
+foot-server.desktop
+gammastep.desktop
+gammastep-indicator.desktop
+mimeinfo.cache
+org.gnome.seahorse.Application.desktop
+org.quickshell.desktop
+uuctl.desktop
+xdg-desktop-portal-gtk.desktop
+
+$ ls -1 "$NEW/home-files/.local/share/applications/"
+code.desktop
+eu.calangotech.CalangoOpen.desktop
+```
+
+`eu.calangotech.CalangoOpen.desktop` appears in the second listing and not
+the first. Adding it to `required` while the check read only `home-path`
+would have failed the build spuriously, so the fix was to widen the check
+rather than narrow the claim.
+
+#### What the four ids are for, and what the counts mean
+
+`mimeapps.list` names six unique ids, of which this flake provides exactly
+one. Measured:
+
+```
+$ sed -n 's/^[^=]*=//p' ~/.config/mimeapps.list | tr ';' '\n' | sed '/^$/d' | sort -u
+bitwarden.desktop
+claude-code-url-handler.desktop
+eu.calangotech.CalangoOpen.desktop
+eu.calangotech.KBrowserSelector.desktop
+signal-desktop.desktop
+slack.desktop
+
+$ grep -c '=' ~/.config/mimeapps.list
+12
+```
+
+Six unique ids across twelve assignment lines (ten under
+`[Default Applications]`, two under `[Added Associations]`). **Both figures
+are counts of 2026-08-17, not standing properties** — `bitwarden.desktop`
+and `signal-desktop.desktop` are among the follow-on applications this
+project intends to migrate, so the flake's share of that list is expected to
+grow. That is the reason this check exists now rather than later.
+
+`eu.calangotech.CalangoOpen.desktop` is the one id that is both named by a
+handler and provided here: `x-scheme-handler/http`, `/https`, `text/html`,
+`/about` and `/unknown` all resolve through it. The other three required ids
+are named by no handler at all, and the check does not pretend otherwise;
+they are asserted for their own sake, since a launcher entry that vanishes is
+worth catching whether a MIME handler points at it or not, and they exercise
+the `home-path` branch.
+
+The failure this is really for arrives the moment a package is *added*:
+nixpkgs' `signal-desktop` ships `signal.desktop` where Debian's ships
+`signal-desktop.desktop`, and `mimeapps.list` names the Debian id for both
+`x-scheme-handler/sgnl` and `x-scheme-handler/signalcaptcha` — visible in the
+live file quoted under Layer 2 below. Migrate Signal without noticing and
+both handlers stop resolving, with nothing on stderr.
+
+#### No directory-existence preamble, and why that is not an inconsistency
 
 Unlike the two checks beside it, this one carries no "does the directory
-exist" preamble, and that is a difference in the *direction of the
-assertion*, not an inconsistency. Those two are negative checks — nothing
-dangling, no `pulseaudio` binary — where a directory that stopped existing
-yields an empty result that reads as a pass, which is why each opens by
-proving it is looking somewhere. This one is positive: every id in
-`required` must be present, so an `$apps` that does not exist makes the
-first `[ ! -e ... ]` true and the check fails on its first entry. Path drift
-is loud here by construction rather than by a guard.
+exist" opening, and the difference is the *direction of the assertion*. Those
+two are negative checks — nothing dangling, no `pulseaudio` binary — where a
+directory that stopped existing yields an empty result that reads as a pass,
+which is why each opens by proving it is looking somewhere. This one is
+positive: every id must be found in one tree or the other, so a broken
+`$apps` or `$files` makes some `[ ! -e ... ]` pair true and the check fails.
+Both branches are load-bearing and neither can rot unnoticed — the three
+package ids exist only under `$apps`, `CalangoOpen` only under `$files` — and
+that was proven by mutating each path in turn rather than argued.
 
-Baseline before the change, for the count:
+#### Proven able to fail, on all three of its moving parts
+
+Baseline before any of this — two checks, green:
 
 ```
-$ sg nix-users -c 'nix flake check' 2>&1 | tail -1
+$ sg nix-users -c 'nix flake check' 2>&1 | tail -5
+evaluation warning: 'system' has been renamed to/replaced by 'stdenv.hostPlatform.system'
+derivation evaluated to /nix/store/idv6vdfv2zp8f73ma2igig1dd16ky28z-portal-stack-no-dangling-home-files.drv
+checking derivation checks.x86_64-linux.no-pulseaudio-daemon...
+derivation evaluated to /nix/store/6nxz9n0mlr0fvn34yibpv7ym18lwq1nl-portal-stack-no-pulseaudio-daemon.drv
 running 2 flake checks...
-exit=0
 ```
 
-**Proven able to fail.** The mutation was confirmed to have landed with an
-explicit count before the check was run against it — the brief's `sed`
-matches twelve literal leading spaces, and a `sed` that matches nothing
-still exits 0, so without the count a check that never engaged would have
-been recorded as a check proven to fail:
+That is the only transcript in this section using the piped form, and its
+exit status is deliberately not quoted: `… | tail -5` reports `tail`'s
+status. The evidence here is the `running 2 flake checks...` line, which
+`nix` prints only on the path where every check succeeded.
+
+Every mutation below was confirmed to have landed with an explicit count
+*before* the check was run against it. The `sed` for the first one matches
+twelve literal leading spaces, and a `sed` that matches nothing still exits
+0, so without the count a check that never engaged would have been recorded
+as a check proven to fail.
+
+Note the shape of every invocation here: output is redirected to a file and
+the exit status read from the redirected command, then the file is quoted
+separately. A `nix flake check … | tail -8; echo $?` reports `tail`'s status,
+not the build's — `pipefail` is off — so that form cannot show a failing
+exit code at all. An earlier draft of this section printed `exit=1` under
+exactly that form; the conclusion was right and the transcript could not have
+produced it.
+
+**1. A renamed id (the `$apps` branch, via the `required` list).**
 
 ```
 $ sed -i 's/^            gammastep.desktop gammastep-launcher/            gammastep-WRONG.desktop gammastep-launcher/' flake.nix
 $ grep -c 'gammastep-WRONG' flake.nix
 1
 
-$ sg nix-users -c 'nix flake check' 2>&1 | tail -8
-       last 5 log lines:
-       > missing .desktop id: gammastep-WRONG.desktop (needed for: gammastep-launcher)
-       >   The package that should ship it does not, or ships it
-       >   under a different name. nixpkgs and Debian do not
-       >   always agree on the id -- signal-desktop is the known
-       >   case. Check what the package actually ships.
-$ echo "exit=$?"
+$ sg nix-users -c 'nix flake check' >/tmp/fc-wrong-id.out 2>&1; echo "exit=$?"
 exit=1
+$ grep -E 'missing .desktop id|under a different name' /tmp/fc-wrong-id.out
+       > missing .desktop id: gammastep-WRONG.desktop (needed for: gammastep-launcher)
+       >   under a different name, or an xdg.dataFile entry was
 ```
 
-Restored, and the restoration confirmed by count in both directions:
+Restored, confirmed by count in both directions:
 
 ```
 $ sed -i 's/^            gammastep-WRONG.desktop gammastep-launcher/            gammastep.desktop gammastep-launcher/' flake.nix
@@ -950,15 +1043,56 @@ $ grep -c 'gammastep-WRONG' flake.nix
 0
 $ grep -c '^            gammastep.desktop gammastep-launcher' flake.nix
 1
+```
 
-$ sg nix-users -c 'nix flake check' 2>&1 | tail -1; echo "exit=$?"
-running 3 flake checks...
+**2. The `$files` branch, drifted.** This is the branch the widening added,
+and it needed its own proof — the mutation above exercises only `$apps`, so
+without this the new search path would have been untested code:
+
+```
+$ sed -i 's|.../home-files/.local/share/applications$|.../home-files/.local/share/NOPE|' flake.nix
+$ grep -c 'home-files/.local/share/NOPE' flake.nix
+1
+
+$ sg nix-users -c 'nix flake check' >/tmp/fc-files-broken.out 2>&1; echo "exit=$?"
+exit=1
+$ grep -E 'missing .desktop id|Looked in both trees|NOPE' /tmp/fc-files-broken.out
+       > missing .desktop id: eu.calangotech.CalangoOpen.desktop (needed for: mimeapps-http-https-texthtml-about-unknown-handler)
+       >   Looked in both trees this flake ships entries to:
+       >     /nix/store/mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation/home-files/.local/share/NOPE
+```
+
+Only `CalangoOpen` failed — the three package ids were still found under
+`$apps` — which is the precise evidence that `CalangoOpen` is satisfied by
+the new branch and by nothing else.
+
+**3. The `$apps` branch, drifted**, for the mirror image:
+
+```
+$ sed -i 's|.../home-path/share/applications$|.../home-path/share/NOPE|' flake.nix
+$ grep -c 'home-path/share/NOPE' flake.nix
+1
+
+$ sg nix-users -c 'nix flake check' >/tmp/fc-apps-broken.out 2>&1; echo "exit=$?"
+exit=1
+$ grep -E 'missing .desktop id' /tmp/fc-apps-broken.out
+       > missing .desktop id: org.gnome.seahorse.Application.desktop (needed for: seahorse-launcher)
+```
+
+Both paths restored, each confirmed by count in both directions
+(`home-files/.local/share/NOPE` → 0 and the real `files=` line → 1;
+`home-path/share/NOPE` → 0 and the real `apps=` line → 1), and the check
+green again:
+
+```
+$ sg nix-users -c 'nix flake check' >/tmp/fc-final.out 2>&1; echo "exit=$?"
 exit=0
-
-$ grep -n 'checking derivation' /tmp/fc3.out
+$ grep -n 'checking derivation' /tmp/fc-final.out
 5:checking derivation checks.x86_64-linux.no-dangling-home-files...
 8:checking derivation checks.x86_64-linux.no-pulseaudio-daemon...
 10:checking derivation checks.x86_64-linux.gui-desktop-ids...
+$ tail -1 /tmp/fc-final.out
+running 3 flake checks...
 ```
 
 Three named checks, exit 0. The `evaluation warning: 'system' has been
@@ -967,10 +1101,149 @@ renamed` line on a green run is pre-existing and untouched.
 ### Layer 2: `mimeappsIds`, the activation hook
 
 `home/apps.nix` gains a non-fatal `home.activation.mimeappsIds`, ordered
-`entryAfter [ "linkGeneration" ]` — the same anchor `desktopDatabase` uses,
-and for the same reason: the `.desktop` entries this flake ships do not
-exist in `~/.local/share/applications` until `linkGeneration` has run, so a
-hook ordered before it would report them missing.
+`entryAfter [ "linkGeneration" "installPackages" "defaultBrowser" ]`.
+
+#### The search path spans two trees, and only one of them is on `XDG_DATA_DIRS`
+
+The hook's loop searches `$XDG_DATA_DIRS` **and** `$HOME/.local/share`, and
+the second is the load-bearing half rather than a belt-and-braces addition:
+
+```
+$ echo "$XDG_DATA_DIRS" | tr ':' '\n' | nl
+     1	/home/isutton/.nix-profile/share
+     2	/home/isutton/.local/share/flatpak/exports/share
+     3	/var/lib/flatpak/exports/share
+     4	/usr/local/share
+     5	/usr/share
+```
+
+`~/.local/share` is not on that list at any position — only
+`~/.local/share/flatpak/exports/share`, a different directory. And
+`~/.local/share/applications` is exactly where this module's own
+`xdg.dataFile` entries land, `eu.calangotech.CalangoOpen.desktop` included
+(the same split Layer 1 had to widen for). A hook searching `XDG_DATA_DIRS`
+alone would have reported this flake's own default browser as missing on
+every switch.
+
+#### Three ordering edges, all real, none inherited from an attribute name
+
+The first version declared only `entryAfter [ "linkGeneration" ]`, and that
+was not enough. Two of its three real dependencies were unstated:
+
+| edge | why |
+| --- | --- |
+| `linkGeneration` | creates `~/.local/share/applications/*.desktop` from the `xdg.dataFile` entries — half the search path |
+| `installPackages` | builds `~/.nix-profile`, and so populates `~/.nix-profile/share/applications`, the first entry on `XDG_DATA_DIRS` — the other half |
+| `defaultBrowser` | rewrites the very file the hook reads, via `xdg-settings set default-web-browser` |
+
+Home Manager's `hm.dag.topoSort` feeds `builtins.attrValues` — attribute-name
+sorted — into a stable `lib.toposort`, so any pair of entries with no stated
+relation is ordered alphabetically. Measured on the built script with only
+the one edge declared — generation
+`/nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation`, the one
+this task first produced — every hook after `linkGeneration` sat in exactly
+alphabetical order:
+
+```
+$ G=/nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation
+$ grep -n '_iNote "Activating %s"' "$G/activate" | sed 's/_iNote "Activating %s" //'
+270:"linkGeneration"
+302:"desktopDatabase"
+308:"defaultBrowser"
+317:"footThemeColors"
+324:"gtkAppearance"
+334:"hyprlockConf"
+342:"installPackages"
+372:"mimeappsIds"
+391:"onFilesChange"
+394:"pipewireSessionManagerAlias"
+407:"reloadSystemd"
+```
+
+So `mimeappsIds` ran after `defaultBrowser` and `installPackages` only
+because the letter `m` sorts after `d` and `i`. This is the same defect
+`home/audio.nix`'s `pipewireSessionManagerAlias` already paid for, in a new
+place, and it was latent here — the live order was correct, so nothing was
+broken. That is exactly when it is cheap to fix.
+
+Declaring the two missing edges does **not** change the live order — with
+`mimeappsIds` as the attribute name it still lands at 372 with
+`installPackages` at 342, byte-identically to the listing above. That is the
+whole reason a rename was needed to test the fix: on this attribute name, a
+correct DAG and a lucky alphabet are indistinguishable.
+
+**Proven both ways by renaming the attribute**, which is the only mutation
+that isolates a tie-break from a declared edge. `auditMimeappsIds` sorts
+*first* of all the post-`linkGeneration` hooks.
+
+With the three edges declared, the rename does not move it ahead of its
+dependencies:
+
+```
+$ grep -c '^  config.home.activation.auditMimeappsIds =$' home/apps.nix
+1
+$ M=$(sg nix-users -c 'nix build --no-link --print-out-paths \
+      .#homeConfigurations."isutton@suffer".activationPackage')
+$ grep -n '_iNote "Activating %s"' "$M/activate" | sed 's/_iNote "Activating %s" //'
+270:"linkGeneration"
+302:"desktopDatabase"
+308:"defaultBrowser"
+317:"installPackages"
+347:"auditMimeappsIds"
+366:"footThemeColors"
+373:"gtkAppearance"
+383:"hyprlockConf"
+391:"onFilesChange"
+```
+
+It landed at 347, behind `defaultBrowser` (308) and `installPackages` (317)
+and ahead of `footThemeColors` (366) — a position alphabetical order cannot
+explain, so the edges are what put it there. Note `installPackages` also
+*moved*, from 342 to 317, which is the DAG re-solving around the new
+constraint rather than the old order surviving by luck.
+
+Then the same rename with the two new edges reverted, reproducing the
+defect:
+
+```
+$ grep -c '"installPackages" "defaultBrowser"' home/apps.nix
+0
+$ M2=$(sg nix-users -c 'nix build --no-link --print-out-paths \
+       .#homeConfigurations."isutton@suffer".activationPackage')
+$ grep -n '_iNote "Activating %s"' "$M2/activate" | sed 's/_iNote "Activating %s" //'
+270:"linkGeneration"
+302:"auditMimeappsIds"
+321:"desktopDatabase"
+327:"defaultBrowser"
+336:"footThemeColors"
+343:"gtkAppearance"
+353:"hyprlockConf"
+361:"installPackages"
+391:"onFilesChange"
+```
+
+At 302 it now runs *before* `defaultBrowser` (327) and `installPackages`
+(361) — reading the file before it is rewritten and searching a profile
+before it is built, with nothing to distinguish that from a genuine finding.
+So the fix is not a no-op: the hazard was real and the edges are what close
+it.
+
+Both mutations were reverted and the generation reproduced at the identical
+store path it had before either
+(`/nix/store/mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation`), with
+`auditMimeappsIds` → 0, the `mimeappsIds` attribute → 1, and the three-edge
+`entryAfter` line → 1.
+
+**`entryAfter`, not `entryBetween`, and that is deliberate.** The in-repo
+precedent, `pipewireSessionManagerAlias`, needs `entryBetween` because its
+second edge is real: `reloadSystemd` must come *after* the alias link or
+systemd never sees it. Here nothing downstream reads anything this hook
+produces — it only writes warnings to stderr — so the `before` list would be
+empty, and `entryBetween [] xs` is by definition `entryAfter xs`. Declaring
+an empty edge would state a constraint that does not exist. The fragility was
+entirely on the `after` side and all three of those are now stated.
+
+#### Why non-fatal
 
 Non-fatal is a requirement, not a convenience, and the live file is why. Its
 full contents:
@@ -1002,26 +1275,26 @@ reason a switch aborts.
 #### The hook is in the built script, and `DRY_RUN` cannot exercise it
 
 ```
-$ NEW=/nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation
+$ NEW=/nix/store/mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation
 $ grep -n 'mimeappsIds' "$NEW/activate"
 372:_iNote "Activating %s" "mimeappsIds"
 
-$ grep -n 'linkGeneration\|mimeappsIds\|desktopDatabase\|defaultBrowser' "$NEW/activate"
+$ grep -n -E '_iNote "Activating %s" "(linkGeneration|installPackages|defaultBrowser|mimeappsIds)"' "$NEW/activate"
 270:_iNote "Activating %s" "linkGeneration"
-302:_iNote "Activating %s" "desktopDatabase"
 308:_iNote "Activating %s" "defaultBrowser"
+342:_iNote "Activating %s" "installPackages"
 372:_iNote "Activating %s" "mimeappsIds"
 
 $ DRY_RUN=1 "$NEW/activate" 2>&1 | grep -c -i 'mimeapps'
 4
 $ DRY_RUN=1 "$NEW/activate" 2>&1 | grep -i -A3 'mimeappsIds'
 Activating mimeappsIds
-/nix/store/...-bash-interactive-5.3p9/bin/sh -c
+/nix/store/3d6jlqvsnq8p2ix98j3qkb4i6wsk3ak1-bash-interactive-5.3p9/bin/sh -c
   list="$HOME/.config/mimeapps.list"
   [ -r "$list" ] || exit 0
 ```
 
-The hook is present and correctly ordered after `linkGeneration`. What the
+The hook is present and behind all three of its declared dependencies. What the
 dry run does **not** do is run it: under `DRY_RUN` the `run` wrapper prints
 the command instead of executing it, which is the whole point of `run` and
 is why no warning appears above. So this output proves the hook exists and
@@ -1035,15 +1308,23 @@ script**, byte-identically, and run standalone against a synthetic `HOME` —
 so what was tested is the shipped text, not a retyped paraphrase of it:
 
 ```
+$ NEW=/nix/store/mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation
+$ T=$(mktemp -d)
+$ mkdir -p "$T/fakehome/.config" "$T/fakehome/.local/share/applications" \
+           "$T/datadir/applications"
+$ touch "$T/datadir/applications/present.desktop"
+$ printf 'x-scheme-handler/ok=present.desktop\nx-scheme-handler/probe=definitely-not-installed.desktop\n' \
+    > "$T/fakehome/.config/mimeapps.list"
+
+  # lines 374-387 are the hook's sh -c body; 372 is its _iNote, 373 the
+  # `run … sh -c '` line and 388 the closing `' || true`
 $ sed -n '374,387p' "$NEW/activate" > "$T/hook.sh"
 $ diff <(sed -n '374,387p' "$NEW/activate") "$T/hook.sh" && echo identical
 identical
 
-$ cat "$T/fakehome/.config/mimeapps.list"
-x-scheme-handler/ok=present.desktop
-x-scheme-handler/probe=definitely-not-installed.desktop
-
-$ HOME="$T/fakehome" XDG_DATA_DIRS="$T/datadir" sh "$T/hook.sh"; echo "exit=$?"
+$ HOME="$T/fakehome" XDG_DATA_DIRS="$T/datadir" \
+    /nix/store/3d6jlqvsnq8p2ix98j3qkb4i6wsk3ak1-bash-interactive-5.3p9/bin/sh \
+    "$T/hook.sh"; echo "exit=$?"
 mimeapps.list names a missing .desktop id: definitely-not-installed.desktop
 1 unresolved id(s) in mimeapps.list -- handlers for them will do nothing
 exit=0
@@ -1071,7 +1352,10 @@ The same shipped body, run read-only against the **real**
 $ echo "$XDG_DATA_DIRS"
 /home/isutton/.nix-profile/share:/home/isutton/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
 
-$ sh "$T/hook.sh"; echo "exit=$?"
+  # same $T/hook.sh as above, but with the REAL $HOME, so it reads the
+  # live ~/.config/mimeapps.list rather than the synthetic one
+$ /nix/store/3d6jlqvsnq8p2ix98j3qkb4i6wsk3ak1-bash-interactive-5.3p9/bin/sh \
+    "$T/hook.sh"; echo "exit=$?"
 mimeapps.list names a missing .desktop id: eu.calangotech.KBrowserSelector.desktop
 mimeapps.list names a missing .desktop id: slack.desktop
 2 unresolved id(s) in mimeapps.list -- handlers for them will do nothing
@@ -1086,7 +1370,13 @@ days. Both ids were then checked independently of the hook, by counting
 matches across the same search path and by a direct `find`:
 
 ```
-$ for id in eu.calangotech.KBrowserSelector.desktop slack.desktop; do ... done
+$ for id in eu.calangotech.KBrowserSelector.desktop slack.desktop; do
+    n=0
+    IFS=':'; for d in $XDG_DATA_DIRS "$HOME/.local/share"; do
+      [ -e "$d/applications/$id" ] && n=$((n+1))
+    done; unset IFS
+    echo "$id -> $n"
+  done
 eu.calangotech.KBrowserSelector.desktop -> 0
 slack.desktop -> 0
 
@@ -1095,9 +1385,15 @@ $ find /usr/share/applications /usr/local/share/applications \
     -name 'eu.calangotech.KBrowserSelector.desktop' | wc -l
 0
 
-$ (the only Slack entry that does exist)
+$ IFS=':'; for d in $XDG_DATA_DIRS "$HOME/.local/share"; do unset IFS
+    ls -1 "$d/applications" 2>/dev/null | grep -i slack | sed "s|^|$d/applications/|"
+  IFS=':'; done; unset IFS
 /var/lib/flatpak/exports/share/applications/com.slack.Slack.desktop
 ```
+
+The last command is the one that identifies *why* `slack.desktop` does not
+resolve: the only Slack entry anywhere on the search path is under a
+different id, `com.slack.Slack.desktop`.
 
 So the check is right and the brief's expectation is wrong. Two real,
 pre-existing dead handlers:
@@ -1187,6 +1483,25 @@ one `.service` file and it is declared; `pkgs.gammastep` ships no
 single hand-written entry is complete — confirmed by a guard rather than
 asserted by a comment, which is what the Task 2 comment asked for.
 
+**What forces those packages to be built by then is the guard's own
+`inputDrvs`, not `home.packages`.** An earlier version of the comment on the
+`xdg.dataFile` entry credited `home.packages`; interpolating each store path
+into the guard's build script is what actually does it, making every package a
+build-time dependency of the guard itself. Verified on the derivation:
+
+```
+$ sg nix-users -c 'nix derivation show /nix/store/lr3iy85l09hwvskqwilzgzl8bbkwnzyv-gui-apps-dbus-activation.drv' \
+    | grep -oE '/nix/store/[a-z0-9]+-(seahorse|gammastep)[^"]*\.drv'
+/nix/store/1v75abldp56l3qn1hwshyywna157r2qy-gammastep-2.0.11.drv
+/nix/store/1vm3i0g402kzmynjlwwnz7knj956j5yv-seahorse-47.0.1.drv
+```
+
+Both are among its `inputDrvs`, so the guard would remain correct if these
+packages left `home.packages` entirely. The distinction matters because it is
+the reason no import-from-derivation is needed: IFD would only bite when
+auto-*generating* the `xdg.dataFile` entries, whose attribute names Home
+Manager's option model wants at Nix eval time.
+
 Like `wrappedGuiApps`, it rides in `home.packages` rather than being a flake
 check, so the flake-check count stays at three. And like it, its output is
 `mkdir -p "$out"` and not `touch "$out"`: `pkgs.buildEnv` refuses to merge a
@@ -1254,6 +1569,39 @@ $ grep -c '^      dir="$pkg/share/dbus-1/services"$' home/gui-apps.nix
 
 $ sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."isutton@suffer".activationPackage'
 /nix/store/491v1scgzdqc3qz6g667p1adn0049apq-home-manager-generation
+```
+
+That path is the generation **as of this section's measurements**. Fix round 1
+then moved it to
+`/nix/store/mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation`, and the
+guard's own derivation moved with it —
+`lr3iy85l…-gui-apps-dbus-activation.drv` became
+`245rxpvz…-gui-apps-dbus-activation.drv`. That was checked rather than
+assumed, and the first assumption was wrong: a claim that the derivation was
+byte-identical was written here and then disproved by diffing the two. The
+whole difference is one shell comment line inside the build script, corrected
+from `gui-apps-guard` to `gui-apps-dbus-guard`:
+
+```
+$ (diff of the two derivations' env.buildCommand)
+-# output is reached from home.packages through gui-apps-guard's symlink,
+-# and pkgs.buildEnv refuses to merge a store path that is a file.
++# output is reached from home.packages through gui-apps-dbus-guard's
++# symlink, and pkgs.buildEnv refuses to merge a store path that is a file.
+```
+
+`inputDrvs`, `inputSrcs`, `args`, `builder` and `system` are all identical;
+only `buildCommand` and the resulting `out` path differ. A shell comment
+inside a Nix `''…''` string is part of the derivation, unlike a Nix `#`
+comment outside one — which is why the other comment corrections in this file
+did not move the hash and this one did. The guard's *logic* is unchanged, so
+the two mutation proofs above still describe the shipped check, and the new
+derivation produces the same verdict:
+
+```
+$ sg nix-users -c 'nix log /nix/store/245rxpvzgcg348dmwxhaahwgj51mg29v-gui-apps-dbus-activation.drv' | tail -2
+ok (declared): 7kw783zcy9kdanj1fgx3fc4gwj1jyxbn-seahorse-47.0.1 -> org.gnome.seahorse.Application.service
+ok (no activation files): bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
 ```
 
 ### Outstanding: the two gate items that need a switch

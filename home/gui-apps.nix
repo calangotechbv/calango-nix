@@ -213,8 +213,8 @@ let
 
     [ "$fail" -eq 0 ] || exit 1
     # A directory, for the same reason the guard above ends in mkdir: this
-    # output is reached from home.packages through gui-apps-guard's symlink,
-    # and pkgs.buildEnv refuses to merge a store path that is a file.
+    # output is reached from home.packages through gui-apps-dbus-guard's
+    # symlink, and pkgs.buildEnv refuses to merge a store path that is a file.
     mkdir -p "$out"
   '';
 in
@@ -276,8 +276,14 @@ in
   # guiPackages member that ships a share/dbus-1/services/*.service file
   # must have a matching xdg.dataFile entry somewhere in this
   # configuration. That guard needs no IFD -- it reads each package's
-  # directory at *build* time, by which point home.packages has already
-  # forced every one of them to be built. Its verdict today, from its own
+  # directory at *build* time, and what forces those packages to exist by
+  # then is the guard's OWN inputDrvs, not home.packages: interpolating each
+  # store path into its build script makes every one of them a build-time
+  # dependency of the guard itself. Verified on the derivation --
+  # `nix derivation show <gui-apps-dbus-activation.drv>` lists
+  # seahorse-47.0.1.drv and gammastep-2.0.11.drv among its inputDrvs -- so
+  # the guard would still be correct if these packages left home.packages
+  # entirely. Its verdict today, from its own
   # build log, one line per package (the name is the store path's basename,
   # hash included): `ok (declared): 7kw783z...-seahorse-47.0.1 ->
   # org.gnome.seahorse.Application.service` and `ok (no activation files):

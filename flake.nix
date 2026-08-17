@@ -291,38 +291,67 @@
         # for x-scheme-handler/sgnl and x-scheme-handler/signalcaptcha. Migrate
         # Signal without noticing and both handlers stop resolving, silently.
         #
-        # The list is empty of migrated entries today: seahorse and gammastep
-        # are named by no handler. It exists now so that the seven follow-on
-        # applications cannot be added without it, and the check below proves
-        # the machinery works by asserting the ids the flake DOES ship.
+        # As of 2026-08-17 mimeapps.list names six unique ids and this flake
+        # provides exactly one of them, eu.calangotech.CalangoOpen.desktop --
+        # measured, with `sed -n 's/^[^=]*=//p' | tr ';' '\n' | sort -u`, and a
+        # count of that moment rather than a standing property. Two of the
+        # other five, bitwarden.desktop and signal-desktop.desktop, are among
+        # the seven follow-on applications, so the flake's share of that list
+        # is expected to grow. That is the reason this check exists now rather
+        # than later. The three package-shipped ids below are named by no
+        # handler at all; they are here so the machinery is exercised, and
+        # asserted for their own sake -- a launcher entry that vanishes is
+        # worth catching whether or not a MIME handler points at it.
+        #
+        # TWO trees, because this flake ships .desktop entries by two
+        # mechanisms and they land in different places:
+        #
+        #   home-path/share/applications             <- home.packages, via buildEnv
+        #   home-files/.local/share/applications     <- xdg.dataFile entries
+        #
+        # eu.calangotech.CalangoOpen.desktop is the second kind
+        # (home/apps.nix's xdg.dataFile."applications/..."), so a check reading
+        # only home-path could never assert the one id that matters most --
+        # adding it would have failed spuriously. An id found in either tree
+        # satisfies the requirement, since both are on the session's search
+        # path.
         #
         # Unlike the two checks above this one needs no "does the directory
         # exist" preamble, and the difference is the direction of the
         # assertion, not an inconsistency. Those two are negative checks
         # (nothing dangling, no pulseaudio binary), where a missing directory
         # produces an empty result that reads as a pass. This one is positive:
-        # every id in `required` must be present, so a $apps that does not
-        # exist makes every `[ ! -e ... ]` true and the check fails on its
-        # first entry. Path drift is loud here by construction.
+        # every id in `required` must be present in one tree or the other, so
+        # a $apps or $files that does not exist makes some `[ ! -e ... ]` pair
+        # true and the check fails. Both branches are load-bearing and neither
+        # can rot unnoticed: the three package ids exist only under $apps and
+        # CalangoOpen only under $files, so breaking either path breaks the
+        # build. Proven by mutating each path in turn.
         gui-desktop-ids =
           pkgs.runCommand "gui-desktop-ids" { } ''
             apps=${suffer.activationPackage}/home-path/share/applications
+            files=${suffer.activationPackage}/home-files/.local/share/applications
             fail=0
 
             # Every id this flake must ship, with the reason it is required.
             # Format: <desktop-id> <why>
             required="org.gnome.seahorse.Application.desktop seahorse-launcher
             gammastep.desktop gammastep-launcher
-            gammastep-indicator.desktop gammastep-indicator-launcher"
+            gammastep-indicator.desktop gammastep-indicator-launcher
+            eu.calangotech.CalangoOpen.desktop mimeapps-http-https-texthtml-about-unknown-handler"
 
             echo "$required" | while read -r id why; do
               [ -n "$id" ] || continue
-              if [ ! -e "$apps/$id" ]; then
+              if [ ! -e "$apps/$id" ] && [ ! -e "$files/$id" ]; then
                 echo "missing .desktop id: $id (needed for: $why)" >&2
+                echo "  Looked in both trees this flake ships entries to:" >&2
+                echo "    $apps" >&2
+                echo "    $files" >&2
                 echo "  The package that should ship it does not, or ships it" >&2
-                echo "  under a different name. nixpkgs and Debian do not" >&2
-                echo "  always agree on the id -- signal-desktop is the known" >&2
-                echo "  case. Check what the package actually ships." >&2
+                echo "  under a different name, or an xdg.dataFile entry was" >&2
+                echo "  renamed or dropped. nixpkgs and Debian do not always" >&2
+                echo "  agree on the id -- signal-desktop is the known case." >&2
+                echo "  Check what the package actually ships." >&2
                 exit 1
               fi
             done || fail=1

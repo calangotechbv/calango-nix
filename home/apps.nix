@@ -149,19 +149,65 @@ in
         || echo "update-desktop-database failed; the browser handler may not resolve" >&2
     '';
 
-  # Warn when ~/.config/mimeapps.list names a .desktop id that nothing on
-  # XDG_DATA_DIRS provides any more.
+  # Warn when ~/.config/mimeapps.list names a .desktop id that neither
+  # XDG_DATA_DIRS nor $HOME/.local/share provides any more. The loop below
+  # searches both, and the second is the load-bearing half: measured on this
+  # machine XDG_DATA_DIRS is
+  # ~/.nix-profile/share:...flatpak...:/usr/local/share:/usr/share, with no
+  # ~/.local/share on it at all -- and ~/.local/share/applications is exactly
+  # where this module's own xdg.dataFile entries land, CalangoOpen included.
+  # A search of XDG_DATA_DIRS alone would report this flake's own default
+  # browser as missing.
   #
-  # Non-fatal, deliberately. That file holds ten associations and several name
-  # things this flake does not own -- flatpak Slack, claude-code-url-handler --
-  # whose absence is none of this flake's business and must never abort a
-  # switch. The fatal half of this property is flake.nix's gui-desktop-ids,
-  # which asserts what the flake itself ships.
+  # Non-fatal, deliberately. Measured on the live file: 12 assignment lines
+  # (10 under [Default Applications], 2 under [Added Associations]) naming 6
+  # unique ids, and only one of those six is this flake's -- the rest are
+  # flatpak Slack, bitwarden, claude-code-url-handler and Signal, whose
+  # absence is none of this flake's business and must never abort a switch.
+  # Both counts are of 2026-08-17, not standing properties: bitwarden and
+  # signal-desktop are among the follow-on applications this project intends
+  # to migrate. The fatal half of this property is flake.nix's
+  # gui-desktop-ids, which asserts only what the flake itself ships.
   #
   # This is the layer that can see the live file at all: a flake check runs in
   # the Nix sandbox, where ~/.config and /usr/share are both invisible.
+  #
+  # Ordering: three `after` edges, all real, none of them inherited from an
+  # attribute name.
+  #
+  #   linkGeneration   creates ~/.local/share/applications/*.desktop from the
+  #                    xdg.dataFile entries above -- half the search path.
+  #   installPackages  builds ~/.nix-profile, and so populates
+  #                    ~/.nix-profile/share/applications, the first entry on
+  #                    XDG_DATA_DIRS -- the other half.
+  #   defaultBrowser   rewrites the very file this hook reads, via
+  #                    `xdg-settings set default-web-browser`. Reading it
+  #                    first would report on the pre-switch contents.
+  #
+  # Naming all three matters because Home Manager's hm.dag.topoSort feeds
+  # builtins.attrValues -- attribute-name sorted -- into a stable
+  # lib.toposort, so any pair of entries with no stated relation is ordered
+  # alphabetically. Measured in the built activate before this was declared,
+  # every hook after linkGeneration sat in exactly alphabetical order:
+  # defaultBrowser, desktopDatabase, footThemeColors, gtkAppearance,
+  # hyprlockConf, installPackages, mimeappsIds, onFilesChange. So "mimeappsIds"
+  # ran last of the three only because the letter m sorts after d and i;
+  # renaming this attribute to anything sorting earlier -- checkMimeappsIds,
+  # auditMimeapps -- would have moved it silently ahead of both, and it would
+  # then have reported against a search path not yet built and a file not yet
+  # rewritten, with nothing to distinguish that from a genuine finding. This
+  # is the same defect home/audio.nix's pipewireSessionManagerAlias paid for.
+  #
+  # entryAfter and not entryBetween, unlike that precedent, and the difference
+  # is that there the second edge was real: reloadSystemd had to come after
+  # the alias link or systemd would never see it. Here nothing downstream
+  # reads anything this hook produces -- it only writes warnings to stderr --
+  # so the `before` list would be empty, and entryBetween [] xs is by
+  # definition entryAfter xs. Declaring an empty edge would state a constraint
+  # that does not exist. The fragility this fixes was entirely on the `after`
+  # side, and all three of those are now stated.
   config.home.activation.mimeappsIds =
-    lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+    lib.hm.dag.entryAfter [ "linkGeneration" "installPackages" "defaultBrowser" ] ''
       run ${pkgs.bash}/bin/sh -c '
         list="$HOME/.config/mimeapps.list"
         [ -r "$list" ] || exit 0
