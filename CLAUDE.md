@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Eleven specs are done and written up in
+standalone Home Manager. Twelve specs are done and written up in
 `docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -98,10 +98,45 @@ the system and once nearly swept `bluez`. Any in-use check must union a `/proc`
 walk (`maps` + `exe`) with the first field of `ps -eo args` for *every*
 process, resolved through `dpkg -S`.
 
+**And that union is blind to interpreted programs — read this together with the
+rule above, because the union is the strongest instrument here and this is where
+it fails silently.** `exe` and `argv[0]` both name the *interpreter*; the script
+is `read()`, never mmapped and never an `exe`, so it appears in neither half.
+Measured in spec 12: `system-config-printer` was in the autoremove census *and*
+its `/usr/share/system-config-printer/applet.py` was running as pid 3823, and
+the union missed it completely —
+
+```sh
+grep -c '^/usr/share/system-config-printer/applet\.py$' "$FILES"   # 0  -- missed
+grep -c '^/usr/bin/python3$' "$FILES"                              # 1  -- seen
+ls -l /proc/3823/fd | grep -c system-config-printer                # 0
+```
+
+and `dpkg -S /usr/bin/python3` resolves to `python3-minimal`, not to the package
+whose code was executing. Its sibling `python3-cups` *was* caught, but only
+because it is a compiled extension module and therefore mmapped;
+`python3-cupshelpers` is pure Python and was missed for the same reason the
+applet was. Treating the union's output as the complete live set would have swept
+two packages out from under a running process. For anything that might be a
+script, ask `dpkg -S` about the full command line, not about `argv[0]`.
+
+**A dependency a running-process check can never see, at any moment.** A plugin
+directory is not a dependency apt can model, and it is not a mapping any process
+holds until the plugin is loaded. `libpipewire-0.3-modules` fills the compiled-in
+module directory of Debian's `libpipewire-0.3.so`
+(`/usr/lib/x86_64-linux-gnu/pipewire-0.3`, read out of the library with
+`strings`, 44 `.so` files in the package). That client library is kept installed
+by `libfluidsynth3` and `qemu-system-gui`, both `ii` and both outside the
+census — and neither was running, so **no measurement taken at any instant would
+have flagged it**. It was found by reading the dependency chain, and it is why
+this project's conservatism rule ("anything whose role cannot be explained is
+marked manual") is not merely cautious: for this shape of dependency there is no
+instrument to be cautious *instead* of.
+
 **Package presence.** `dpkg-query -W -f='${Version}'` prints a version and
 exits `0` for `rc` packages (removed, conffiles retained) — which is exactly
-what `apt remove` leaves. There are **128** `rc` packages on this machine as of
-spec 10 — and that figure moves every time a spec removes something, so count it
+what `apt remove` leaves. There are **145** `rc` packages on this machine as of
+spec 12 — and that figure moves every time a spec removes something, so count it
 rather than quoting this line:
 
 ```sh
@@ -110,7 +145,13 @@ dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' | awk '$1=="rc"' | wc -l
 
 It read 120 for three specs while the true count drifted upward, and spec 10's
 own three (`thunar`, `thunar-volman`, `pcmanfm-qt`) are part of the difference.
-Use:
+Note the reading rose only from 128 to 145 across specs 11 and 12 together,
+while spec 12 alone removed 128 packages: **`rc` is not a running total of what
+has been removed** and cannot be read as one, because a package with no
+conffiles leaves no `rc` entry at all. Measured among spec 12's own removals —
+`avahi-utils`, `gvfs-fuse` and `python3-cups` are `un`, while `cups-pk-helper`,
+`system-config-printer` and `xscreensaver` are `rc`. (No `rc` count was taken
+between spec 10 and spec 12, so the 17 cannot be split between them.) Use:
 
 ```sh
 dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' <pkg>...
@@ -123,13 +164,23 @@ Dependency scans over `dpkg-query` include `rc` packages too; filter to `ii`
 when grep matched nothing, so "the property holds" and "the pipeline broke" are
 indistinguishable. Count explicitly (`| wc -l`) and compare the number.
 
-**But that rule inverts inside a Nix builder, and following it there fails the
-build with no diagnostic.** A builder runs with `-e` and `pipefail` both on:
+**But that rule inverts in two contexts here, and following it in either fails
+with no diagnostic: inside a Nix builder, and inside the Home Manager activation
+script.** Both run with `-e` and `pipefail` on. Name both — spec 11 learned it in
+the builder and spec 12 met the identical trap in `activate`, which the builder
+wording did not cover:
 
 ```sh
 # inside a runCommand
 echo $-              # ehB
 set -o | grep pipefail   # pipefail        on
+
+# and the activation script's own first lines, measured:
+sed -n '1,3p' "$(sg nix-users -c 'nix build --no-link --print-out-paths \
+  .#homeConfigurations."isutton@suffer".activationPackage')/activate"
+# #!/nix/store/…-bash-5.3p9/bin/bash
+# set -eu
+# set -o pipefail
 ```
 
 So `n="$(grep -rl … | wc -l)"` aborts on *grep's* exit status when grep matches
@@ -140,8 +191,13 @@ rule above and spent a build on it.
 
 Inside a builder, put the grep in a **condition**, which `set -e` exempts:
 `if grep -rq … ; then` — which is how `home/foot.nix`'s token guard has always
-been written. Count explicitly in an interactive shell; test by condition in a
-builder.
+been written. In an activation hook a condition is often not available, because
+the count itself is the message; there, append `|| true` to the assignment and
+default the variable, which is what `home/apt-hygiene.nix` does and why that
+clause is load-bearing rather than defensive — without it, a machine with a
+*clean* orphan list aborts its own switch, and the healthy case is the one that
+fails. Count explicitly in an interactive shell; test by condition in a builder;
+guard the assignment in an activation hook.
 
 **`pgrep` on a Nix binary.** Nix wraps binaries, so the process name is
 `.fumon-wrapped` or `.Hyprland-wrapp` (truncated at 15 chars). `pgrep -x fumon`
@@ -284,18 +340,36 @@ the audio removal. The census taken across specs has moved 8 → 14 → 0: the
 audio spec's own removal took the dangling total to 14 (its six audio links
 plus the eight inherited), and a subsequent sweep cleared all fourteen — the
 count right now is zero, all of them unowned per `dpkg -S`. It will rise again
-the next time a package shipping a user unit is removed. Sweep with:
+the next time a package shipping a user unit is removed. Spec 12 removed 128
+packages and did not move it: six of them shipped a user unit and all six were
+`static` or `disabled`, so nothing enabled existed to dangle. Sweep with:
 
 ```sh
-for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do [ -e "$f" ] || echo "$f"; done
+find /etc/systemd/user -xtype l          # dangling symlinks only; 0 right now
+# or, if you want the loop rather than find:
+for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do
+  [ -L "$f" ] && [ ! -e "$f" ] && echo "$f"
+done
 ```
 
-The glob `*.wants/*` needs at least one entry to expand, so an **empty**
-`.wants` directory is invisible to this loop rather than reported by it.
-`/etc/systemd/user/pipewire.service.wants/` is exactly that right now — empty,
-still present, silent here. Cosmetic, since an empty directory dangles
-nothing, but don't read this loop's silence as "no residue of any kind" —
-only as "no dangling *symlinks*".
+**The obvious form of that loop — `[ -e "$f" ] || echo "$f"` — reports a false
+positive on this machine right now**, so it is written above with a `-L` test
+instead. A glob needs at least one entry to expand; with none, the shell leaves
+the *literal pattern* in `$f`, `[ -e ]` rejects it, and the loop prints
+`/etc/systemd/user/*.upholds/*` — a line that reads exactly like a finding.
+`/etc/systemd/user/sockets.target.upholds/` is the only `.upholds` directory and
+it is empty, which is why. Requiring `-L` fixes it: the literal pattern is not a
+symlink, so it is silently skipped, and a real dangling link still prints. Both
+forms above were proven able to fail, against a throwaway tree containing one
+deliberately dangling link.
+
+The same emptiness produces the *opposite* symptom on the other glob, and which
+one you get depends on whether any sibling of that glob expands. `*.wants/*` has
+non-empty members (six `.wants` directories, every entry resolving), so the empty
+`/etc/systemd/user/pipewire.service.wants/` vanishes silently rather than being
+reported. Cosmetic, since an empty directory dangles nothing, but don't read
+either loop's silence as "no residue of any kind" — only as "no dangling
+*symlinks*".
 
 **Removing a package does not kill its running process.** Absence is only
 measurable after the session ends — check after the reboot, not before.
@@ -407,6 +481,44 @@ never own (see Standing facts below). `pulseaudio-utils` did not — once
 the instructive part: "rescued from autoremove" is not "kept forever", and
 the standing fact further down that `pulseaudio-utils` is gone is that same
 package at a later phase, not a contradiction of this one.
+
+**Then this rule was written down here and not applied for four more specs, and
+the backlog reached 137.** That is the single most expensive thing in this file,
+because the cost is not the two packages the rule was written about — it is that
+`apt-get -s autoremove` came to propose removing 137 packages at once, none of
+them orphaned by anything current, so that whoever finally ran it would see the
+breakage attributed to whatever they had changed most recently. Spec 12 defused
+it: 9 marked manual, **128 removed in one deliberate operation**, census now
+`0`. Do not let it regrow. `home/apt-hygiene.nix` warns at every switch when the
+count is above zero, but a warning is a smoke alarm, not a habit — the habit is
+reading the "no longer required" list *at the moment of each removal*, which is
+the only thing that prevents this.
+
+**A hit from an in-use check is not a keep.** Spec 12's union check flagged six
+of the 137, and four of them did not survive inspection — which means a bare hit
+would have kept six packages for four wrong reasons. Classify every hit by *why*
+the file is held. The shapes measured here:
+
+- **A stale process of an already-removed package.** `libmng1` and
+  `qt6-image-formats-plugins` were held by pid 3790, whose `/proc/3790/exe` read
+  `/usr/bin/deskflow (deleted)` — `deskflow` had been removed in spec 10 and was
+  gone from dpkg's database entirely. The hit measures history, not need. The
+  `(deleted)` marker on `exe` is the cheap tell; note it is absent when the
+  holder is an *interpreter* that survived (see the union rule above).
+- **A font held by fontconfig mmap.** `xscreensaver`'s only held file was
+  `/usr/share/fonts/xscreensaver/gallant12x22.ttf`, mmapped by Nix's `foot` —
+  a Nix binary keeping a Debian package looking alive. Restart the holders, then
+  it goes.
+- **A live consumer that is itself orphaned.** `gir1.2-notify-0.7` and
+  `python3-cups` were genuinely held by a genuinely running process — pid 3823,
+  the printer applet — but `system-config-printer`, which *is* that process, was
+  in the census too. A consumer inside the census keeps nothing alive on its own;
+  the question collapses into "is the consumer wanted?", which is a user
+  question, not a measurement. Both went.
+
+So a hit only becomes a keep when the consumer is live, wanted, and **outside**
+the census. Note the fourth shape — a keep with no explanation at all — did not
+occur in spec 12's six hits, but it remains the conservative default if it does.
 
 **nixpkgs relocates GSettings schemas, and then wraps the binary to find
 them.** Schemas live at `share/gsettings-schemas/<name>/glib-2.0/schemas`, a
@@ -597,7 +709,12 @@ reasoning about the comment.
   `home/services.nix`'s `nightLightPath` but never through `home.packages`, so
   the unit ran 2.0.11 while a shell got Debian's 2.0.9. `nightLightPath` still
   names it explicitly on purpose — a unit that resolves its own binaries does
-  not depend on `PATH` order.
+  not depend on `PATH` order. Specs 10 and 11 record a gamma-control failure on
+  2026-08-17 (`Zero outputs support gamma adjustment`, every client refused);
+  it was compositor state, not this package or this flake, and the reboot at
+  15:27 that day cleared it — a full mid-session stop and restart of
+  `night-light.service` afterwards logged zero such warnings — so read those
+  documents as a resolved incident rather than an open one.
 - **`flatseal` and `fresh-editor` stay on apt.** `flatseal` is absent from
   nixpkgs and is really a flatpak; nixpkgs' `fresh-editor` is 0.3.6 against
   Debian's 0.4.7, so moving it would be a downgrade.
@@ -613,26 +730,48 @@ reasoning about the comment.
   hook is **non-fatal by requirement rather than by convenience** — a fatal
   version would now abort every switch on this machine over associations this
   flake does not own and never will.
-- **Night light is degraded, with the trigger unidentified.** Since
-  2026-08-17 08:57 every gamma client on this machine is refused by Hyprland
-  (`Zero outputs support gamma adjustment`), including `night-light.service`'s
-  own. It is not the package — the same store path in the same unit toggled
-  warning-free on 08-15 10:30:39 under generation 18 — and a competing live
-  client is ruled out by the union instrument. A gamma control leaked by spec
-  10's own interrupted hand-run probes is **not** ruled out, nor is a monitor
-  re-apply (live scale 1.25 against the 1.5 in `hypr/hosts/suffer.lua`).
-  The re-login test that would separate them was deferred by the user and has
-  **not** been run; `hyprctl keyword monitor` is rejected by this Hyprland
-  build, so that recovery path is unprobed. Do not read "proceed assuming it
-  works" as a measurement.
-
-  **Disposition: if a re-login restores gamma control, delete this entry — do
-  not soften it.** A transient compositor state is not a standing fact about
-  this machine, and the wrong move on recovery is to reword it into something
-  vaguer that survives forever. If instead it persists across a fresh login,
-  the entry stays and stops being about spec 10 at all: it becomes a Hyprland
-  gamma-control fact, and the leaked-probe candidate above is dead, because a
-  leak cannot outlive the process that held it.
+- **Nine packages are permanently `apt-mark manual`, and all nine for one
+  reason:** `libpipewire-0.3-modules`, its two hard `Depends` `libffado2` and
+  `libroc0.4`, and their chain `libconfig++11`, `libglibmm-2.4-1t64`,
+  `libxml++2.6-2v5`, `libsigc++-2.0-0v5`, `libopenfec1`, `libspeexdsp1` —
+  1 + 2 + 3 + 2 + 1, verified by reading each package's `Depends`. 12166 KiB
+  in total, from `${Installed-Size}`. They fill the compiled-in module directory
+  of **Debian's** `libpipewire-0.3.so`, which `libfluidsynth3` and
+  `qemu-system-gui` keep installed from outside the orphan set; a
+  Debian-linked PipeWire client (a
+  qemu VM's audio device, in practice) loads its protocol and client-node
+  modules from there. Nix's pipewire is unaffected either way — it has its own
+  closure. Every automated check clears these nine, because nothing that needs
+  them was running, which is exactly why they are marked rather than trusted to
+  a measurement. Do not re-litigate this against an in-use check; it cannot see
+  the dependency.
+- **The printer applet and GUI are gone by deliberate choice, and printing is
+  not.** `system-config-printer`, `system-config-printer-udev`, `python3-cups`,
+  `python3-cupshelpers`, `python3-smbc`, `cups-pk-helper`, `avahi-utils` and the
+  `gir1.2-*`/`libhandy` set behind them were removed in spec 12, after the user
+  was asked. The tray applet had been autostarting at every login through
+  `/etc/xdg/autostart/print-applet.desktop`. What stays: `cups` and
+  `cups-daemon` are `ii` and were never in the orphan set, `cupsd` and
+  `cups-browsed` run as system services, and `avahi-daemon` is a separate
+  non-orphaned package still running. So printing itself is unaffected — what
+  was given up is the job-notification applet, the add-a-printer GUI and its
+  network discovery. Re-adding it is `sudo apt install system-config-printer`,
+  not a re-argument.
+- **`gvfs-fuse` is gone, `gvfs` stays.** The FUSE bridge exposed GIO mounts as
+  real paths under `/run/user/1000/gvfs` for programs that do not speak GIO. Its
+  consumers here were `thunar` and `pcmanfm-qt`, both removed in spec 10; `lf`
+  is the file manager now. At the moment of the decision the bridge was mounted
+  and **empty**. Nothing requires it — `gvfs` neither `Depends` on nor
+  `Recommends` it — so `gvfs` itself is untouched and `ii`. If MTP phones or SMB
+  shares ever need to appear as real paths, this is the package to reinstall.
+- **xscreensaver is gone; `hyprlock` and `hypridle` are the lock and idle
+  path.** `xscreensaver`, `xscreensaver-data`, `xscreensaver-gl` and the
+  `libglu1-mesa` / `libjpeg-turbo-progs` / `libturbojpeg0` behind them went in
+  spec 12. There was no `~/.xscreensaver`, no running process, the shipped user
+  unit was `disabled`, and this repository had zero references to it. It
+  survived the in-use check only because its font `gallant12x22.ttf` was mmapped
+  by Nix's `foot` — which is the fontconfig false positive above, and the reason
+  terminals were restarted before the removal.
 
 ---
 
