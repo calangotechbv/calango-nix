@@ -1,8 +1,11 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Nine specs are done and written up in
-`docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. This
+standalone Home Manager. Ten specs are done and written up in
+`docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. Count
+that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
+the authority, and spec 10 landed here saying "Nine" because eight had been
+incremented once and spec 9 had never bumped it at all. This
 file exists because the same mistakes kept recurring across them; everything
 below has been paid for at least once.
 
@@ -21,16 +24,27 @@ which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
 `nix flake check` now runs **three** checks (see `flake.nix`):
-`no-dangling-home-files`, `no-pulseaudio-daemon` and `gui-desktop-ids`. Run it
-after touching any `.source` in `home/portals.nix` or `home/uwsm.nix`, anything
-in `home/audio.nix`'s `home.packages`, `guiPackages` in `home/gui-apps.nix`, the
-`applications/` `xdg.dataFile` entries in `home/apps.nix`, or the `required`
-list in `flake.nix`.
+`no-dangling-home-files`, `no-pulseaudio-daemon` and `gui-desktop-ids`.
 
-Two further build-time guards ride in `home.packages` rather than in `checks` —
-`home/gui-apps.nix`'s `wrappedGuiApps` and `dbusActivatableGuiApps` — so they
-run on every generation build, which is strictly more often than
-`nix flake check` is invoked, and they do not appear in that count of three.
+Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
+`home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
+`home/apps.nix`, or the `required` list in `flake.nix`. The first of those is
+deliberately stated as *syntax* rather than as a list of modules: an earlier
+version of this passage named `home/portals.nix` and `home/uwsm.nix`, and
+`grep -l 'source =' home/*.nix` returns **ten** modules, so the named pair
+silently excused the other eight — `home/audio.nix:195,231` among them. Grep
+for the property; do not trust a list of names, including this sentence's.
+
+Further build-time guards ride in `home.packages` rather than in `checks`, so
+they run on every generation build — strictly more often than
+`nix flake check` is invoked — and none of them appears in that count of three.
+Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
+then read what each list contains. An earlier version of this passage said
+"two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
+`dbusActivatableGuiApps`; `home/audio.nix:385` also puts `pulseaudioClients`
+there, and that derivation carries three `exit 1` guards of its own. A
+package-producing derivation can be a guard too, which is exactly what a
+remembered list of "the guards" misses.
 
 ---
 
@@ -77,7 +91,17 @@ process, resolved through `dpkg -S`.
 
 **Package presence.** `dpkg-query -W -f='${Version}'` prints a version and
 exits `0` for `rc` packages (removed, conffiles retained) — which is exactly
-what `apt remove` leaves. There are 120 `rc` packages on this machine. Use:
+what `apt remove` leaves. There are **128** `rc` packages on this machine as of
+spec 10 — and that figure moves every time a spec removes something, so count it
+rather than quoting this line:
+
+```sh
+dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' | awk '$1=="rc"' | wc -l
+```
+
+It read 120 for three specs while the true count drifted upward, and spec 10's
+own three (`thunar`, `thunar-volman`, `pcmanfm-qt`) are part of the difference.
+Use:
 
 ```sh
 dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' <pkg>...
@@ -286,8 +310,18 @@ broken package rather than a missing environment. Detect it by the
 `.<name>-wrapped` sibling in `bin/`, not by grepping the binary —
 `makeWrapper` emits a shell script and `makeBinaryWrapper` an ELF, and a check
 that understands only one passes vacuously on the other.
-`flake.nix`'s `gui-desktop-ids` and `home/gui-apps.nix`'s guard are the two
-halves of this.
+`home/gui-apps.nix`'s `wrappedGuiApps` is the guard for this property, and it is
+the only one — spec 10 first wrote that `gui-desktop-ids` was "the other half"
+of it, which is false: that check asserts `.desktop` ids and contains no schema
+or wrapper logic at all. The three checks spec 10 added cover three unrelated
+properties, and conflating any two of them is how a guard comes to look
+load-bearing for something it never touches:
+
+| check | property | where |
+|---|---|---|
+| `wrappedGuiApps` | every GUI package with schemas has a wrapped binary | `home.packages` |
+| `dbusActivatableGuiApps` | every package shipping a D-Bus service file has an `xdg.dataFile` mirror | `home.packages` |
+| `gui-desktop-ids` | the `.desktop` ids this flake must ship are present | `checks` |
 
 **A `.desktop` file's winning entry and its winning binary are chosen by two
 different search paths.** `XDG_DATA_DIRS` decides which `.desktop` a launcher
@@ -471,6 +505,14 @@ reasoning about the comment.
   **not** been run; `hyprctl keyword monitor` is rejected by this Hyprland
   build, so that recovery path is unprobed. Do not read "proceed assuming it
   works" as a measurement.
+
+  **Disposition: if a re-login restores gamma control, delete this entry — do
+  not soften it.** A transient compositor state is not a standing fact about
+  this machine, and the wrong move on recovery is to reword it into something
+  vaguer that survives forever. If instead it persists across a fresh login,
+  the entry stays and stops being about spec 10 at all: it becomes a Hyprland
+  gamma-control fact, and the leaked-probe candidate above is dead, because a
+  leak cannot outlive the process that held it.
 
 ---
 

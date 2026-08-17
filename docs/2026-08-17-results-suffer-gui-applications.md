@@ -604,7 +604,7 @@ ls: cannot access '/usr/bin/gammastep': No such file or directory
 That distinction matters because `dpkg-query -W -f='${Version}'` alone
 prints a version and exits `0` for an `rc` package — removed, conffiles
 retained — which is exactly what `apt remove` leaves behind, and this
-machine carries 120 of them. The `db:Status-Abbrev` form is the one that
+machine carries 128 of them. The `db:Status-Abbrev` form is the one that
 tells the two states apart, and here it reports no package at all, not
 `rc`.
 
@@ -1654,8 +1654,18 @@ dpkg states:
   `c`onfig-files: removed with conffiles retained, which is exactly what
   `apt remove` leaves behind and exactly why a bare
   `dpkg-query -W -f='${Version}'` is forbidden here — it prints a version
-  and exits `0` for all three of these. This machine carries 120 such
-  records.
+  and exits `0` for all three of these. Counted at the same time as the rest
+  of this section rather than carried from `CLAUDE.md`, which said 120:
+
+  ```
+  $ dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' | awk '$1=="rc"' | wc -l
+  128
+  ```
+
+  These three are themselves part of the difference between the two figures,
+  which is the whole argument for counting it here: a number that moves every
+  time a spec removes a package cannot be quoted from a file written during an
+  earlier spec, least of all under a heading that says "Measured".
 - **`un`** — `emacs-lucid`, alone. Want unknown, state not-installed:
   dpkg holds a record for the name with no selection recorded against it
   and nothing installed, not even conffiles. Note its version column is
@@ -1766,8 +1776,38 @@ present — so the real count of dangling symlinks is **zero**, unchanged
 from the audio spec's sweep. `CLAUDE.md` already records this blind spot
 for `pipewire.service.wants/`; `sockets.target.upholds/` is a second
 instance of it, and here it made the loop print a line that reads exactly
-like a finding. None of the six removals shipped a systemd *user* unit,
-which is why the count did not rise.
+like a finding.
+
+The count of dangling links is zero, and the sweep above is the direct
+measurement of that. What the sweep does not by itself explain is *why* it
+did not rise, and the answer covers **eight** packages rather than the six of
+that single `apt remove` — `seahorse` and `gammastep` went in their own
+removals, and an earlier draft of this sentence said "six" while making a
+claim that ranges over all eight.
+
+The supporting evidence is uneven across the eight, and saying so is the
+point. `gammastep` still has a cached `.deb`, which answers directly:
+
+```
+$ dpkg -c /var/cache/apt/archives/gammastep_2.0.9-1+b1_amd64.deb | grep -c systemd
+0
+```
+
+`seahorse` has **neither** a cached `.deb` nor an installed file list, so no
+equivalent check is available for it — do not read the line above as covering
+both. What covers all eight is the absence of any `deb-systemd-helper` state:
+
+```
+$ ls /var/lib/systemd/deb-systemd-helper-enabled/ \
+    | grep -icE 'gammastep|seahorse|thunar|pcmanfm|kitty|deskflow|emacs'
+0
+```
+
+That is the load-bearing half rather than a second opinion. `CLAUDE.md`
+records that `deb-systemd-helper`'s `was-enabled` defaults to true and that a
+leftover statefile is what silently re-enables a link on the next upgrade — so
+an empty statefile directory is what makes the zero durable instead of
+merely current.
 
 ### What this endpoint does not include
 
@@ -1953,11 +1993,31 @@ clobbered the other. The only mitigation actually in place was a warning
 in the dispatch telling the second agent to re-read the file and stop
 rather than revert. The outcome was luck, not design.
 
-**15. A count was stated wrongly twice before being measured.**
-`home/portals.nix` was described as declaring three `xdg.dataFile`
-activation entries, then four; it declares five, and the merged profile
-holds five service files. The two quantities are different questions and
-were finally checked separately, both answering five.
+**15. A count was stated wrongly three times, and the third time was in
+this list.** `home/portals.nix` was described as declaring three
+`xdg.dataFile` activation entries, then four; it declares five. The
+sentence that recorded that error then said "the merged profile holds five
+service files", dropping the word `portal` — and dropping that word is what
+made it wrong, because five is the portal-owned count and **six** is the
+total. Both quantities, counted separately and at last correctly:
+
+```
+$ for f in home/*.nix; do n=$(grep -cE '"dbus-1/services/[^"]+"' "$f"); \
+    [ "$n" -gt 0 ] && echo "$f $n"; done
+home/gui-apps.nix 3      # one entry; the other two are the guard's error text
+home/portals.nix 5       # five entries
+
+$ ls -1 ~/.local/share/dbus-1/services/ | wc -l
+6
+$ ls -1 ~/.nix-profile/share/dbus-1/services/ | wc -l
+6
+```
+
+Six files in each directory, the same six names: five from
+`home/portals.nix` and `org.gnome.seahorse.Application.service` from
+`home/gui-apps.nix`. A defect entry about a miscount restating the miscount
+is the sharpest available illustration of why a number belongs next to the
+command that produced it.
 
 ### Open: every gamma client on this machine is refused
 

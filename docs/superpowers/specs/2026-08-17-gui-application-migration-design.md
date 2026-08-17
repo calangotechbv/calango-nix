@@ -349,8 +349,13 @@ name instead. The bus's own `XDG_DATA_DIRS` carries no `~/.nix-profile/share`,
 so the activation file inside the package was invisible and seahorse could not
 be launched by any launcher. The remedy — an `xdg.dataFile` entry under
 `dbus-1/services/` — was already recorded in `CLAUDE.md` since spec 7 and
-already applied five times in `home/portals.nix`. A fourth build-time guard,
-`dbusActivatableGuiApps`, now covers the class for every `guiPackages` member.
+already applied five times in `home/portals.nix`. A build-time guard named
+`dbusActivatableGuiApps` now covers the class for every `guiPackages` member.
+Named rather than numbered on purpose: an earlier version of this line called it
+"a fourth build-time guard", an ordinal with no established base that also
+disagreed with `CLAUDE.md`'s own count of the guards riding in `home.packages` —
+which was itself wrong. Guards in this repo are enumerated by grepping for them,
+never by position in a remembered sequence.
 
 **Phase 3's build-time check could not exist as specified.** This spec
 correctly says the obvious single-check form is not implementable in the Nix
