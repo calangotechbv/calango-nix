@@ -227,6 +227,31 @@ Checking `/proc/<pipewire-pid>/maps` for them returns 0 whether Bluetooth
 works or not — a check that cannot fail. The session manager's maps are where
 they appear.
 
+**Deleting a Debian `.wants` link does not disable the unit for long.** `gcr4`'s
+and `openssh-client`'s postinst run `deb-systemd-helper --user unmask` and then
+re-enable when `was-enabled` returns true — and it defaults to true, because a
+bare `rm` never updates that helper's statefile under
+`/var/lib/systemd/deb-systemd-helper-enabled/`. So the next upgrade of the
+package silently restores the link. `deb-systemd-helper` only ever touches
+`/etc`, so the durable answer is a **mask** in `~/.config/systemd/user`
+(UnitPath position 5), which is also owned by the flake instead of by root.
+
+**A symlink's meaning depends on which question systemd is asking, and the
+answers differ.** Masking asks "does this unit path resolve to `/dev/null`",
+which is a full chase, so a store-mediated link masks fine. Aliasing compares
+the link's name against its **immediate** target's basename, so a store-mediated
+link is not an alias at all (see `home/audio.nix`). Both were measured on this
+machine. Do not carry a result from one to the other.
+
+**And probe every layer the change passes through, not just the interesting
+one.** The mask shape above was probed against systemd by hand and passed —
+then the build failed, because `xdg.configFile`'s `source` is a `types.path`
+and Nix refuses to import `/dev/null` in pure evaluation mode
+(`access to absolute path '/dev' is forbidden`). The runtime question was
+answered and the build question was assumed. The fix is a one-line
+`runCommand` whose output *is* a symlink to `/dev/null`, which is pure because
+`ln -s` never resolves its target.
+
 **An apt removal orphans packages the Nix side still needs.**
 `apt-get -s remove` prints a "no longer required" list that is easy to skim
 past. Removing the audio set orphaned `rtkit` and, at that same moment,
@@ -279,6 +304,35 @@ package at a later phase, not a contradiction of this one.
   the login password through to unlock the keyring, and that is the part with
   no user-space replacement. Do not re-open this without answering the PAM
   question first.
+- **`gcr4` cannot be removed either — it takes `gnome-keyring` with it.**
+  `apt-get -s remove gcr4` removes `gcr`, `gcr4`, `gnome-keyring`, `seahorse`,
+  `pinentry-gnome3` and `golang-docker-credential-helpers`; `gnome-keyring`
+  declares `Depends: gcr (>= 3.4)`. So `gcr-ssh-agent` can be **masked but
+  never uninstalled**, and a one-level `apt-cache rdepends` does not show this
+  — it reports only `gcr`, which looks discardable. Simulate the removal.
+- **The ssh agent is `gcr-ssh-agent`; openssh's `ssh-agent.service` and
+  `.socket` are masked in `home/services.nix`.** Debian enables both, and both
+  set `SSH_AUTH_SOCK` from `ExecStartPost` with no ordering between them, so
+  which agent a shell talked to was decided by whichever activated last
+  (measured: identical `ActiveEnterTimestamp`). `SSH_AUTH_SOCK` is now
+  `/run/user/1000/gcr/ssh`. `gcr-ssh-agent` is a wrapper and runs openssh's own
+  agent underneath on a private socket, so nothing is lost by the choice; it
+  was kept because `gcr4` is a permanent resident anyway. Home Manager's
+  `services.ssh-agent` is **not** a drop-in — it exports the variable only from
+  shell initialisation, where Debian's socket sets it in the manager's
+  environment, so adopting it would leave every GUI application that was not
+  launched from a shell without it.
+- **Open question, not a conclusion: can `gcr-ssh-agent` persist a key across
+  logins?** The reason to prefer it would be keyring-backed passphrases. What
+  was measured: `ssh-add` against its socket writes nothing to
+  `~/.local/share/keyrings/login.keyring`, and the key does not survive even a
+  restart of the agent — because `ssh-add` decrypts the key locally and sends
+  the *decrypted key* over the agent protocol, so the agent never sees a
+  passphrase to store. What was not measured: the binary links `libsecret` and
+  carries `secret_password_storev`/`lookupv`, so a storage path exists that
+  this probe did not reach. The likely trigger is on-demand loading of a key
+  from `~/.ssh/`, which needs a test against real key material. Until someone
+  runs that, treat keyring persistence as unproven.
 - **The corp set stays on apt permanently:** `google-chrome-stable`, `code`,
   `1password`, `1password-cli`, `endpoint-verification`, and flatpak Slack
   (`com.slack.Slack`). Note `1password` is load-bearing beyond its own window:
