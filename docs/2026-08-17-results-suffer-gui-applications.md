@@ -642,11 +642,14 @@ Warning: 1/1 output(s) do not support gamma adjustment.
 ```
 
 No warning appears anywhere in the journal before 2026-08-17T08:57:01, and
-they are continuous after it. The count is not a fixed total — it grows
-with time rather than settling: measured counts of the `Zero outputs
-support gamma adjustment` line alone were `169` at 09:04:25 and `430` at
-09:26:15. The distribution (none before 08:57:01, continuous after) is
-what carries the argument here, not a bare total.
+they are continuous after it while the unit is active — the count grows
+only during that window, not indefinitely: measured counts of the `Zero
+outputs support gamma adjustment` line alone were `169` at 09:04:25 and
+`430` at 09:26:15. The last such warning was logged at 09:15:11, and the
+unit stopped at 09:15:15, so `430` is the all-time total, fixed since
+that stop, not a figure still climbing at the time of the second reading.
+The distribution (none before 08:57:01, continuous after while running)
+is what carries the argument here, not a bare total.
 
 Several measurements bear on whether Task 3 caused this, and none of them
 does.
@@ -748,42 +751,50 @@ journal window — and concluded this was the first mid-session restart the
 machine had ever logged, then called the defect "latent in the toggle
 path, exposed by testing." Over the full journal that premise is false:
 mid-session `off` → 3000 → 6500 toggles ran warning-free on 08-13 16:06,
-08-14 17:29, 08-15 10:30, and 08-15 23:17. The 08-15 23:17 one is
-decisive, because it ran the identical Nix binary in the identical unit:
+08-14 17:29, 08-15 10:30, and 08-15 23:17. **08-15 10:30:39** is the
+decisive one, because it shows every step the failing 08:57:00 → 08:57:01
+sequence shows — a stop, an `off` run that execs nothing, then a new
+client roughly one second later, then a further restart:
 
 ```
-2026-08-15T23:17:51 Stopping night-light.service
-2026-08-15T23:17:55 Started night-light.service
-2026-08-15T23:17:55 Stopping night-light.service
-2026-08-15T23:17:55 Started night-light.service
-2026-08-15T23:17:55 night-light: gammastep -m wayland -l -22.9056:-47.0608 -t 3000:3000
-2026-08-15T23:17:58 Stopping night-light.service
-2026-08-15T23:18:02 Started night-light.service
-2026-08-15T23:18:02 night-light: gammastep -m wayland -l -22.9056:-47.0608 -t 6500:3000
+2026-08-15T10:30:39 Stopping night-light.service
+2026-08-15T10:30:39 Stopped night-light.service
+2026-08-15T10:30:39 Started night-light.service
+2026-08-15T10:30:39 night-light: off
+2026-08-15T10:30:40 Started night-light.service
+2026-08-15T10:30:41 night-light: gammastep -m wayland -l -23.6261:-46.7917 -t 3000:3000
+2026-08-15T10:30:45 Stopping night-light.service
+2026-08-15T10:30:49 Stopped night-light.service
+2026-08-15T10:30:49 Started night-light.service
+2026-08-15T10:30:49 night-light: gammastep -m wayland -l -23.6261:-46.7917 -t 6500:3000
 ```
 
-No warning followed any of those restarts. Generation 23 was active at
-that instant (switched 21:19:31; generation 24 followed at 23:34:14), and
+No warning followed any of it. Generation 18 was active at that instant
+(switched 2026-08-15 09:15:24; generation 19 followed at 10:49:08), and
 its unit names the same store path the failing one does:
 
 ```
-$ for g in 20 23 24 31 32; do grep -o 'Environment=PATH=/nix/store/[a-z0-9]*-gammastep-[0-9.]*' \
-    ~/.local/state/nix/profiles/home-manager-$g-link/home-files/.config/systemd/user/night-light.service; done
-gen 20  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
-gen 23  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
-gen 24  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
-gen 31  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
-gen 32  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+gen 17  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+gen 18  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+gen 19  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
 ```
 
+08-15 23:17 is a secondary data point rather than the primary one: a
+mid-session stop/start cycle under generation 23, three restarts inside
+eleven seconds, warning-free, but without a `night-light: off` line in
+its own journal block, so it does not license the `off`-toggle comparison
+the way 10:30:39 does.
+
 `8a7b947`, which put `pkgs.gammastep` into `nightLightPath`, is dated
-2026-08-14 16:25:31, so every generation from 20 on ran the store binary —
-the same one running today. The identical binary, the identical unit, and
-the identical restart pattern worked two days ago and fail today, so the
-variable is neither the package nor the toggle path. What triggers the
-refusal is unidentified; "latent in the toggle path, exposed by testing"
-is deleted here rather than softened, because the 08-15 23:17 restart is
-that same toggle path succeeding.
+2026-08-14 16:25:31; generation 15 (2026-08-14 17:53:57) is the earliest
+generation verified to carry `gammastep-2.0.11`, consistent with that
+landing date, and generations 1 through 19 all exist before the 10:30:39
+exemplar above. The identical binary, an equivalent unit, and the same
+stop / `off` / new-client-a-second-later / restart shape worked two days
+ago and fail today, so the variable is neither the package nor the toggle
+path. What triggers the refusal is unidentified; "latent in the toggle
+path, exposed by testing" is deleted here rather than softened, because
+08-15 10:30:39 is that same toggle path succeeding.
 
 An attempt to recover by re-applying the monitor rule was rejected by
 this Hyprland build outright and settles nothing either way:
