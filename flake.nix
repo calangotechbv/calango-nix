@@ -143,6 +143,7 @@
           ./home/portals.nix
           ./home/audio.nix
           ./home/gui-apps.nix
+          ./home/apt-hygiene.nix
           ./home/uwsm.nix
           {
             home.username = username;
