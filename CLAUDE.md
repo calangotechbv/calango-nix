@@ -806,15 +806,54 @@ reasoning about the comment.
 - **One file outside `$HOME`:** `/usr/local/share/wayland-sessions/hyprland-nix.desktop`,
   root-owned, hand-created, covered by no Nix module. greetd needs it and
   nothing else supplies it.
-- Every Nix **GUI** binary needs the nixGL wrapper (compositor, quickshell,
-  hyprlock, hyprpolkitagent, the hyprland portal). Apt GUI applications do not.
-  `ldd` cannot answer this for Qt: it `dlopen`s its platform and GL plugins, so
-  `ldd` is clean for a binary that aborts on first draw. **The parenthetical
-  list is turning out to be the whole of the rule**: four Nix GUI applications
-  now draw without it — `seahorse` and `gammastep` (spec 10), `signal-desktop`
-  and `bitwarden` (spec 13) — so it is about the compositor and its immediate
-  surface-creating companions, not about GUI applications in general. Still ask
-  per application; the instrument is one person and one window.
+- **Every Nix GUI binary needs nixGL's *environment*. Only five need their own
+  *wrapper*.** Those two are different claims and this file conflated them
+  through three specs.
+
+  The five wrapped are the compositor, quickshell, hyprlock, hyprpolkitagent and
+  the hyprland portal — enumerate with `grep -rn nixGLIntel home/*.nix`. Everything
+  else Nix-built inherits the variables the compositor's wrap exports, because
+  `home/session.nix` launches Hyprland through `nixGLIntel` and the whole session
+  descends from it: `LIBGL_DRIVERS_PATH`, `GBM_BACKENDS_PATH`, `LIBVA_DRIVERS_PATH`,
+  `__EGL_VENDOR_LIBRARY_FILENAMES`, `LD_LIBRARY_PATH`.
+
+  An earlier version of this entry said four applications "draw without it" and
+  concluded the parenthetical list was the whole rule. They draw without their
+  **own wrapper**, inheriting the session's. Strip the variables and Nix's mesa
+  falls back to `/run/opengl-driver/lib`, which does not exist here:
+
+  ```sh
+  env -u LIBGL_DRIVERS_PATH -u GBM_BACKENDS_PATH -u LIBVA_DRIVERS_PATH \
+      -u __EGL_VENDOR_LIBRARY_FILENAMES -u LD_LIBRARY_PATH signal-desktop
+  # MESA-LOADER: failed to open dri: /run/opengl-driver/lib/gbm/dri_gbm.so
+  # ANGLE Display::initialize error 12289: Failed to get system egl display
+  # Initialization of all (2) EGL display types failed.
+  # Exiting GPU process due to errors during initialization
+  ```
+
+  **So do not "clean up" the session inheritance.** It looks like a leak and it is
+  load-bearing for every Nix GUI application on the machine. A spec to scrub it
+  was one command from being written.
+
+  `ldd` still cannot answer the per-application question: it `dlopen`s its
+  platform and GL plugins, so `ldd` is clean for a binary that aborts on first
+  draw. The instrument is one person and one window.
+- **That same inheritance breaks flatpak, and the fix belongs at the flatpak
+  boundary.** The sandbox has no `/nix/store`, so the inherited paths resolve to
+  nothing inside it and mesa loads no driver at all — Debian's flatpak Slack falls
+  back to software rendering and loses VA-API too. Reproduced inside the sandbox:
+
+  ```sh
+  flatpak run --command=sh com.slack.Slack -c 'echo $GBM_BACKENDS_PATH'
+  # /nix/store/…-mesa-26.1.5/lib/gbm:…      <- valid on the host, absent in here
+  ```
+
+  The file exists; the namespace does not contain it. Flatpak ships its own
+  matched GL stack (`org.freedesktop.Platform.GL.default`), which is the
+  accelerated path — our variables override it with dead paths. Unset them per
+  application with `flatpak override --user --unset-env=…`, never by scrubbing the
+  session. Do not mount `/nix/store` into the sandbox either: a host mesa against
+  the runtime's own glibc is worse than the fallback.
 - Recurring shape: a Nix library resolving a NixOS-only path
   (`/run/opengl-driver/lib`, `/run/wrappers/bin/polkit-agent-helper-1`,
   `/run/wrappers/bin/unix_chkpwd`). Fixed with scoped overlays in `flake.nix`,

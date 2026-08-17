@@ -52,6 +52,95 @@ GPU-accelerated is unmeasured.** Practically the migration stands either way —
 a working window was the gate — but a later report of "Signal is sluggish"
 must not be met with "we established GL is fine", because nothing here did.
 
+### Corrected again, after the close-out: both DO need nixGL's environment
+
+The paragraph above is still too generous, and the measurement that settles it
+arrived only because the user asked why `nixglWrap` was needed at all.
+
+Run with the five nixGL variables removed, Signal does not merely lose
+acceleration — its GPU stack collapses:
+
+```sh
+env -u LIBGL_DRIVERS_PATH -u GBM_BACKENDS_PATH -u LIBVA_DRIVERS_PATH \
+    -u __EGL_VENDOR_LIBRARY_FILENAMES -u LD_LIBRARY_PATH signal-desktop
+
+MESA-LOADER: failed to open dri: /run/opengl-driver/lib/gbm/dri_gbm.so: …
+ANGLE Display::initialize error 12289: Failed to get system egl display
+eglInitialize OpenGL failed with error EGL_NOT_INITIALIZED, trying next display type
+Initialization of all (2) EGL display types failed.
+Exiting GPU process due to errors during initialization
+```
+
+Nix's mesa falls back to `/run/opengl-driver/lib` — the NixOS-only path this
+project already records — and every EGL display type fails, four GPU process
+attempts in a row.
+
+So the true statement is narrower than either previous version. **Neither needs
+its own nixGL wrapper. Both need nixGL's environment, and both were getting it
+by inheritance from the compositor's wrap**, because `home/session.nix` launches
+Hyprland through `nixGLIntel` and the session descends from it. Every GL test in
+this spec, including Task 1's, ran with those variables already set. Task 1 asked
+"does it draw?" and could not have distinguished "needs no nixGL" from "already
+has nixGL", because nothing in the test varied that.
+
+That distinction is not academic. On the strength of the earlier wording a
+follow-up was nearly specified to scrub those variables from the session as a
+leak — which would have broken both applications this spec had just migrated. The
+one command that prevented it was the user's question.
+
+### The same inheritance breaks flatpak, and that part IS a defect
+
+Debian's flatpak Slack, launched from this session:
+
+```
+MESA-LOADER: failed to open dri: /nix/store/…-mesa-26.1.5/lib/gbm/dri_gbm.so:
+  cannot open shared object file: No such file or directory
+[…] vaInitialize failed: unknown libva error
+```
+
+The file exists on the host — checked — and the compositor has it mapped. What
+fails is the namespace: the sandbox has no `/nix/store`, so the inherited paths
+name nothing inside it. Reproduced directly:
+
+```sh
+flatpak run --command=sh com.slack.Slack -c 'echo $GBM_BACKENDS_PATH'
+# /nix/store/…-mesa-26.1.5/lib/gbm:…
+```
+
+Flatpak ships its own matched GL stack, `org.freedesktop.Platform.GL.default`,
+and that is Slack's accelerated path. Our variables override it with paths that
+resolve to nothing, so mesa loads no driver and Chromium falls back to software;
+`LIBVA_DRIVERS_PATH` costs it hardware video decode at the same time. Removing
+the override does not take acceleration away — it returns Slack's own.
+
+The fix therefore belongs at the flatpak boundary and nowhere else:
+
+```sh
+flatpak override --user --unset-env=LIBGL_DRIVERS_PATH \
+  --unset-env=GBM_BACKENDS_PATH --unset-env=LIBVA_DRIVERS_PATH \
+  --unset-env=__EGL_VENDOR_LIBRARY_FILENAMES --unset-env=LD_LIBRARY_PATH \
+  com.slack.Slack
+```
+
+Not run here — it is a persistent user-level override and the user's to approve.
+
+### One more thing that test disturbed, and did not damage
+
+The stripped-environment run also printed:
+
+```
+Detected change in safeStorage backend, can't decrypt DB key
+  (previous: kwallet6, current: basic_text)
+ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
+```
+
+Electron chose a different `safeStorage` backend under the stripped environment
+and could not decrypt the database key. **Nothing was written:**
+`~/.config/Signal/config.json` is byte-identical to the pre-migration backup —
+226 bytes, same md5 — so this was a failed read, not a rewrite. Do not repeat
+that invocation: a backend change is exactly the kind of thing that could rewrite
+a key record on some path, and the point has now been made.
+
 The check that settles it needs one of them **running**, because it reads a
 live process's maps — the instrument this project trusts:
 
