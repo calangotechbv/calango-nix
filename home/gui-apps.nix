@@ -15,14 +15,27 @@ let
   #
   # Both bin/gammastep and bin/gammastep-indicator are wrapGAppsHook
   # wrappers (.gammastep-wrapped and .gammastep-indicator-wrapped siblings
-  # exist, and both wrapper scripts do prefix XDG_DATA_DIRS with gtk+3's and
-  # gsettings-desktop-schemas' own schema directories). But that is a
-  # property of gammastep's *dependencies*, not of gammastep itself: the
-  # package ships no share/gsettings-schemas directory of its own --
-  # `find <gammastep> -path '*gsettings-schemas*' | wc -l` is 0 -- so the
-  # guard below takes its "no schemas -> nothing to wrap" exempt path for
-  # this entry, the same as it would for any package with zero schemas of
-  # its own, wrapped binaries or not.
+  # exist), and this entry is why the guard below has no "ships no schemas"
+  # exemption. gammastep ships no share/gsettings-schemas directory of its
+  # own:
+  #
+  #   $ G=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+  #   $ find $G -path '*gsettings-schemas*' | wc -l
+  #   0
+  #
+  # Yet each of its two wrappers still prefixes XDG_DATA_DIRS with two
+  # schema directories -- gtk+3's and gsettings-desktop-schemas':
+  #
+  #   $ for b in gammastep gammastep-indicator; do \
+  #       grep -oE "/nix/store/[^']*/share/gsettings-schemas/[^']*" \
+  #         $G/bin/$b | sort -u | wc -l; done
+  #   2
+  #   2
+  #
+  # So "no schemas of its own" is not "no schemas to reach": the ones that
+  # matter to this package come from its dependencies. The guard below
+  # therefore requires a wrapped binary from every member, gammastep
+  # included, and gammastep supplies two.
   #
   # Neither gammastep.desktop nor gammastep-indicator.desktop declares
   # DBusActivatable (checked directly: `grep DBusActivatable` on both files
@@ -54,27 +67,38 @@ let
   # shell script and the other an ELF, and a check that only understands one
   # would pass vacuously on the other.
   #
-  # Packages with no GSettings schema at all are exempt, and the exemption is
-  # derived rather than listed: if the package ships no gsettings-schemas
-  # directory, there is nothing to find and nothing to wrap.
+  # No exemption for a package that ships no schemas of its own. There was
+  # one -- `[ ! -d "$pkg/share/gsettings-schemas" ]`, justified as "nothing to
+  # find and nothing to wrap" -- and the gammastep comment above disproves
+  # that justification in this same file: zero schema directories of its own,
+  # two on each wrapper's XDG_DATA_DIRS prefix, both from dependencies. A GTK
+  # application that missed wrapGAppsHook would have taken that exempt path
+  # and aborted at startup anyway, which is precisely the failure this guard
+  # exists to make into a build error.
+  #
+  # So every guiPackages member must have a wrapped binary. Both do today, per
+  # this derivation's own build log -- `ok (1 wrapped): ...-seahorse-47.0.1`
+  # and `ok (2 wrapped): ...-gammastep-2.0.11` -- so the stronger requirement
+  # costs nothing, and a future non-GTK application that genuinely needs no
+  # wrapper becomes an exemption someone has to write down here rather than
+  # one it receives silently.
   wrappedGuiApps = pkgs.runCommand "gui-apps-schema-wrapped" { } ''
     fail=0
     for pkg in ${lib.concatStringsSep " " (map toString guiPackages)}; do
       name="$(basename "$pkg")"
 
-      if [ ! -d "$pkg/share/gsettings-schemas" ]; then
-        echo "ok (no schemas): $name" >&2
-        continue
-      fi
-
       wrapped="$(find "$pkg/bin" -maxdepth 1 -name '.*-wrapped' 2>/dev/null | wc -l)"
       if [ "$wrapped" -eq 0 ]; then
-        echo "$name ships GSettings schemas but no wrapped binary." >&2
-        echo "  Its schemas are at share/gsettings-schemas/, which GLib does" >&2
-        echo "  not search, and nothing here adds that to XDG_DATA_DIRS. The" >&2
-        echo "  application would abort at startup with" >&2
-        echo "  \"Settings schema ... is not installed\"." >&2
+        echo "$name has no wrapped binary in bin/." >&2
+        echo "  nixpkgs relocates GSettings schemas to" >&2
+        echo "  share/gsettings-schemas/, which GLib does not search, and" >&2
+        echo "  nothing here adds that to XDG_DATA_DIRS. A GTK application" >&2
+        echo "  needing a schema -- its OWN or a dependency's -- would abort" >&2
+        echo "  at startup with \"Settings schema ... is not installed\"." >&2
         echo "  Expected a .<name>-wrapped sibling in bin/ from wrapGAppsHook." >&2
+        echo "  If this package is genuinely not a GTK application, exempt it" >&2
+        echo "  by name and say why -- NOT by whether it ships schemas of its" >&2
+        echo "  own, which gammastep shows is the wrong question." >&2
         fail=1
       else
         echo "ok ($wrapped wrapped): $name" >&2
