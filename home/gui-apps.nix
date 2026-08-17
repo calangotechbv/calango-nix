@@ -89,10 +89,11 @@ let
   # Explicit, and deliberately NOT derived. The derived rule -- "ships no
   # schemas of its own, therefore nothing to wrap" -- is what this guard
   # shipped with in spec 10, and the gammastep comment above disproves it in
-  # this same file: zero schema directories of its own, two on each of its two
-  # wrappers, both from dependencies. Deriving a second rule would be the same
-  # mistake wearing a different predicate, so the key is a name a human had to
-  # type and the value is a sentence a human had to justify.
+  # this same file: gammastep-indicator needs its wrapper and reads no schema
+  # from any source, so wrapper necessity is not a function of schemas at all.
+  # Deriving a second rule would be the same mistake wearing a different
+  # predicate, so the key is a name a human had to type and the value is a
+  # sentence a human had to justify.
   #
   # Keyed by lib.getName, which is the pname, so an entry survives a version
   # bump without being re-approved -- and only a version bump. A rename is a
@@ -127,10 +128,11 @@ let
   # There IS an exemption, and its shape is the whole point. There was once a
   # derived one -- `[ ! -d "$pkg/share/gsettings-schemas" ]`, justified as
   # "nothing to find and nothing to wrap" -- and the gammastep comment above
-  # disproves that justification in this same file: zero schema directories of
-  # its own, two on each wrapper's XDG_DATA_DIRS prefix, both from
-  # dependencies. A GTK application that had merely missed wrapGAppsHook would
-  # have taken that exempt path and aborted at startup anyway, which is
+  # disproves that justification in this same file: gammastep-indicator needs
+  # its wrapper for GI_TYPELIB_PATH and reads no schema at all, so the
+  # predicate measures the wrong property entirely. A GTK application that had
+  # merely missed wrapGAppsHook would have taken that exempt path and aborted
+  # at startup anyway, which is
   # precisely the failure this guard exists to make into a build error. So it
   # was deleted, with the prediction that a legitimately unwrapped application
   # would eventually need a deliberate one.
