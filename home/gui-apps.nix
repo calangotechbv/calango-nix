@@ -4,7 +4,33 @@ let
   # GUI applications migrated off apt. One list, because the guard below
   # asserts a property over all of them at once and a second list would be a
   # second thing to keep in step.
-  guiPackages = [ pkgs.seahorse ];
+  #
+  # gammastep closes a two-provenance split rather than starting a
+  # migration. pkgs.gammastep was already reaching the night-light unit
+  # through home/services.nix's nightLightPath -- the unit's own
+  # Environment=PATH -- but never through home.packages, so the unit ran
+  # 2.0.11 while a shell and both .desktop entries got Debian's 2.0.9.
+  # Nix's package has full parity: gammastep, gammastep-indicator, and both
+  # .desktop files.
+  #
+  # Both bin/gammastep and bin/gammastep-indicator are wrapGAppsHook
+  # wrappers (.gammastep-wrapped and .gammastep-indicator-wrapped siblings
+  # exist, and both wrapper scripts do prefix XDG_DATA_DIRS with gtk+3's and
+  # gsettings-desktop-schemas' own schema directories). But that is a
+  # property of gammastep's *dependencies*, not of gammastep itself: the
+  # package ships no share/gsettings-schemas directory of its own --
+  # `find <gammastep> -path '*gsettings-schemas*' | wc -l` is 0 -- so the
+  # guard below takes its "no schemas -> nothing to wrap" exempt path for
+  # this entry, the same as it would for any package with zero schemas of
+  # its own, wrapped binaries or not.
+  #
+  # Neither gammastep.desktop nor gammastep-indicator.desktop declares
+  # DBusActivatable (checked directly: `grep DBusActivatable` on both files
+  # in the store path matches nothing), and gammastep ships no
+  # share/dbus-1/services directory at all -- confirmed again here, see the
+  # xdg.dataFile comment below for why that matters. So unlike seahorse,
+  # gammastep needs no D-Bus activation file.
+  guiPackages = [ pkgs.seahorse pkgs.gammastep ];
 
   # Assert that every GUI package here is wrapped for GSettings schemas.
   #

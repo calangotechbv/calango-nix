@@ -10,6 +10,10 @@ let
   # are builtins too. What is actually invoked as a command:
   nightLightPath = lib.makeBinPath (with pkgs; [
     gammastep # -m wayland/-l/-t/-O, the whole point of the unit (run.sh:88,93,103)
+              # Kept explicit even though home/gui-apps.nix now puts gammastep
+              # in the profile: a unit that resolves its own binaries does not
+              # depend on PATH order, and this one was right when the shell was
+              # wrong.
     gnused    # sed, to read mode/temp out of the conf file (run.sh:38)
     coreutils # tail, to take the last assignment when a key repeats (run.sh:38)
   ]);
