@@ -694,6 +694,24 @@ hl.config({
             -- and read back with `hyprctl getoption input:touchpad:scroll_factor`.
             -- Note `hyprctl keyword` cannot set this: the Lua parser rejects it.
             scroll_factor = 0.2,
+
+            -- Accidental-touch defence, and the reason it is only this one
+            -- line. disable_while_typing already defaults to true, so it is
+            -- not repeated here. Palm detection is *impossible* on this pad:
+            -- `libinput record /dev/input/event5` reports only ABS_X, ABS_Y,
+            -- ABS_MT_SLOT, ABS_MT_POSITION_X/Y, ABS_MT_TOOL_TYPE and
+            -- ABS_MT_TRACKING_ID -- no ABS_PRESSURE, no ABS_MT_PRESSURE, no
+            -- ABS_MT_TOUCH_MAJOR. libinput's palm detection needs pressure or
+            -- touch size, so a quirks file setting AttrPalmPressureThreshold
+            -- or AttrPalmSizeThreshold would be silently inert. `Area
+            -- rectangle: n/a` closes the active-region route too. That leaves
+            -- only limiting what a stray touch may *do*: a brush can still
+            -- click, but it can no longer start a drag or a text selection.
+            --
+            -- Note the key is tap_and_drag here but `tap-and-drag` in
+            -- `hyprctl getoption input:touchpad:tap-and-drag`. The bracket
+            -- form ["tap-and-drag"] fails with `unknown config key`.
+            tap_and_drag = false,
         },
     },
 })
