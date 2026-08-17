@@ -573,3 +573,167 @@ running process reads `.seahorse-wrapp`, not `seahorse`. `CLAUDE.md`
 documents this trap by name (`pgrep` on a Nix binary). The instrument
 that actually worked was walking `/proc/*/exe` for the `/nix/store` path,
 which is what produced `pid=485425` above.
+
+## Phase 2: gammastep
+
+Task 3 closed a split rather than starting a migration. `nightLightPath`
+in `home/services.nix` had named `pkgs.gammastep` since `8a7b947`, long
+before this task — it is the night-light unit's own `Environment=PATH`,
+so the unit itself already ran Nix's `2.0.11`. What it fed from was never
+`home.packages`, so a shell and both `.desktop` entries still resolved
+Debian's `2.0.9`. Debian's `gammastep` was still installed alongside it:
+two providers of the same binary on the same machine, the shape CLAUDE.md
+already names for spec 6's `fumon` and the foot server. Task 3
+(`6ed055b`) added `pkgs.gammastep` to `guiPackages` in `home/gui-apps.nix`
+and the user removed Debian's package, closing the split rather than
+moving anything that was not already moved.
+
+### Provenance: PASS
+
+Apt no longer has `gammastep` at all — not even as `rc`:
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' gammastep gammastep-indicator
+dpkg-query: no packages found matching gammastep
+dpkg-query: no packages found matching gammastep-indicator
+
+$ ls -l /usr/bin/gammastep
+ls: cannot access '/usr/bin/gammastep': No such file or directory
+```
+
+That distinction matters because `dpkg-query -W -f='${Version}'` alone
+prints a version and exits `0` for an `rc` package — removed, conffiles
+retained — which is exactly what `apt remove` leaves behind, and this
+machine carries 120 of them. The `db:Status-Abbrev` form is the one that
+tells the two states apart, and here it reports no package at all, not
+`rc`.
+
+The unit's own `MainPID`, read directly rather than through `command -v`
+or a child process:
+
+```
+$ systemctl --user show night-light.service -p ActiveState -p MainPID -p NRestarts -p Environment
+ActiveState=active
+SubState=running
+MainPID=597879
+NRestarts=0
+Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11/bin:...
+
+# /proc walk by exe, since `pgrep -x gammastep` cannot match a Nix wrapper
+597879 /nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11/bin/.gammastep-wrapped
+  cmdline=.../bin/gammastep -m wayland -l -22.9056 -47.0608 -t 6500 3000
+```
+
+`pgrep -x gammastep` was not the instrument here for the same reason it
+never is against a Nix binary: the wrapper's `comm` is truncated to
+`.gammastep-wrapped`, and a name match against `gammastep` finds nothing
+in either the working or the broken state. `NRestarts=0`, `exe` resolves
+into the store, and `Environment=PATH` names only the derivation's own
+`bin` — the unit does not depend on profile ordering at all, which is the
+property `nightLightPath` was written to hold even before this task.
+
+### Function: FAIL, and the case for reading it as pre-existing
+
+Every gamma client on the machine now fails identically:
+
+```
+Warning: Zero outputs support gamma adjustment.
+Warning: 1/1 output(s) do not support gamma adjustment.
+```
+
+Four measurements were taken, each one capable of pointing back at Task
+3's change if it had come out the other way. None of them did.
+
+The same store path had worked for nearly three hours in this session:
+the unit started at 06:11:42 with `-t 6500:3000` and logged no warning
+until 08:57:01, the first warning anywhere in the journal, 288 of them
+following, none before, across four earlier boots. The store path itself
+is byte-identical across the working and failing period — the same
+derivation, `/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11`,
+in the unit fragment of generations 33, 34, and 35. Task 3 added a
+comment to the `nightLightPath` let-binding and added the package to
+`home.packages`; neither changes the derivation that the unit's `Exec=`
+resolves, and those three identical paths are the proof of that rather
+than an inference from it.
+
+The measurement that actually moves the defect across the task boundary
+is the third one: with the unit stopped and a `/proc`-wide walk by `exe`
+confirming zero `gammastep` processes alive anywhere, a hand-run client
+still fails, identically:
+
+```
+$ systemctl --user stop night-light.service
+# /proc walk: no gammastep process anywhere
+$ timeout 4 gammastep -m wayland -O 3000
+Warning: Zero outputs support gamma adjustment.
+Warning: 1/1 output(s) do not support gamma adjustment.
+```
+
+A client that had merely lost a race against a predecessor holding the
+gamma control would succeed once that predecessor was gone. This one does
+not, with nothing else alive to be racing against, so the refusal is
+state held on the compositor side, not a client-side timing accident.
+Fourth, the protocol itself is still bound: gammastep prints a different
+message when `zwlr_gamma_control_manager_v1` is absent entirely, and this
+is not that message — reaching the per-output warning means the manager
+bound and enumerated `eDP-1`; it is the per-output gamma control that
+came back `failed`.
+
+### What happened at 08:57
+
+The Quickshell night-light toggle restarts the unit —
+`quickshell/night-light/NightLightService.qml:102` is the `Process` whose
+`command` is `["systemctl", "--user", "restart", "night-light.service"]`
+— and the journal shows it firing twice within one second:
+
+```
+08:57:00 Stopping/Stopped                      <- the 06:11 client, killed
+08:57:00 Started ... run.sh[596876]: night-light: off
+08:57:01 Started ... run.sh[597144]: gammastep -m wayland -l ... -t 3000:3000
+08:57:01 Warning: Zero outputs support gamma adjustment.
+```
+
+`run.sh`'s `off` branch, `quickshell/night-light/run.sh:63-66`, reports
+`off` and exits 0 without execing anything, so in the interval between
+those two `Started` lines no gamma client existed on the machine at all.
+The client that started a second later got `failed`, and every client
+since has too.
+
+Hyprland is pid 3154, started 06:11:40, and has not restarted since — the
+same compositor process served the working 06:11:42 client and is the one
+refusing every client from 08:57:01 on.
+
+The journal supports this being the first mid-session restart of the
+gamma client ever recorded on this machine: the four earlier boots each
+show exactly one `Started` line and no `Stopping` until shutdown. So the
+trigger is a mid-session restart of the toggle path, a defect latent in
+that path rather than in anything Task 3 touched — testing Task 3 is what
+exposed it, not what introduced it.
+
+An attempt to recover by re-applying the monitor rule was rejected by
+this Hyprland build outright and settles nothing either way:
+
+```
+$ hyprctl keyword monitor "eDP-1,1920x1200@60,0x0,1.25"
+keyword can't work with non-legacy parsers. Use eval.
+```
+
+### Not measured
+
+Whether a re-login recovers gamma control. The unit worked moments after
+the 06:11 login and every client has failed since 08:57, which makes a
+re-login the obvious next probe — but it is a probe, not a result, and it
+was not run. Do not read the rest of this section as having already
+answered it.
+
+Nor was it established whether the compositor's refusal is a leaked
+gamma-control object or a monitor that lost its LUT size — both fit every
+measurement above equally, and nothing here separates them. The
+Quickshell monitor panel applied a mode during this session: the live
+scale is 1.25 against the 1.5 that `hypr/hosts/suffer.lua` documents, so a
+monitor re-apply is a second untested candidate trigger, not a ruled-out
+one. `hyprctl keyword monitor` being rejected by this build (above) leaves
+that recovery path unprobed as well.
+
+`night-light.service` was left restarted and active (`MainPID=658862`),
+still emitting the warning every five seconds. Nothing was left stopped.
