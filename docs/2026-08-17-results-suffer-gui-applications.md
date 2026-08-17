@@ -202,23 +202,32 @@ ii  seahorse
 
 ### The GL verdict
 
+The user ran each binary by hand, bare and unwrapped, from a terminal
+inside the live Hyprland session — no automated check can watch a window
+appear or a screen change color, so this step could only ever be theirs.
+The observations below (a window for `seahorse`, the two warnings from
+`gammastep`, the geoclue complaint from `gammastep-indicator`) are as the
+user reported them.
+
 #### seahorse
 
-Run bare, unwrapped, from a terminal inside the live Hyprland session:
-`$SH/bin/seahorse` drew a window. **Needs no nixGL.**
+The user ran `$SH/bin/seahorse` and reported a window appeared. **Needs
+no nixGL.**
 
-Observation was the only instrument that could settle this. `ldd` is a
-false negative for a toolkit that `dlopen`s its platform and GL plugins
-rather than linking them — the same shape `CLAUDE.md` records for
-`hyprpolkitagent`, where a binary starts, registers, and only dies the
-instant it is asked to render. A clean `ldd` output proves nothing about
-that failure mode either way, so it was not consulted for the verdict;
-running the binary against the real compositor was.
+Observation was the only instrument that could settle this, and it had
+to be the user's. `ldd` is a false negative for a toolkit that `dlopen`s
+its platform and GL plugins rather than linking them — the same shape
+`CLAUDE.md` records for `hyprpolkitagent`, where a binary starts,
+registers, and only dies the instant it is asked to render. A clean
+`ldd` output proves nothing about that failure mode either way, so it
+was not consulted for the verdict; the user watching the binary draw
+against the real compositor was.
 
 #### gammastep
 
-Run bare: `$GS/bin/gammastep -m wayland -O 4000` — the screen warmed and
-the process ran until Ctrl-C. **Needs no nixGL.**
+The user ran `$GS/bin/gammastep -m wayland -O 4000` and reported the
+screen warmed; the process ran until they sent Ctrl-C. **Needs no
+nixGL.**
 
 Here `ldd` *is* a valid instrument, and it agrees: `.gammastep-wrapped`
 links zero of `libGL`, `libEGL`, `libgbm`, `libvulkan`. It links
@@ -234,25 +243,25 @@ as an `ldd` false negative on principle — would be cargo-culting the
 rule rather than using it for the reason it exists.
 
 **The probe that produced `Zero outputs support gamma adjustment` was
-invalid, and that is the controller's fault, not gammastep's.** Running
-`$GS/bin/gammastep -m wayland -O 4000` alongside the running
-`night-light.service` — whose MainPID is already an active gammastep
-instance holding the compositor's gamma control — asked a second client
-to take a resource only one client can hold at a time. The unit's own
-gammastep did not relinquish it, so the second instance's request to
-adjust gamma was refused and it printed `Warning: Zero outputs support
-gamma adjustment` / `1/1 output(s) do not support gamma adjustment`.
-That is not an ambiguous result and it is not evidence against
-gammastep needing or not needing nixGL — it is what running two
-exclusive clients against the same compositor resource produces, every
-time, regardless of GL. The screen visibly warming during the same run
-is the actual verdict; the warning is an artifact of a badly-designed
-probe.
+invalid, and that is the controller's fault, not gammastep's.** The
+user's run of `$GS/bin/gammastep -m wayland -O 4000` happened alongside
+the already-running `night-light.service` — whose MainPID is already an
+active gammastep instance holding the compositor's gamma control — which
+asked a second client to take a resource only one client can hold at a
+time. The unit's own gammastep did not relinquish it, so the second
+instance's request to adjust gamma was refused and the user saw it print
+`Warning: Zero outputs support gamma adjustment` / `1/1 output(s) do not
+support gamma adjustment`. That is not an ambiguous result and it is not
+evidence against gammastep needing or not needing nixGL — it is what
+running two exclusive clients against the same compositor resource
+produces, every time, regardless of GL. The screen visibly warming
+during the same run, also as the user reported it, is the actual
+verdict; the warning is an artifact of a badly-designed probe.
 
 #### gammastep-indicator
 
-Run bare: `$GS/bin/gammastep-indicator` produced a tray icon and printed
-a geoclue2 complaint.
+The user ran `$GS/bin/gammastep-indicator` and reported a tray icon
+appeared, with a geoclue2 complaint printed alongside it.
 
 The complaint is pre-existing and irrelevant to this desktop.
 `geoclue-2.0` is `rc` — not installed — and
