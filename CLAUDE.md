@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Twelve specs are done and written up in
+standalone Home Manager. Thirteen specs are done and written up in
 `docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -139,8 +139,8 @@ instrument to be cautious *instead* of.
 
 **Package presence.** `dpkg-query -W -f='${Version}'` prints a version and
 exits `0` for `rc` packages (removed, conffiles retained) — which is exactly
-what `apt remove` leaves. There are **145** `rc` packages on this machine as of
-spec 12 — and that figure moves every time a spec removes something, so count it
+what `apt remove` leaves. There are **147** `rc` packages on this machine as of
+spec 13 — and that figure moves every time a spec removes something, so count it
 rather than quoting this line:
 
 ```sh
@@ -155,7 +155,16 @@ has been removed** and cannot be read as one, because a package with no
 conffiles leaves no `rc` entry at all. Measured among spec 12's own removals —
 `avahi-utils`, `gvfs-fuse` and `python3-cups` are `un`, while `cups-pk-helper`,
 `system-config-printer` and `xscreensaver` are `rc`. (No `rc` count was taken
-between spec 10 and spec 12, so the 17 cannot be split between them.) Use:
+between spec 10 and spec 12, so the 17 cannot be split between them.)
+
+Spec 13 then moved it 145 → 147 by removing exactly two packages,
+`signal-desktop` and `bitwarden`, both of which left conffiles. That is a clean
+illustration of the paragraph above rather than a counterexample to it: here
+the delta happens to equal the number of packages removed, and it is precisely
+that coincidence which makes "`rc` is a running total" tempting. It is not one.
+Spec 12 removed 128 and moved the reading by part of 17; spec 13 removed 2 and
+moved it by 2. The delta is the number of removed packages *that carried
+conffiles*, which is a different quantity that sometimes agrees. Use:
 
 ```sh
 dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' <pkg>...
@@ -577,9 +586,86 @@ load-bearing for something it never touches:
 
 | check | property | where |
 |---|---|---|
-| `wrappedGuiApps` | every GUI package with schemas has a wrapped binary | `home.packages` |
+| `wrappedGuiApps` | every non-exempt GUI package has a wrapped binary | `home.packages` |
 | `dbusActivatableGuiApps` | every package shipping a D-Bus service file has an `xdg.dataFile` mirror | `home.packages` |
 | `gui-desktop-ids` | the `.desktop` ids this flake must ship are present | `checks` |
+
+**`wrappedGuiApps`' exemption is an explicit table, and the derived form was
+tried and disproved.** Spec 10 shipped a derived rule — "ships no schemas of its
+own, therefore nothing to wrap", spelled `[ ! -d "$pkg/share/gsettings-schemas" ]`
+— and it was deleted after review, because a GTK application that had merely
+*missed* `wrapGAppsHook` takes that exempt path and aborts at startup anyway,
+which is the exact failure the guard exists to turn into a build error. Spec 13
+replaced it with `wrapExemptions` in `home/gui-apps.nix`: an attrset of pname →
+reason, keyed by `lib.getName` so an entry survives a version bump and only a
+version bump. Two entries today, `signal-desktop` and `bitwarden-desktop`, both
+Electron with genuinely nothing to wrap.
+
+A name in a table has to be typed by a person who then has to write the
+sentence beside it. A predicate exempts every future package that happens to
+satisfy it, including the one that satisfies it by accident, and nobody is
+asked a question at that moment. Do not derive it again.
+
+**An exemption that stops being true fails the build; it does not accumulate.**
+Three branches, all three proven by mutation with the mutation confirmed by a
+count before the build ran:
+
+| branch | fires when | message |
+|---|---|---|
+| missing | a non-exempt member has no `.*-wrapped` | `<name> has no wrapped binary in bin/.` |
+| **stale** | an *exempt* member has gained one upstream | `<name> is on wrapExemptions but ships N wrapped binary(ies).` |
+| **vacuity** | every member is exempt | `every guiPackages member is on wrapExemptions.` |
+
+The stale branch is what separates this from an allowlist: an allowlist only
+grows, and an entry that has stopped being true goes on excusing a package that
+has started needing the check, silently, because nothing re-reads it. The
+vacuity anchor is the same one `gui-desktop-ids` and `no-pulseaudio-daemon`
+carry — without it the guard prints an `ok` line per member while requiring
+nothing of any of them.
+
+**And gammastep is the counterexample to that reasoning, not an instance of a
+package that would have broken — `home/gui-apps.nix`'s own comment overstates
+this and has not been corrected in the file.** What is measured:
+
+```sh
+SH=$(sg nix-users -c 'nix eval --raw .#homeConfigurations."isutton@suffer".pkgs.seahorse')
+find "$SH" -name '*.gschema.xml' | wc -l                                  # 3
+strings "$SH/bin/.seahorse-wrapped" | grep -oE 'org\.gnome\.[a-z.]*' | sort -u
+# org.gnome.crypto.pgp, org.gnome.keyring., org.gnome.seahorse{,.manager,.window}
+
+GA=$(sg nix-users -c 'nix eval --raw .#homeConfigurations."isutton@suffer".pkgs.gammastep')
+find "$GA" -path '*gsettings-schemas*' | wc -l                            # 0
+strings "$GA/bin/.gammastep-wrapped" | grep -oE 'org\.[a-z]+\.[a-zA-Z.]*' | sort -u
+# org.freedesktop.DBus.Error.AccessDenied, org.freedesktop.DBus.Properties.Set,
+# org.freedesktop.GeoClue   -- D-Bus names, not GSettings schema ids
+```
+
+seahorse's wrapper is load-bearing: three schemas of its own and a binary that
+names them. gammastep's main binary reaches for no schema at all, so the two
+directories its wrapper prefixes (`gtk+3` and `gsettings-desktop-schemas`) look
+**incidental** — `wrapGAppsHook` adds what the closure offers whether the
+binary wants it or not. "Ships no schemas of its own" genuinely does not imply
+"needs no wrapper", and that is the whole disproof; gammastep is not evidence
+that any package on this machine *would* have broken.
+
+The package that would break is a GTK application with no schemas of its own
+that reads a **dependency's**. The nearest thing here is `gammastep-indicator`,
+and whether it qualifies is **unmeasured**: `.gammastep-indicator-wrapped` is a
+16-line launcher stub with no toolkit token in it, but the module it imports is
+a real GTK 3 application —
+
+```sh
+M="$GA/lib/python3.13/site-packages/gammastep_indicator"
+grep -ohE 'Gtk|Gio|GLib|GSettings|AppIndicator|AyatanaAppIndicator' "$M"/*.py | sort | uniq -c
+# 2 AppIndicator / 2 AyatanaAppIndicator / 24 GLib / 28 Gtk
+```
+
+— with no `Gio` or `Settings` reference anywhere in it, against six GTK 3
+schemas in the closure (`org.gtk.Settings.{ColorChooser,Debug,EmojiChooser,FileChooser}`,
+`org.gtk.Demo`, `org.gtk.exampleapp`) that a status-icon application plausibly
+never opens. Plausibly is not measured. Either way the table is unaffected:
+gammastep is wrapped, so it takes the checked path and never the exempt one.
+Do not read the `.nix` comment as saying gammastep was a casualty.
 
 **A `.desktop` file's winning entry and its winning binary are chosen by two
 different search paths.** `XDG_DATA_DIRS` decides which `.desktop` a launcher
@@ -590,11 +676,44 @@ apt package is part of making it deterministic, not cleanup afterwards.
 
 **`.desktop` ids are not stable across the Debian/Nix boundary.** nixpkgs'
 `signal-desktop` ships `signal.desktop` where Debian's ships
-`signal-desktop.desktop`, and `~/.config/mimeapps.list` names the Debian id for
+`signal-desktop.desktop`, and `~/.config/mimeapps.list` named the Debian id for
 `x-scheme-handler/sgnl` and `x-scheme-handler/signalcaptcha`. Migrating Signal
 without checking kills both handlers silently. Some ids *are* identical —
-`firefox-esr.desktop`, `org.gnome.seahorse.Application.desktop` — which is
-worse than none being identical, because it invites the assumption.
+`firefox-esr.desktop`, `bitwarden.desktop`,
+`org.gnome.seahorse.Application.desktop` — which is worse than none being
+identical, because it invites the assumption.
+
+**Spec 13 made this concrete, and it is no longer a hypothetical.** Signal
+moved; both handlers were rewritten to `signal.desktop` by
+`home/apps.nix`'s `signalMimeappsId` activation hook — narrow, idempotent,
+non-fatal, and ordered `entryBetween [ "mimeappsIds" ] [ "writeBoundary" ]` so
+the fixer runs before the reporter. `bitwarden` migrated in the same spec with
+its id unchanged, which is the identical-id trap sitting right beside the
+non-identical one; do not generalise from either. Live state:
+
+```sh
+xdg-mime query default x-scheme-handler/sgnl           # signal.desktop
+xdg-mime query default x-scheme-handler/signalcaptcha  # signal.desktop
+xdg-mime query default x-scheme-handler/bitwarden      # bitwarden.desktop
+```
+
+And `gui-desktop-ids` now covers ids handlers actually reference, which is the
+property it declared in spec 10 and could not reach until spec 11 widened it to
+both trees. `required` holds **6** ids; **3** of them are named in
+`~/.config/mimeapps.list`, across **8** handler lines:
+
+```sh
+for id in org.gnome.seahorse.Application.desktop gammastep.desktop \
+          gammastep-indicator.desktop eu.calangotech.CalangoOpen.desktop \
+          signal.desktop bitwarden.desktop; do
+  printf '%-45s %s\n' "$id" "$(grep -cF "$id" ~/.config/mimeapps.list || true)"
+done
+# eu.calangotech.CalangoOpen.desktop  5 ; signal.desktop  2 ; bitwarden.desktop  1
+# the other three read 0 -- launcher ids with no association
+```
+
+Count that list from `flake.nix` rather than quoting these numbers; they move
+whenever `required` or `mimeapps.list` does.
 
 **A Nix comment and a shell comment are not the same thing, and the difference
 is which side of the string boundary it is on.** A `#` comment in a Nix
@@ -690,7 +809,12 @@ reasoning about the comment.
 - Every Nix **GUI** binary needs the nixGL wrapper (compositor, quickshell,
   hyprlock, hyprpolkitagent, the hyprland portal). Apt GUI applications do not.
   `ldd` cannot answer this for Qt: it `dlopen`s its platform and GL plugins, so
-  `ldd` is clean for a binary that aborts on first draw.
+  `ldd` is clean for a binary that aborts on first draw. **The parenthetical
+  list is turning out to be the whole of the rule**: four Nix GUI applications
+  now draw without it — `seahorse` and `gammastep` (spec 10), `signal-desktop`
+  and `bitwarden` (spec 13) — so it is about the compositor and its immediate
+  surface-creating companions, not about GUI applications in general. Still ask
+  per application; the instrument is one person and one window.
 - Recurring shape: a Nix library resolving a NixOS-only path
   (`/run/opengl-driver/lib`, `/run/wrappers/bin/polkit-agent-helper-1`,
   `/run/wrappers/bin/unix_chkpwd`). Fixed with scoped overlays in `flake.nix`,
@@ -752,6 +876,42 @@ reasoning about the comment.
   15:27 that day cleared it — a full mid-session stop and restart of
   `night-light.service` afterwards logged zero such warnings — so read those
   documents as a resolved incident rather than an open one.
+- **`signal-desktop` and `bitwarden` are Nix's, as of spec 13.** Both apt
+  packages are `rc` — removed, conffiles retained — and both binaries resolve
+  to `~/.nix-profile/bin`. Three things to carry:
+  - **The nixpkgs attribute is `bitwarden-desktop`.** Plain `pkgs.bitwarden`
+    throws `'bitwarden' has been renamed to/replaced by 'bitwarden-desktop'`
+    — a `throw` from the alias machinery, so it fails at eval with a message
+    naming the fix rather than silently installing nothing. The *binary* is
+    still `bitwarden` and the `.desktop` id is still `bitwarden.desktop`; only
+    the attribute differs. `lib.getName` returns `bitwarden-desktop`, which is
+    what `wrapExemptions` is keyed by.
+  - **Both are exempt from `wrappedGuiApps`, on purpose.** Electron, not GTK:
+    one binary each, zero `.*-wrapped` siblings, zero `share/gsettings-schemas`
+    directories. They are the first and only entries in `wrapExemptions`.
+    Neither ships `share/dbus-1/services`, so `dbusActivatableGuiApps` owes
+    them nothing and says so itself with `ok (no activation files)`.
+  - **The GL verdict is narrower than it sounds. Neither *requires nixGL to
+    draw a window* — that is what the user measured, both windows opened bare
+    and unwrapped in the live session. Whether either is GPU-accelerated is
+    unmeasured**, because Electron falls back to SwiftShader silently and the
+    window looks identical either way. The check needs one of them running:
+    `grep -cE 'swiftshader|libEGL_mesa|iris_dri' /proc/<pid>/maps` over every
+    pid in the tree (the GL stack is in a child process, so the top-level pid
+    gives a misleading zero) — `swiftshader` means software, `iris_dri` means
+    the Intel GPU path. Do not answer a future "it feels sluggish" with "GL was
+    established"; it was not.
+
+  One more thing that is not about these two packages specifically: **running a
+  newer build of an application once can migrate a config directory the older
+  build then cannot read.** `~/.config/Signal` is 116 MB of message history in
+  an encrypted database, and both live directories were written during the
+  bare-binary GL test. Backups were taken first. Whether a schema migration
+  actually happened was deliberately left unestablished — finding out means
+  starting the old build against the migrated config, which teaches nothing the
+  backup does not cover and risks damage if it has not migrated. Treat every
+  future GUI migration's *first launch* as the one-way step, not the apt
+  removal.
 - **`flatseal` and `fresh-editor` stay on apt.** `flatseal` is absent from
   nixpkgs and is really a flatpak; nixpkgs' `fresh-editor` is 0.3.6 against
   Debian's 0.4.7, so moving it would be a downgrade.
