@@ -272,6 +272,73 @@ in
       ' || true
     '';
 
+  # Signal's .desktop id changes across the Debian/Nix boundary --
+  # signal-desktop.desktop becomes signal.desktop -- and two handlers in
+  # ~/.config/mimeapps.list name the old one. Migrating without this leaves
+  # x-scheme-handler/sgnl and x-scheme-handler/signalcaptcha pointing at an id
+  # that does not exist, silently.
+  #
+  # This writes a file the flake does not own, which is why it is narrow:
+  # it rewrites only the exact token signal-desktop.desktop, only where that
+  # token is a whole value, and it touches nothing else. mimeapps.list also
+  # carries ids this flake will never own -- a dead
+  # eu.calangotech.KBrowserSelector.desktop, and slack.desktop where flatpak
+  # exports com.slack.Slack.desktop -- and those must survive untouched.
+  #
+  # Non-fatal for the same reason mimeappsIds is -- this is the user's file, and
+  # a switch must not abort over it. The body runs under `sh -c`, which inherits
+  # neither errexit nor pipefail from the activation script ($- is `hBc` there,
+  # measured), so every step carries its own `|| exit 0` rather than relying on
+  # set -e. `grep -q`, not `grep -c`: the latter prints 0 and exits 1 on no
+  # match, which would make the guard indistinguishable from a broken pipeline.
+  #
+  # Idempotent, but the property belongs to the sed and not to the grep, and the
+  # difference is measurable. The guard is a plain substring test while the sed
+  # matches only whole values, so the guard is the broader of the two: on a file
+  # where signal-desktop.desktop occurs only inside a longer id
+  # (xsignal-desktop.desktop, signal-desktop.desktop.bak) the guard passes, sed
+  # runs, and correctly changes nothing -- the file stays byte-identical and the
+  # message prints anyway. Proven on a synthetic file; the real mimeapps.list has
+  # no such id, so after the rewrite the guard finds nothing and this hook is
+  # silent on every later switch. Do not restate this as "a second run exits
+  # before sed": that is true here and not true in general.
+  #
+  # One known gap, recorded because it converges rather than because it bites:
+  # `g` consumes the separator it matched, so two ADJACENT occurrences in one
+  # `;`-list rewrite one per invocation. The next switch fixes the rest, and a
+  # value listing the same id twice does not occur here.
+  #
+  # entryBetween, and the `before` edge is the load-bearing one. It is the same
+  # hazard the mimeappsIds comment above documents at length: hm.dag.topoSort
+  # orders any unrelated pair by attribute name, and `signalMimeappsId` sorts
+  # after every other hook here. Measured with the plan's original
+  # `entryAfter [ "writeBoundary" ]`, this hook landed dead last in the built
+  # activate -- line 463, against mimeappsIds at 386 -- so the hook that reports
+  # dead ids in mimeapps.list read the file before the hook that fixes one of
+  # them had run. That is precisely the defect mimeappsIds fixed for itself by
+  # naming defaultBrowser: "reading it first would report on the pre-switch
+  # contents". Stating the edge moves this hook to 380, ahead of mimeappsIds,
+  # and the two are then ordered by a real relation rather than by the letter s.
+  #
+  # Only the one `before` edge is real. Nothing here reads the .desktop search
+  # path, so linkGeneration and installPackages are irrelevant; and defaultBrowser
+  # rewrites this same file through `xdg-settings set default-web-browser`, which
+  # is a read-modify-write that preserves unrelated assignments, so neither order
+  # against it is required. `after [ "writeBoundary" ]` is the floor for any hook
+  # that writes to $HOME at all.
+  config.home.activation.signalMimeappsId =
+    lib.hm.dag.entryBetween [ "mimeappsIds" ] [ "writeBoundary" ] ''
+      run ${pkgs.bash}/bin/sh -c '
+        list="$HOME/.config/mimeapps.list"
+        [ -w "$list" ] || exit 0
+        ${pkgs.gnugrep}/bin/grep -q "signal-desktop\.desktop" "$list" || exit 0
+        ${pkgs.gnused}/bin/sed -i \
+          "s/\(^\|[=;]\)signal-desktop\.desktop\($\|;\)/\1signal.desktop\2/g" \
+          "$list"
+        echo "mimeapps.list: signal-desktop.desktop -> signal.desktop" >&2
+      ' || true
+    '';
+
   # Displaces the stale eu.calangotech.KBrowserSelector.desktop. It no longer
   # holds the http/https *defaults* -- [Default Applications] names
   # CalangoOpen there -- but the two [Added Associations] lines still name it,
