@@ -169,3 +169,99 @@ moment of removal rather than trusted from this document.
 - **A version regression.** Neither is: 8.19.0 → 8.21.0 and 2026.6.1 → 2026.7.0
   are both forward. Verify from the pinned input at implementation time rather
   than from this table, since the input can move.
+
+---
+
+## Corrections
+
+Appended at close-out. **Append-only** — nothing above this line is rewritten,
+including the parts execution overturned, because a spec that quietly agrees
+with its own outcome teaches nobody what it got wrong. Results in
+`docs/2026-08-17-results-suffer-gui-round-2.md`.
+
+### 1. The plan's dag placement was wrong: `entryAfter [ "writeBoundary" ]`
+
+The plan gave `signalMimeappsId` as `lib.hm.dag.entryAfter [ "writeBoundary" ]`.
+Built exactly as written, it landed at line 463 of the generated `activate` —
+**after** `mimeappsIds` at 386 — because `hm.dag.topoSort` feeds
+attribute-name-sorted `builtins.attrValues` into a stable `lib.toposort`, so
+any pair with no stated relation is ordered alphabetically and `s` sorts after
+`r`. The hook that *reports* dead `.desktop` ids would have read the file
+before the hook that *fixes* one of them ran, and warned about
+`signal-desktop.desktop` at every switch.
+
+Corrected in execution to
+`entryBetween [ "mimeappsIds" ] [ "writeBoundary" ]`; measured after, the
+fixer is at 386 and the reporter at 398.
+
+Only that one `before` edge is claimed. The hook reads no `.desktop` search
+path, so `linkGeneration` and `installPackages` are irrelevant to it, and
+`defaultBrowser`'s `xdg-settings` write is a read-modify-write that preserves
+unrelated assignments — declaring edges against either would state constraints
+that do not exist.
+
+This is a hazard `home/apps.nix` already documents at length, having paid for
+it once in `home/audio.nix`. It was written into the plan anyway.
+
+### 2. The risk section missed the risk Task 1 itself triggered
+
+The spec listed four risks: a GL failure after the apt package is gone, damage
+to `mimeapps.list`, the exemption list becoming a dumping ground, and a version
+regression. It missed the one the **very first task** would set off.
+
+Both applications open a config directory on first launch, and a newer build
+can migrate it irreversibly. `~/.config/Signal` is 116 MB — an encrypted
+message-history database that Signal Desktop refuses to open once a newer
+version has migrated it. So running the store-path binary bare, which is the
+GL gate this spec designed, is itself the one-way step; the apt removal it was
+meant to gate is reversible by comparison.
+
+Caught before the run by asking what the test would touch, not by the spec.
+Backups were taken, and both live directories were written during the test, so
+the risk was real rather than theoretical. Whether a schema migration actually
+occurred was deliberately left unestablished.
+
+The general lesson, now in `CLAUDE.md`: for a GUI migration, treat the **first
+launch** as the irreversible step, not the removal. This spec had the right
+shape available to it — it already cites syncthing's one-way database
+conversion under Out of scope — and did not apply it to its own gate.
+
+### 3. The plan's stated reason for the `sed`'s idempotence was wrong
+
+Behaviour right, reason wrong. The plan's comment said "the grep guard means a
+second run finds nothing and exits before sed is invoked". Tested against a
+synthetic file carrying negative controls (`xsignal-desktop.desktop`,
+`signal-desktop.desktop.bak`, `my-signal-desktop.desktop`), runs 2 and 3 *did*
+invoke the `sed` and print the rewrite message, while the checksum stayed fixed
+from run 2 onward.
+
+The `grep -q` guard is a plain **substring** test; the `sed` matches only
+**whole values**. The guard is therefore the broader of the two: where the
+token appears only inside a longer id, the guard passes, `sed` runs, and
+correctly changes nothing. Idempotence holds unconditionally, but it belongs to
+the `sed`. That the guard goes quiet on the real file is a property of that
+file's contents, not of the mechanism.
+
+Corrected in `home/apps.nix`'s comment; the code was left as approved.
+
+A related limitation found by the same test and deliberately not fixed:
+adjacent duplicates (`…;signal-desktop.desktop;signal-desktop.desktop`) take
+two invocations, because `s///g` consumes the separator it matched. It
+converges rather than losing data, and the case does not occur in the real
+file.
+
+### 4. The open question was answered narrowly, not fully
+
+The spec asked "whether either application needs the nixGL wrapper". What the
+gate could answer is narrower: **neither requires nixGL to draw a window.**
+Both are Electron, and Chromium falls back to SwiftShader — software rendering
+— silently, with a window indistinguishable from an accelerated one. So
+**whether either is GPU-accelerated remains unmeasured**, and the results
+document carries the check that would settle it
+(`grep -cE 'swiftshader|libEGL_mesa|iris_dri' /proc/<pid>/maps`, over every pid
+in the tree, with one of them running).
+
+The migration stands either way — a working window was the gate the spec
+specified, and it passed. The correction is to the strength of the conclusion,
+which the first draft of the results document overstated as "neither needs
+nixGL".
