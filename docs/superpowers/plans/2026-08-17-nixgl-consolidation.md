@@ -615,11 +615,18 @@ Both spellings fail silently in opposite directions."
 
 ---
 
-### Task 3: The two stale passages in `home/gui-apps.nix`
+### Task 3: The stale passages in `home/gui-apps.nix`
 
 **Files:**
 - Modify: `home/gui-apps.nix:16-38` — the gammastep wrapper argument
 - Modify: `home/gui-apps.nix:57-60` — the Signal and Bitwarden nixGL claim
+- Modify: `home/gui-apps.nix:91-93` and `:129-132` — two passages that *cite*
+  the first one. **Added in fix round 1, after review.** Both ground the
+  disproof of a derived exemption in schema counts — "zero schema directories
+  of its own, two on each of its two wrappers, both from dependencies" — which
+  is the framing the rewritten passage retires. They are pointers to text that
+  has stopped saying what they claim, so leaving them makes the file
+  self-contradictory. The plan did not know they existed.
 
 **Interfaces:**
 - Consumes: nothing.
