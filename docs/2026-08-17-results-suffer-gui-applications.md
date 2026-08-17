@@ -632,7 +632,7 @@ into the store, and `Environment=PATH` names only the derivation's own
 `bin` — the unit does not depend on profile ordering at all, which is the
 property `nightLightPath` was written to hold even before this task.
 
-### Function: FAIL, and the case for reading it as pre-existing
+### Function: FAIL, cause not established
 
 Every gamma client on the machine now fails identically:
 
@@ -641,43 +641,82 @@ Warning: Zero outputs support gamma adjustment.
 Warning: 1/1 output(s) do not support gamma adjustment.
 ```
 
-Four measurements were taken, each one capable of pointing back at Task
-3's change if it had come out the other way. None of them did.
+No warning appears anywhere in the journal before 2026-08-17T08:57:01, and
+they are continuous after it. The count is not a fixed total — it grows
+with time rather than settling: measured counts of the `Zero outputs
+support gamma adjustment` line alone were `169` at 09:04:25 and `430` at
+09:26:15. The distribution (none before 08:57:01, continuous after) is
+what carries the argument here, not a bare total.
 
-The same store path had worked for nearly three hours in this session:
-the unit started at 06:11:42 with `-t 6500:3000` and logged no warning
-until 08:57:01, the first warning anywhere in the journal, 288 of them
-following, none before, across four earlier boots. The store path itself
-is byte-identical across the working and failing period — the same
-derivation, `/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11`,
-in the unit fragment of generations 33, 34, and 35. Task 3 added a
-comment to the `nightLightPath` let-binding and added the package to
-`home.packages`; neither changes the derivation that the unit's `Exec=`
-resolves, and those three identical paths are the proof of that rather
-than an inference from it.
+Several measurements bear on whether Task 3 caused this, and none of them
+does.
 
-The measurement that actually moves the defect across the task boundary
-is the third one: with the unit stopped and a `/proc`-wide walk by `exe`
-confirming zero `gammastep` processes alive anywhere, a hand-run client
-still fails, identically:
+The same store path had worked for nearly three hours earlier in this
+session: the unit started at 06:11:42 with `-t 6500:3000` and logged no
+warning until 08:57:01. The store path itself is byte-identical across the
+working and failing period — the same derivation,
+`/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11`, in the unit
+fragment of generations 33, 34, and 35. Task 3 added a comment to the
+`nightLightPath` let-binding and added the package to `home.packages`;
+neither changes the derivation the unit actually runs. `gammastep` reaches
+the unit through its `Environment=PATH`, not through `Exec=` — `ExecStart`
+is `run.sh`, which then resolves `gammastep` off that PATH — and those
+three identical paths in generations 33, 34, and 35 are the proof that the
+derivation did not move, rather than an inference from it.
+
+**A competing live client is ruled out**, using the union instrument
+CLAUDE.md requires — `ps -eo args` matched against the full command line,
+plus a `/proc` cmdline walk — rather than the exe-only `/proc` walk this
+section originally relied on, which is exactly the instrument CLAUDE.md
+calls insufficient (an exe-only walk covers roughly a quarter of this
+machine's processes). With the unit already inactive:
 
 ```
-$ systemctl --user stop night-light.service
-# /proc walk: no gammastep process anywhere
-$ timeout 4 gammastep -m wayland -O 3000
+$ systemctl --user show night-light.service -p ActiveState -p MainPID --value
+inactive
+0
+
+$ ps -eo pid,user,args | grep -iE 'gammastep|indicator|redshift|sunset' | grep -v grep
+(no output)
+
+$ for p in /proc/[0-9]*; do c=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue;
+    case "$c" in *gammastep*|*sunset*|*redshift*) echo "${p#/proc/} :: $c";; esac; done
+(no match other than this shell's own command line)
+
+$ timeout 4 ~/.nix-profile/bin/gammastep -m wayland -O 3000
 Warning: Zero outputs support gamma adjustment.
 Warning: 1/1 output(s) do not support gamma adjustment.
+exit=124
 ```
 
-A client that had merely lost a race against a predecessor holding the
-gamma control would succeed once that predecessor was gone. This one does
-not, with nothing else alive to be racing against, so the refusal is
-state held on the compositor side, not a client-side timing accident.
-Fourth, the protocol itself is still bound: gammastep prints a different
+Both instruments agree: nothing gammastep-shaped is alive anywhere on the
+machine, yet a fresh client still fails. A client that had merely lost a
+race against a live predecessor would succeed once that predecessor was
+gone; this one does not, with nothing else alive to race against, so the
+refusal is state held on the compositor side rather than a client-side
+timing accident.
+
+**A leaked control from an earlier probe is not ruled out, and this
+document already put the candidate probes on record before this task
+started.** The Phase 0 section above, written before Task 3, describes the
+user hand-running `$GS/bin/gammastep -m wayland -O 4000` — interrupted
+with Ctrl-C — and `$GS/bin/gammastep-indicator`, both inside this same
+login session (which began at 06:11:39), and states plainly that gamma
+control is single-holder and that this exact warning pair is what a second
+client gets when it asks for a resource an active holder will not release.
+Those probes ran before this section's "worked for nearly three hours"
+window closed. The measurement above rules out a *live* competing client;
+it does not rule out one of those interrupted runs leaving Hyprland holding
+a gamma-control object it never released. If that is what happened, the
+cause is this branch's own verification activity, not `pkgs.gammastep` —
+a real cost of the work, and one this record should carry rather than
+paper over.
+
+Last, the protocol itself is still bound: gammastep prints a different
 message when `zwlr_gamma_control_manager_v1` is absent entirely, and this
 is not that message — reaching the per-output warning means the manager
-bound and enumerated `eDP-1`; it is the per-output gamma control that
-came back `failed`.
+bound and enumerated `eDP-1`; it is the per-output gamma control that came
+back `failed`.
 
 ### What happened at 08:57
 
@@ -699,16 +738,52 @@ those two `Started` lines no gamma client existed on the machine at all.
 The client that started a second later got `failed`, and every client
 since has too.
 
-Hyprland is pid 3154, started 06:11:40, and has not restarted since — the
-same compositor process served the working 06:11:42 client and is the one
-refusing every client from 08:57:01 on.
+Hyprland is pid 3154, started 06:11:39 per `/proc`, and has not restarted
+since — the same compositor process served the working 06:11:42 client
+and is the one refusing every client from 08:57:01 on.
 
-The journal supports this being the first mid-session restart of the
-gamma client ever recorded on this machine: the four earlier boots each
-show exactly one `Started` line and no `Stopping` until shutdown. So the
-trigger is a mid-session restart of the toggle path, a defect latent in
-that path rather than in anything Task 3 touched — testing Task 3 is what
-exposed it, not what introduced it.
+**The toggle path itself is not the trigger.** An earlier draft of this
+section read only the four immediately preceding boots — a 40-line
+journal window — and concluded this was the first mid-session restart the
+machine had ever logged, then called the defect "latent in the toggle
+path, exposed by testing." Over the full journal that premise is false:
+mid-session `off` → 3000 → 6500 toggles ran warning-free on 08-13 16:06,
+08-14 17:29, 08-15 10:30, and 08-15 23:17. The 08-15 23:17 one is
+decisive, because it ran the identical Nix binary in the identical unit:
+
+```
+2026-08-15T23:17:51 Stopping night-light.service
+2026-08-15T23:17:55 Started night-light.service
+2026-08-15T23:17:55 Stopping night-light.service
+2026-08-15T23:17:55 Started night-light.service
+2026-08-15T23:17:55 night-light: gammastep -m wayland -l -22.9056:-47.0608 -t 3000:3000
+2026-08-15T23:17:58 Stopping night-light.service
+2026-08-15T23:18:02 Started night-light.service
+2026-08-15T23:18:02 night-light: gammastep -m wayland -l -22.9056:-47.0608 -t 6500:3000
+```
+
+No warning followed any of those restarts. Generation 23 was active at
+that instant (switched 21:19:31; generation 24 followed at 23:34:14), and
+its unit names the same store path the failing one does:
+
+```
+$ for g in 20 23 24 31 32; do grep -o 'Environment=PATH=/nix/store/[a-z0-9]*-gammastep-[0-9.]*' \
+    ~/.local/state/nix/profiles/home-manager-$g-link/home-files/.config/systemd/user/night-light.service; done
+gen 20  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+gen 23  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+gen 24  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+gen 31  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+gen 32  Environment=PATH=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
+```
+
+`8a7b947`, which put `pkgs.gammastep` into `nightLightPath`, is dated
+2026-08-14 16:25:31, so every generation from 20 on ran the store binary —
+the same one running today. The identical binary, the identical unit, and
+the identical restart pattern worked two days ago and fail today, so the
+variable is neither the package nor the toggle path. What triggers the
+refusal is unidentified; "latent in the toggle path, exposed by testing"
+is deleted here rather than softened, because the 08-15 23:17 restart is
+that same toggle path succeeding.
 
 An attempt to recover by re-applying the monitor rule was rejected by
 this Hyprland build outright and settles nothing either way:
@@ -718,22 +793,53 @@ $ hyprctl keyword monitor "eDP-1,1920x1200@60,0x0,1.25"
 keyword can't work with non-legacy parsers. Use eval.
 ```
 
+### The gate items still owed
+
+Two Step 6 gate items belong in the record rather than being left
+implicit:
+
+- The `.desktop` uniqueness count passed: each of `gammastep.desktop` and
+  `gammastep-indicator.desktop` resolves to exactly one file across the
+  search path — `1` and `1`.
+- The by-hand launcher and tray confirmation — launch
+  `gammastep-indicator` from the launcher and confirm the tray icon,
+  toggle night light from the shell panel and confirm the screen warms —
+  has **not been run**. This is the same class of path Task 2 proved can
+  fail silently for a different application, so it is recorded here as
+  outstanding, not folded into the PASS above.
+
 ### Not measured
 
 Whether a re-login recovers gamma control. The unit worked moments after
 the 06:11 login and every client has failed since 08:57, which makes a
 re-login the obvious next probe — but it is a probe, not a result, and it
-was not run. Do not read the rest of this section as having already
-answered it.
+was not run. Do not read anything above as having already answered it.
 
-Nor was it established whether the compositor's refusal is a leaked
-gamma-control object or a monitor that lost its LUT size — both fit every
-measurement above equally, and nothing here separates them. The
-Quickshell monitor panel applied a mode during this session: the live
-scale is 1.25 against the 1.5 that `hypr/hosts/suffer.lua` documents, so a
-monitor re-apply is a second untested candidate trigger, not a ruled-out
-one. `hyprctl keyword monitor` being rejected by this build (above) leaves
-that recovery path unprobed as well.
+Nor is it established which candidate actually holds the leaked state: one
+of the interrupted Phase 0 probes described above, or a monitor that lost
+its gamma LUT size some other way — both fit every measurement taken here,
+and nothing separates them. The Quickshell monitor panel applied a mode
+during this session: the live scale is 1.25 against the 1.5 that
+`hypr/hosts/suffer.lua` documents, so a monitor re-apply is a further
+untested candidate, not a ruled-out one. `hyprctl keyword monitor` being
+rejected by this build (above) leaves that recovery path unprobed as well.
 
-`night-light.service` was left restarted and active (`MainPID=658862`),
-still emitting the warning every five seconds. Nothing was left stopped.
+`apt remove gammastep` was checked for orphans after the fact, not at
+removal time, and found none:
+
+```
+$ grep -A4 'Commandline: apt remove gammastep' /var/log/apt/history.log
+Commandline: apt remove gammastep
+Requested-By: isutton (1000)
+Remove: gammastep:amd64 (2.0.9-1+b1)
+End-Date: 2026-08-17  08:42:10
+```
+
+One package, no orphans.
+
+`night-light.service` was left in whatever state the user's own toggling
+left it, rather than in the fixed state this section originally quoted: a
+further toggle after the gate moved `MainPID` again, and by the time of
+the union-instrument measurement above the unit was `inactive` with
+`MainPID=0` because the last toggle switched it off. The warning recurs
+whenever it is switched back on.
