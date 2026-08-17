@@ -133,17 +133,30 @@ in
   # bus does search, so that is where the copy has to land.
   #
   # Not derived from guiPackages by scanning each package's
-  # share/dbus-1/services directory, unlike the schema guard above.
-  # Finding out what such a scan would return requires reading the
-  # directory at Nix eval time, which for a package whose store path is
-  # not yet built means an import-from-derivation -- forcing a build
-  # during evaluation for something this repo has otherwise avoided. So
-  # this is a single named entry rather than a loop. gammastep, which
-  # Task 3 adds to guiPackages, ships no share/dbus-1/services directory
-  # at all (`ls <gammastep>/share/dbus-1/services/` exits 2, no such
-  # directory) -- so nothing is missing for it today, but Task 3 must
-  # check this itself for whatever it adds after gammastep, the same way
-  # this comment had to be written by hand rather than found by a guard.
+  # share/dbus-1/services directory, unlike the schema guard above -- but
+  # not because that scan would need an import-from-derivation. It
+  # wouldn't: a build-time guard, shaped exactly like wrappedGuiApps two
+  # bindings up, can `find`/`ls` each package's share/dbus-1/services at
+  # build time, because by the time such a guard runs every package in
+  # guiPackages is already built -- home.packages forces that. IFD is a
+  # problem only for *auto-generating* the xdg.dataFile entries
+  # themselves, since Home Manager's option model needs the attribute
+  # names (the .service filenames) at Nix eval time, before the packages
+  # are necessarily built.
+  #
+  # So the honest state is: this is a single hand-written entry with no
+  # guard behind it, and the only thing stopping a future package from
+  # shipping a DBusActivatable=true .desktop with no matching xdg.dataFile
+  # entry is a human noticing. That gap has an owner and a place: Task 4
+  # of this plan builds the .desktop identity checks, and is to add a
+  # build-time guard there -- checked for the class (every guiPackages
+  # member with a share/dbus-1/services/*.service file must have a
+  # matching xdg.dataFile entry), not re-derived per package the way this
+  # comment was. gammastep, which Task 3 adds to guiPackages, ships no
+  # share/dbus-1/services directory at all (`ls
+  # <gammastep>/share/dbus-1/services/` exits 2, no such directory) -- so
+  # today's single entry happens to be complete, which is exactly the
+  # kind of thing a guard should confirm rather than a comment asserting it.
   #
   # dbus-broker caches its service directory at its own startup and never
   # rescans on a home-manager switch (see CLAUDE.md) -- the file landing
