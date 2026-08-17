@@ -27,8 +27,11 @@ let
   #   systemctl --user show-environment | grep -cE '^(LIBGL_DRIVERS_PATH|…)='
   #   # 0
   #
-  # So the things that wrap themselves are the session and four units, and a
-  # session child needs no wrapper of its own. foot is the control and is Nix's
+  # So the things that wrap themselves are the session, three units
+  # (quickshell, hyprpolkitagent, xdg-desktop-portal-hyprland) and hyprlock --
+  # which is not a unit itself, but hypridle's lock_cmd launches it and
+  # hypridle IS a unit, so it inherits nothing either. A session child needs no
+  # wrapper of its own. foot is the control and is Nix's
   # own counterexample: it draws through wayland shm rather than GL and needs
   # no wrapper at all (see the home.packages comment below).
   hyprpolkitagent-nixgl = pkgs.runCommand "hyprpolkitagent-nixgl" { } ''

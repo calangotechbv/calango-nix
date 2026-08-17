@@ -2,8 +2,12 @@
 #
 # Before spec 14, five sites in home/ spelled `pkgs.nixgl.nixGLIntel` out for
 # themselves. Changing the GL wrapper meant moving five places and nothing read
-# the fifth. `nixglSingleSource` in home/default.nix now fails the build if a
-# sixth appears.
+# the fifth. `nixglSingleSource` in home/default.nix now fails the build when
+# the literal appears anywhere under home/ -- it does not distinguish a call
+# site from a comment. It also does not look outside home/, so a wrapper
+# written into flake.nix, or into a second file in this directory, would escape
+# it. Widening it is not free: the guard's failure message names these three
+# exports, so a guard that read its own module would match itself.
 #
 # This is a plain Nix function, NOT a Home Manager module. flake.nix lists its
 # modules one by one, so a file absent from that list is visibly not one, and

@@ -371,9 +371,15 @@ The user runs every `apt` command. No agent runs one.
    `lib/nixgl.nix`.
 2. The guard's leak branch and vacuity branch each fail under mutation, with
    the mutation confirmed by a count before the build runs.
-3. All five wrapper store paths are captured before and after. The
-   `hyprpolkitagent`, `hyprlock` and `hyprland-nixgl` paths are unchanged; the
-   `quickshell-nixgl` and `portal-nixgl` paths have moved.
+3. All five wrapper store paths are captured before and after. At the end of the
+   nixGL work, `hyprpolkitagent`, `hyprlock` and `hyprland-nixgl` are unchanged
+   and `quickshell-nixgl` and `portal-nixgl` have moved. **`hyprland-nixgl` then
+   moves again in the lf task**, to `m2ahfwdj…`, because `home/session.nix:47`
+   puts `config.calango.lf` in `compositorPath` — so changing lf's identity
+   necessarily moves the compositor wrapper. That is correct, and it was checked
+   against the login path before being accepted: greetd's root-owned
+   `/usr/local/share/wayland-sessions/hyprland-nix.desktop` names
+   `hyprland-nixgl.desktop` by id and contains zero `/nix/store` references.
 4. `nix flake check` exits 0 and reports three checks.
 5. The generation builds. The two moved scripts differ from today's only in
    that a `\` line continuation has become a space.

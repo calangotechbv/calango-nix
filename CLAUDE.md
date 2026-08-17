@@ -93,13 +93,27 @@ what "the property holds" looks like for a negative check. Use `/usr/bin/grep`
 explicitly, with `-F` for a literal, whenever a count is load-bearing. Inside a
 Nix builder the shell is the real one and this does not apply.
 
-**`wrapProgram --prefix PATH : "a:b:c"` prepends the entries one at a time,**
-so they end up in the wrapper in reverse of the order you wrote them. Measured
-on `home/lf.nix`'s `lfPath`, declared `file, xdg-utils, glib, coreutils` and
-emitted `coreutils, glib, xdg-utils, file`. All four still land before the
-ambient `PATH`, which is the property that matters, so this is harmless until
-two entries ship a binary of the same name — at which point the loser is the
-one you would have expected to win.
+**`wrapProgram --prefix PATH : "a:b:c"` writes its entries into the wrapper in
+reverse, and the reversal cancels itself.** Each entry gets its own prepend
+block, so reading the generated script top to bottom shows the last-declared
+entry first. That looks like a reordering and is not: because every block
+prepends, the block applied last ends up leftmost. Measured on `home/lf.nix`'s
+`lfPath`, declared `file, xdg-utils, glib, coreutils`:
+
+```sh
+L=$(sg nix-users -c 'nix eval --raw .#homeConfigurations."isutton@suffer".config.calango.lf')
+/usr/bin/grep -n "^PATH='" "$L/bin/lf"
+# coreutils, glib, xdg-utils, file   -- the script lines, reversed
+env -i /bin/bash -c "PATH=/usr/bin; $(sed -n '/^PATH=/p' "$L/bin/lf"); echo \$PATH"
+# file, xdg-utils, glib, coreutils   -- the effective PATH, as declared
+```
+
+An earlier version of this entry ran only the first command and concluded that a
+name collision would resolve backwards. It would not. The entry belongs in this
+section twice over: once for the trap it describes, and once because it was
+itself an instance of the trap — a real command, real output, and a conclusion
+the measurement did not support, caught by a reviewer who ran the second
+command.
 
 **The systemd user unit search path.** `systemd-analyze --user unit-paths`
 computes the list from the *caller's* environment and reports 18 entries,
@@ -859,14 +873,14 @@ reasoning about the comment.
   by name so a person reading a broken build knows what to write instead — two
   lines that answer to the enumeration pattern without being a call site. And
   `lib/nixgl.nix`'s own header comment names `pkgs.nixgl.nixGLIntel` in prose,
-  above the one line that actually defines it. The five real call sites are
-  `home/default.nix:37`, `home/hyprland.nix:104`, `home/portals.nix:38`,
-  `home/quickshell.nix:204` and `home/session.nix:118`; the one real
-  definition is `lib/nixgl.nix:21`. Asking for the literal interpolated form
-  collapses both counts to the true number in one command:
+  above the one line that actually defines it. Both have a clean syntax needle,
+  and neither needs a list of names:
 
   ```sh
-  /usr/bin/grep -rnF '${pkgs.nixgl.nixGLIntel}' home lib   # 1
+  /usr/bin/grep -rn 'nixgl\.\(wrap\|wrapBin\|bin\)' home/*.nix | /usr/bin/grep -v 'echo '
+  # 5 -- the call sites; the exclusion drops the guard's own help text
+  /usr/bin/grep -rnF '${pkgs.nixgl.nixGLIntel}' home lib
+  # 1 -- the one definition, in lib/nixgl.nix
   ```
 
   **Session children inherit the five variables. Units do not.** Measured:
