@@ -177,9 +177,37 @@ are otherwise ignored by systemd, which is why this is the conventional spelling
 Prove it by mutation: a one-line comment in any file of the tree must move the
 store path.
 
+**`xdg-desktop-portal.service` still has this defect.** Its unit is a verbatim
+store copy (`home/portals.nix:213`) and `hyprland-portals.conf` (`:166`) is read
+by the frontend at startup, so editing that config restarts nothing and the
+change does not take effect. Unfixed on purpose: the clean shape is a drop-in
+carrying `X-Restart-Triggers`, and **whether sd-switch diffs drop-ins as well as
+fragments has not been measured here** — verify that before relying on it. The
+rest of the tree is clean: `night-light.service` names `quickshellConfig` in its
+own `ExecStart`, the audio drop-ins carry their store paths, and `home/foot.nix`
+and `home/lf.nix` back no unit.
+
 Note `NRestarts=0` after such a switch is not evidence against a restart —
 sd-switch stops and starts the unit, and a fresh start resets that counter.
 `ActiveEnterTimestamp` is the property that moves.
+
+**Widening a `PATH` by prefixing changes which copy of the tools you already had
+gets used.** Appending adds reach; prefixing also *takes away*. Spec 11 prefixed
+a session `PATH` onto quickshell's unit `PATH` to make desktop entries resolve,
+and silently moved `systemd-run` and `setsid` — the two binaries the launch
+itself depends on, pinned from the Nix closure by `runtimeDeps` on purpose — to
+Debian's `/usr/bin`:
+
+```sh
+PATH="$APPPATH:$QPATH" command -v systemd-run   # /usr/bin/systemd-run
+PATH="$QPATH:$APPPATH" command -v systemd-run   # /nix/store/...-systemd-260.2/bin/...
+```
+
+The comment on that line asserted the opposite — that prefixing kept the closure
+reachable. Ask which side of the join owns each binary before choosing an order:
+if the thing you are adding cannot supply a tool at all (neither is in
+`~/.nix-profile/bin`), a prefix can only lose it. Append unless you specifically
+intend to override.
 
 **`systemd-run` and `uwsm app` both resolve the executable in their own process,
 against their own `PATH`, before any unit exists.** So a service with a curated

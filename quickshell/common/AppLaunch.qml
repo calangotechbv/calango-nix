@@ -47,7 +47,10 @@ Singleton {
   // Before this, run()'s shell ended in `>/dev/null 2>&1` and systemd-run's
   // `Failed to find executable foot: No such file or directory` went into it.
   // The panel failed for a full day across a live session and produced zero log
-  // lines -- 92 of 214 entries could not launch and nothing anywhere said so.
+  // lines -- 57 of this machine's 59 bare-name entries could not launch and
+  // nothing anywhere said so. (Counted 2026-08-17. The handover's 92 of 214 was
+  // a different method two days earlier; see the results doc, which does not
+  // claim to reconcile them.)
   //
   // The obvious repair, letting the shell's stderr through, was tried and is
   // wrong. systemd-run --scope *execs* into the application, so after a
@@ -101,20 +104,34 @@ Singleton {
     // user manager inside its own scope. Arguments go through "$@" so no part of
     // an Exec line is interpolated into shell quoting.
     //
-    // PATH is prefixed here, in the launching shell, and that is the only place
+    // PATH is widened here, in the launching shell, and that is the only place
     // it works. systemd-run resolves the executable in its OWN process, before
     // it creates the unit, so --setenv=PATH=... is too late and was measured to
-    // do nothing. Prefixed rather than replaced so the unit's own closure stays
-    // reachable; appended would let Debian's copy of a Nix tool win.
+    // do nothing.
+    //
+    // APPENDED, not prefixed. An earlier version of this line prefixed appPath
+    // and claimed that kept the unit's own closure reachable. That was exactly
+    // backwards, and measured so: with appPath in front, `systemd-run` and
+    // `setsid` -- the two tools this launch depends on, both supplied from the
+    // Nix closure by runtimeDeps on purpose -- resolved to /usr/bin instead.
+    //
+    //   prefixed  systemd-run -> /usr/bin/systemd-run
+    //   appended  systemd-run -> /nix/store/...-systemd-260.2/bin/systemd-run
+    //
+    // Neither is in ~/.nix-profile/bin, so appPath cannot supply them and a
+    // prefix can only take them away. Appending keeps every tool the unit
+    // deliberately pins while still resolving the session's applications:
+    // `foot` is absent from the closure and comes from ~/.nix-profile/bin
+    // either way.
     // $1 is the target to resolve, consumed by the shift; everything after it
     // is systemd-run's own argv. Passed separately rather than parsed back out
     // of the argv, because the token after `--` is positional and a
     // --working-directory in front of it would move it.
     launchProc.command = ["sh", "-c",
-      'target=$1; shift; export PATH="' + root.appPath + ':$PATH"; ' +
+      'target=$1; shift; export PATH="$PATH:' + root.appPath + '"; ' +
       'command -v "$target" >/dev/null 2>&1 || { ' +
       'echo "AppLaunch: cannot resolve \'$target\' on PATH" >&2; exit 1; }; ' +
-      'setsid systemd-run --user --scope "$@" >/dev/null 2>&1 & exit 0',
+      'setsid systemd-run --user --scope --quiet "$@" >/dev/null 2>&1 & exit 0',
       "sh", argv[0]].concat(args, argv);
     launchProc.running = true;
     return true;
@@ -129,16 +146,28 @@ Singleton {
   // and the fallback is reached on every quickshell start, during the window
   // before the canScope probe resolves, not just in theory.
   //
-  // `exec` rather than `& exit 0`: there is no scope to create here, so the
-  // shell has nothing to do after the application starts and should not stay
-  // in the process tree as its parent.
+  // Backgrounds and exits, exactly as run() does, and NOT `exec setsid "$@"`.
+  //
+  // `exec` replaces the shell, so the process quickshell spawned becomes the
+  // application itself and lives as long as it does. launchProc is a singleton,
+  // so that one launch would hold it for the whole session and every later
+  // launch would be dropped -- `running = true` on a busy Process is ignored,
+  // while run() and exec() both still return true. Silent, and self-healing
+  // only when the user happens to close the app. That is the same species of
+  // silence this file exists to remove, introduced by the fix for it.
+  //
+  // Whether `exec setsid` actually keeps the pid depends on whether the shell
+  // is already a process-group leader -- setsid forks when it is and does not
+  // when it is not -- so the behaviour differs between a hand probe run under
+  // an interactive shell and quickshell's own Process. This shape does not
+  // depend on that distinction at all, which is why it is the one to use.
   function exec(argv) {
     if (!argv || argv.length === 0) return false;
     launchProc.command = ["sh", "-c",
-      'export PATH="' + root.appPath + ':$PATH"; ' +
+      'export PATH="$PATH:' + root.appPath + '"; ' +
       'command -v "$1" >/dev/null 2>&1 || { ' +
       'echo "AppLaunch: cannot resolve \'$1\' on PATH (fallback)" >&2; exit 1; }; ' +
-      'exec setsid "$@" >/dev/null 2>&1',
+      'setsid "$@" >/dev/null 2>&1 & exit 0',
       "sh"].concat(argv);
     launchProc.running = true;
     return true;
