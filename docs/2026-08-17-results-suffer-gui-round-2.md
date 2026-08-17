@@ -122,7 +122,40 @@ flatpak override --user --unset-env=LIBGL_DRIVERS_PATH \
   com.slack.Slack
 ```
 
-Not run here — it is a persistent user-level override and the user's to approve.
+Run by the user, and verified afterwards. Flatpak records it:
+
+```
+$ flatpak override --user --show com.slack.Slack
+[Context]
+unset-environment=LIBGL_DRIVERS_PATH;__EGL_VENDOR_LIBRARY_FILENAMES;LD_LIBRARY_PATH;LIBVA_DRIVERS_PATH;GBM_BACKENDS_PATH;
+```
+
+and the sandbox no longer sees them — checked from inside, which is the only
+place the question means anything:
+
+```
+$ flatpak run --command=sh com.slack.Slack -c 'echo ${LIBGL_DRIVERS_PATH:-(unset)}; …'
+  LIBGL_DRIVERS_PATH                 (unset)
+  GBM_BACKENDS_PATH                  (unset)
+  LIBVA_DRIVERS_PATH                 (unset)
+  __EGL_VENDOR_LIBRARY_FILENAMES     (unset)
+  LD_LIBRARY_PATH                    (unset)
+```
+
+**Not measured: that Slack now renders on the GPU.** The override removes what
+was breaking its own GL stack, which is a different claim from the stack then
+working. Slack was not running when this was written, and the check needs a live
+process — `grep -cE 'swiftshader|iris_dri' /proc/<pid>/maps` over its process
+tree, reading which token is present rather than the count. Do that next time it
+is open.
+
+**And this override is not owned by this flake.** It lives at
+`~/.local/share/flatpak/overrides/com.slack.Slack`, alongside six others written
+by hand in August that no module knows about — `grep -rc 'flatpak/overrides'
+home/*.nix` finds zero. So it survives a switch and does not survive a reinstall,
+and nothing will notice if it disappears. A later spec could take ownership with
+an `xdg.dataFile` entry; that is a real question about how far this flake should
+reach into flatpak's state, and it is not answered here.
 
 ### One more thing that test disturbed, and did not damage
 
