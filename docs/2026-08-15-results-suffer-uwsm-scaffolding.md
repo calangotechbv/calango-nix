@@ -45,10 +45,9 @@ Starting units: app-graphical.slice, background-graphical.slice, fumon.service, 
 ```
 
 That block is the plan in full — every line `sd-switch --dry-run` emitted.
-The `grep` commands below were run against a scratch copy at
-`.superpowers/sdd/2026-08-15-uwsm-session-scaffolding/sd-switch-plan.txt`,
-which was git-ignored working state and no longer exists; they are reproduced
-for the record, and reproduce identically against the block above.
+The `grep` commands below were run against a scratch copy of that block held in
+git-ignored working state, which no longer exists; they are reproduced for the
+record, and reproduce identically against the block above.
 
 ### Question 1: does `wayland-session-shutdown.target` appear in any *start* action?
 
