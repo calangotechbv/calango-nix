@@ -81,4 +81,48 @@ in
   home.packages = guiPackages ++ [
     (pkgs.runCommand "gui-apps-guard" { } "ln -s ${wrappedGuiApps} $out")
   ];
+
+  # seahorse's .desktop carries DBusActivatable=true, so a launcher never
+  # execs its Exec=seahorse line at all -- it asks the session bus to
+  # activate org.gnome.seahorse.Application, and the bus resolves that
+  # through a .service file, not through XDG_DATA_DIRS the way a plain
+  # Exec= launch would. Measured at the gate, post-switch and post-`apt
+  # remove seahorse`:
+  #
+  #   $ busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+  #       org.freedesktop.DBus StartServiceByName su org.gnome.seahorse.Application 0
+  #   Call failed: The name is not activatable
+  #
+  # Same root cause as home/portals.nix's three xdg.dataFile entries: the
+  # session bus's own XDG_DATA_DIRS, read from
+  # `/proc/<dbus MainPID>/environ`, is
+  # ~/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/
+  # -- no ~/.nix-profile/share anywhere in it. So seahorse's own copy at
+  # share/dbus-1/services/org.gnome.seahorse.Application.service, sitting
+  # right there in home.packages, is invisible to the bus. Missed here
+  # because Task 1's probe ran the binary directly, which never goes
+  # through D-Bus activation and so never exercises this path; it only
+  # surfaced once a launcher -- not a shell -- was the thing doing the
+  # launching. ~/.local/share/dbus-1/services is XDG_DATA_HOME, which the
+  # bus does search, so that is where the copy has to land.
+  #
+  # Not derived from guiPackages by scanning each package's
+  # share/dbus-1/services directory, unlike the schema guard above.
+  # Finding out what such a scan would return requires reading the
+  # directory at Nix eval time, which for a package whose store path is
+  # not yet built means an import-from-derivation -- forcing a build
+  # during evaluation for something this repo has otherwise avoided. So
+  # this is a single named entry rather than a loop. gammastep, which
+  # Task 3 adds to guiPackages, ships no share/dbus-1/services directory
+  # at all (`ls <gammastep>/share/dbus-1/services/` exits 2, no such
+  # directory) -- so nothing is missing for it today, but Task 3 must
+  # check this itself for whatever it adds after gammastep, the same way
+  # this comment had to be written by hand rather than found by a guard.
+  #
+  # dbus-broker caches its service directory at its own startup and never
+  # rescans on a home-manager switch (see CLAUDE.md) -- the file landing
+  # here is necessary but not sufficient. A fresh login or
+  # `busctl --user ReloadConfig` is required before activation works.
+  xdg.dataFile."dbus-1/services/org.gnome.seahorse.Application.service".source =
+    "${pkgs.seahorse}/share/dbus-1/services/org.gnome.seahorse.Application.service";
 }
