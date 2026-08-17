@@ -284,7 +284,7 @@ that is actually true: a session child inherits the five GL variables from the
 compositor's own wrap, and a systemd user unit inherits none of them, which is
 why five things carry their own wrapper and nothing else needs one.
 
-**`home/gui-apps.nix:14-38`** currently argues that gammastep's wrappers matter
+**`home/gui-apps.nix:16-38`** currently argues that gammastep's wrappers matter
 because "the ones that matter to this package come from its dependencies",
 naming the two schema directories each wrapper prefixes. The measurement above
 contradicts the specific claim: `XDG_DATA_DIRS` alone changes nothing for the
@@ -368,7 +368,7 @@ The user runs every `apt` command. No agent runs one.
 4. `nix flake check` exits 0 and reports three checks.
 5. The generation builds. The two moved scripts differ from today's only in
    that a `\` line continuation has become a space.
-6. `home/default.nix:18-20`, `home/gui-apps.nix:14-38` and
+6. `home/default.nix:18-20`, `home/gui-apps.nix:16-38` and
    `home/gui-apps.nix:57-60` each state only what a measurement in this
    document supports.
 7. The package `home/lf.nix` puts in `home.packages` contains
