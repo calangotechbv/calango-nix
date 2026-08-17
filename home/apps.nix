@@ -212,36 +212,44 @@ in
   # Naming all three matters because Home Manager's hm.dag.topoSort feeds
   # builtins.attrValues -- attribute-name sorted -- into a stable
   # lib.toposort, so any pair of entries with no stated relation is ordered
-  # alphabetically. The eleven hooks from linkGeneration on, in the built
-  # activate:
+  # alphabetically. The 12 hooks from linkGeneration on, in the built
+  # activate. Regenerate rather than trust the numbers: they shift whenever a
+  # hook is added, and this listing was already stale once, captured before
+  # signalMimeappsId existed and still saying eleven.
   #
   #   $ A=$(sg nix-users -c 'nix build --no-link --print-out-paths \
   #         .#homeConfigurations."isutton@suffer".activationPackage')
-  #   $ grep -n 'Activating %s' "$A"/activate | sed -n '4,14p'
-  #   270:_iNote "Activating %s" "linkGeneration"
-  #   302:_iNote "Activating %s" "desktopDatabase"
-  #   308:_iNote "Activating %s" "defaultBrowser"
-  #   317:_iNote "Activating %s" "footThemeColors"
-  #   324:_iNote "Activating %s" "gtkAppearance"
-  #   334:_iNote "Activating %s" "hyprlockConf"
-  #   342:_iNote "Activating %s" "installPackages"
-  #   372:_iNote "Activating %s" "mimeappsIds"
-  #   391:_iNote "Activating %s" "onFilesChange"
-  #   394:_iNote "Activating %s" "pipewireSessionManagerAlias"
-  #   407:_iNote "Activating %s" "reloadSystemd"
+  #   $ grep -n 'Activating %s' "$A"/activate | sed -n '/linkGeneration/,$p'
+  #   284:_iNote "Activating %s" "linkGeneration"
+  #   316:_iNote "Activating %s" "desktopDatabase"
+  #   322:_iNote "Activating %s" "defaultBrowser"
+  #   331:_iNote "Activating %s" "footThemeColors"
+  #   338:_iNote "Activating %s" "gtkAppearance"
+  #   348:_iNote "Activating %s" "hyprlockConf"
+  #   356:_iNote "Activating %s" "installPackages"
+  #   386:_iNote "Activating %s" "signalMimeappsId"
+  #   398:_iNote "Activating %s" "mimeappsIds"
+  #   417:_iNote "Activating %s" "onFilesChange"
+  #   420:_iNote "Activating %s" "pipewireSessionManagerAlias"
+  #   433:_iNote "Activating %s" "reloadSystemd"
   #
-  # Ten hooks after linkGeneration, alphabetical with exactly one exception:
-  # desktopDatabase (302) runs BEFORE defaultBrowser (308), because
-  # defaultBrowser declares entryAfter [ "desktopDatabase" ] -- a real edge,
-  # already present at this branch's base 3afbf7a. Every other adjacent pair is
-  # ordered by nothing but its attribute name, which is the hazard: mimeappsIds
-  # sits behind all three of its dependencies only because the letter m sorts
-  # after d and i, and renaming it to anything sorting earlier --
-  # checkMimeappsIds, auditMimeapps -- would have moved it silently ahead of
-  # them, reporting against a search path not yet built and a file not yet
+  # Alphabetical with exactly two exceptions, and both are real edges rather
+  # than luck. desktopDatabase runs BEFORE defaultBrowser, because
+  # defaultBrowser declares entryAfter [ "desktopDatabase" ] -- present already
+  # at this branch's base 3afbf7a. And signalMimeappsId runs BEFORE mimeappsIds
+  # despite s sorting after m, because it declares
+  # entryBetween [ "mimeappsIds" ] [ "writeBoundary" ] -- without which the hook
+  # that REPORTS dead .desktop ids would run before the hook that FIXES one, and
+  # warn about signal-desktop.desktop at every switch.
+  #
+  # Every other adjacent pair is ordered by nothing but its attribute name,
+  # which is the hazard: mimeappsIds sits behind its dependencies only because
+  # the letter m sorts after d and i, and renaming it to anything sorting
+  # earlier -- checkMimeappsIds, auditMimeapps -- would move it silently ahead
+  # of them, reporting against a search path not yet built and a file not yet
   # rewritten, with nothing to distinguish that from a genuine finding. The
-  # edges above are what stop that, proven by performing exactly that rename
-  # and watching the position hold. This is the same defect home/audio.nix's
+  # edges above are what stop that, proven by performing exactly that rename and
+  # watching the position hold. This is the same defect home/audio.nix's
   # pipewireSessionManagerAlias paid for.
   #
   # entryAfter and not entryBetween, unlike that precedent, and the difference

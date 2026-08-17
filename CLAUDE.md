@@ -806,20 +806,46 @@ reasoning about the comment.
 - **One file outside `$HOME`:** `/usr/local/share/wayland-sessions/hyprland-nix.desktop`,
   root-owned, hand-created, covered by no Nix module. greetd needs it and
   nothing else supplies it.
-- **Every Nix GUI binary needs nixGL's *environment*. Only five need their own
-  *wrapper*.** Those two are different claims and this file conflated them
-  through three specs.
+- **A Nix binary that actually uses GL needs nixGL's *environment*. Needing your
+  own *wrapper* is a separate question, and the answer turns on whether you are a
+  systemd unit.** This file has now been wrong on this in both directions; the
+  measurements below are what each claim rests on.
 
-  The five wrapped are the compositor, quickshell, hyprlock, hyprpolkitagent and
-  the hyprland portal — enumerate with `grep -rn nixGLIntel home/*.nix`. Everything
-  else Nix-built inherits the variables the compositor's wrap exports, because
-  `home/session.nix` launches Hyprland through `nixGLIntel` and the whole session
-  descends from it: `LIBGL_DRIVERS_PATH`, `GBM_BACKENDS_PATH`, `LIBVA_DRIVERS_PATH`,
-  `__EGL_VENDOR_LIBRARY_FILENAMES`, `LD_LIBRARY_PATH`.
+  Five things carry their own wrapper — the compositor, quickshell, hyprlock,
+  hyprpolkitagent and the hyprland portal. Enumerate with
+  `grep -rn 'bin/nixGLIntel' home/*.nix`, which returns 5; a bare `nixGLIntel`
+  grep returns 10 and counts prose.
+
+  **Session children inherit the five variables. Units do not.** Measured:
+
+  ```sh
+  systemctl --user show-environment | grep -cE '^(LIBGL_DRIVERS_PATH|GBM_BACKENDS_PATH|LIBVA_DRIVERS_PATH|__EGL_VENDOR_LIBRARY_FILENAMES|LD_LIBRARY_PATH)='
+  # 0        <- the user manager carries none of them
+  # a plain shell in the session: 5 of 5
+  # quickshell.service        5 of 5   from its OWN wrap
+  # hyprpolkitagent.service   5 of 5   from its OWN wrap
+  # night-light.service       0 of 5   gammastep needs no GL
+  # xdg-desktop-portal.service 0 of 5  wrapped, yet has none -- unexplained, see below
+  ```
+
+  That is *why* the units are wrapped: a unit cannot inherit from the compositor,
+  because the manager's environment never carried these. `home/default.nix:8-16`
+  records hyprpolkitagent crashing for exactly this reason.
+
+  **Not every Nix GUI binary needs them.** `foot` is Nix's, draws through wayland
+  shm rather than GL, and `home/default.nix:52-54` keeps it as the control for
+  precisely this: if foot opens and a GL client does not, the fault is the GL
+  wrapper. And the only application measured under a stripped environment is
+  `signal-desktop`; `bitwarden`, `seahorse` and `gammastep` were never stripped,
+  so their dependence is inferred, not shown.
+
+  **Open, and do not paper over it:** `xdg-desktop-portal.service` is nixGL-wrapped
+  yet its MainPID has 0 of 5. Either the wrap is not reaching the process the unit
+  tracks, or the portal re-execs. Worth a look before anyone trusts the wrap there.
 
   An earlier version of this entry said four applications "draw without it" and
-  concluded the parenthetical list was the whole rule. They draw without their
-  **own wrapper**, inheriting the session's. Strip the variables and Nix's mesa
+  concluded the parenthetical list was the whole rule. Signal draws without its
+  own wrapper by inheriting the session's; strip the variables and Nix's mesa
   falls back to `/run/opengl-driver/lib`, which does not exist here:
 
   ```sh
@@ -832,8 +858,15 @@ reasoning about the comment.
   ```
 
   **So do not "clean up" the session inheritance.** It looks like a leak and it is
-  load-bearing for every Nix GUI application on the machine. A spec to scrub it
-  was one command from being written.
+  load-bearing for every Nix GL application launched as a session child — which is
+  every one the Applications panel starts. A spec to scrub it was one command from
+  being written.
+
+  Two comments in the tree still carry the retired reasoning and are known stale:
+  `home/default.nix:18-20` ("every Nix GUI application on this machine needs the
+  wrapper", generalised from two crashes) and `home/gui-apps.nix:57-60`, which
+  justifies the wrapper exemption with the bare-run inference this entry retired.
+  Both are true enough to be misleading. Fix them with the nixGL consolidation.
 
   `ldd` still cannot answer the per-application question: it `dlopen`s its
   platform and GL plugins, so `ldd` is clean for a binary that aborts on first

@@ -265,3 +265,28 @@ The migration stands either way — a working window was the gate the spec
 specified, and it passed. The correction is to the strength of the conclusion,
 which the first draft of the results document overstated as "neither needs
 nixGL".
+
+**5. The nixGL claim was overturned twice after the close-out, and the second
+overturning corrected the first.** Correction 4 above narrowed Task 1's verdict
+to "draws a window; GPU acceleration unmeasured". That was still wrong.
+
+Measured with the five nixGL variables stripped, Signal's GPU stack collapses —
+mesa falls back to `/run/opengl-driver/lib` and all EGL display types fail. So
+both applications need nixGL's *environment*; what they do not need is their own
+*wrapper*, because a session child inherits the compositor's. Every GL test in
+this spec ran inside that inheritance, so none of them could have distinguished
+the two.
+
+The first attempt to state the corrected rule then over-corrected in the other
+direction, claiming every Nix GUI binary needs the environment and that the whole
+session descends from the compositor's wrap. Both are false, and both were caught
+by the branch review. `foot` is Nix's, draws through wayland shm, and is kept in
+`home/default.nix` as the control for exactly this. And units do **not** inherit:
+`systemctl --user show-environment` carries none of the five, which is precisely
+why quickshell and hyprpolkitagent carry their own wraps.
+
+The spec's own risk section named a GL failure "after removal" as the hazard. The
+real hazard was the opposite shape — a GL success that proved less than it looked,
+because the test could not vary the thing it was implicitly testing. A gate that
+cannot fail for the reason you care about is the recurring defect of this project,
+and this is its fourth appearance.

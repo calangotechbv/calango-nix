@@ -28,16 +28,26 @@ and unwrapped, from a terminal inside the live Hyprland session:
 
 **Both windows opened.** Reported by the user; no agent can observe this.
 
-**Neither requires nixGL to draw a window.** That closes the spec's stated
-primary risk, and it is now four GUI applications — `seahorse`, `gammastep`,
-`signal-desktop`, `bitwarden` — where the standing rule's parenthetical list
-turned out to be the whole of it. The rule is about the compositor and its
-immediate surface-creating companions, not about GUI applications in general.
-Spec 14 should not re-derive this from scratch, but should still ask, because
-the instrument is cheap and a false generalisation here costs a window that
-never appears.
+> ## The conclusion, after two corrections — read this before the rest
+>
+> **Neither application needs its own nixGL wrapper. Both need nixGL's
+> environment, and both were inheriting it from the compositor's wrap.** The GL
+> gate ran inside a session that already exported those variables, so it could
+> never have distinguished "needs no nixGL" from "already has nixGL".
+>
+> Session children inherit; systemd units do not, which is why five things carry
+> their own wrap. Do **not** scrub the session inheritance — a follow-up spec to
+> do exactly that was one command from being written, and it would have broken
+> both applications this spec migrated.
+>
+> Whether either renders on the GPU rather than in software was **not** measured
+> for Signal or Bitwarden. It was measured for flatpak Slack, further down, and
+> the answer there is yes.
+>
+> The two subsections below are kept as written, in order, because the sequence
+> is the useful part. Neither states the final position on its own.
 
-### Corrected in Task 5: this said "neither needs nixGL", which is stronger than the evidence
+### First version: "neither needs nixGL", which was stronger than the evidence
 
 A window appearing is not evidence of GPU acceleration. Both applications are
 Electron, and Chromium falls back to **SwiftShader** — CPU rasterisation — on
@@ -52,7 +62,11 @@ GPU-accelerated is unmeasured.** Practically the migration stands either way —
 a working window was the gate — but a later report of "Signal is sluggish"
 must not be met with "we established GL is fine", because nothing here did.
 
-### Corrected again, after the close-out: both DO need nixGL's environment
+**Superseded by the subsection below.** This version is still too generous: it
+says nixGL is not *required*, when what the test showed is that no *additional*
+wrapper is required on top of the one the session already provides.
+
+### Second version, after the close-out: both DO need nixGL's environment
 
 The paragraph above is still too generous, and the measurement that settles it
 arrived only because the user asked why `nixglWrap` was needed at all.
@@ -126,9 +140,19 @@ Run by the user, and verified afterwards. Flatpak records it:
 
 ```
 $ flatpak override --user --show com.slack.Slack
+[Environment]
+LIBGL_DRIVERS_PATH=
+__EGL_VENDOR_LIBRARY_FILENAMES=
+LD_LIBRARY_PATH=
+LIBVA_DRIVERS_PATH=
+GBM_BACKENDS_PATH=
+
 [Context]
 unset-environment=LIBGL_DRIVERS_PATH;__EGL_VENDOR_LIBRARY_FILENAMES;LD_LIBRARY_PATH;LIBVA_DRIVERS_PATH;GBM_BACKENDS_PATH;
 ```
+
+Both stanzas are quoted because both are printed; an earlier version showed only
+`[Context]` and would have puzzled anyone who ran the command.
 
 and the sandbox no longer sees them — checked from inside, which is the only
 place the question means anything:
@@ -142,12 +166,41 @@ $ flatpak run --command=sh com.slack.Slack -c 'echo ${LIBGL_DRIVERS_PATH:-(unset
   LD_LIBRARY_PATH                    (unset)
 ```
 
-**Not measured: that Slack now renders on the GPU.** The override removes what
-was breaking its own GL stack, which is a different claim from the stack then
-working. Slack was not running when this was written, and the check needs a live
-process — `grep -cE 'swiftshader|iris_dri' /proc/<pid>/maps` over its process
-tree, reading which token is present rather than the count. Do that next time it
-is open.
+### Measured afterwards: Slack is on the GPU
+
+The paragraph that stood here said this was unmeasured, and offered
+`grep -cE 'swiftshader|iris_dri' /proc/<pid>/maps`. Run against a single pid that
+returns **0**, and the zero is an artifact of the instrument twice over — which
+is worth recording, because the same document had already warned about the first
+of the two and then handed over a command that walked into it.
+
+- **Wrong process.** Electron puts GL in a `--type=gpu-process` child. The pid
+  `pgrep` returns first is the `bwrap` or launcher parent, which maps no GL at all.
+- **Wrong token.** Mesa 25 and later fold the DRI drivers into a gallium
+  megadriver, so `iris_dri.so` is absent on a perfectly healthy GPU path. Its
+  absence means nothing here.
+
+Walked over the whole tree, and read by open file descriptor rather than by a
+library name that upstream can rename:
+
+```
+pid 385003  --type=gpu-process --ozone-platform=wayland --render-node-override=/dev/dri/renderD128
+  /dev/dri/renderD128      5 open fds
+  libgallium-26.1.6.so     the flatpak runtime's mesa (ours is 26.1.5)
+  dri_gbm.so               loaded, from inside the sandbox
+  libdrm_intel.so.1.134.0  the Intel DRM path
+  swiftshader / llvmpipe   absent
+```
+
+**Five open handles on the render node settle it** — a software rasteriser has no
+reason to hold one. And the mesa in use is `26.1.6`, the runtime's own, not the
+`26.1.5` our variables were pointing at. So the override did not merely silence
+an error: Slack is rendering on the Intel GPU using the stack flatpak shipped for
+it, which is exactly what the change was for.
+
+For anything Electron in future, the instrument is: walk the process tree, prefer
+an open fd on `/dev/dri/render*`, and treat `libgallium` rather than `*_dri.so` as
+the driver's name.
 
 **And this override is not owned by this flake.** It lives at
 `~/.local/share/flatpak/overrides/com.slack.Slack`, alongside six others written
