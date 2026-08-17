@@ -687,17 +687,54 @@ Replace those four comment lines with:
   # platform plugins.
 ```
 
-- [ ] **Step 3: Prove no derivation changed**
+- [ ] **Step 3: Prove the change is prose, by two checks that do not use the activation path**
+
+**Read this before running anything.** An earlier version of this step asked for
+an unchanged activation store path, on the reasoning that a Nix `#` comment is
+not part of any derivation. That reasoning is sound and the conclusion is still
+wrong here, because Task 2's own guard invalidated it: `nixglSingleSource` takes
+`homeSrc = ./.` — the whole `home/` directory — as a derivation input, on
+purpose, so that it re-runs whenever any module changes. A comment is a byte in
+that directory. **The activation path therefore moves, and that is correct
+behaviour rather than a leak.** Task 3's implementer found this and declined to
+commit a message it had disproved.
+
+Two checks replace it, and both are more direct than the one they replace.
+
+First, that the diff contains no non-comment change at all:
 
 ```bash
 cd /home/isutton/Projects/calango-nix
-sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."isutton@suffer".activationPackage'
+git diff -U0 -- home/gui-apps.nix | /usr/bin/grep '^[+-]' \
+  | /usr/bin/grep -v '^[+-][+-]' \
+  | /usr/bin/grep -vE '^[+-][[:space:]]*#' \
+  | /usr/bin/grep -vE '^[+-][[:space:]]*$' | wc -l
 ```
 
-Expected: **the same store path as Task 2 Step 7 printed.** A Nix `#` comment
-is not part of any derivation, so an unchanged path is the proof this task
-changed only prose. If the path moved, a comment edit escaped into a `''…''`
-string that becomes a `buildCommand`; find it before committing.
+Expected: `0`. This tests the property itself — every changed line is a comment
+line — instead of testing a store path that stands in for it.
+
+Second, that no derivation this spec cares about moved:
+
+```bash
+A=$(sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."isutton@suffer".activationPackage')
+readlink -f "$A/home-path/bin/hyprland-nixgl"
+readlink -f "$A/home-path/bin/hyprlock"
+/usr/bin/grep -h '^ExecStart' "$A"/home-files/.config/systemd/user/{quickshell,hyprpolkitagent,xdg-desktop-portal-hyprland}.service
+```
+
+Expected, exactly the five values Task 1 Step 11 established:
+
+```
+/nix/store/rav6aqkhg43lhdzyvkfmsrhxlk0z6qzh-hyprland-nixgl/bin/hyprland-nixgl
+/nix/store/7kwkl1i594z75hqj8dfp4xbp2z31f1wr-hyprlock/bin/hyprlock
+ExecStart=/nix/store/76czdlp8mv4x8ynvz5xxbvbf6kf2p6g3-quickshell-nixgl
+ExecStart=/nix/store/x2h9v7fppkfwy34djl02c28hmb2y53rq-hyprpolkitagent-nixgl/libexec/hyprpolkitagent
+ExecStart=/nix/store/6hq8sc4v2mbdmy4a6qp5kg0f77qpvmi9-xdg-desktop-portal-hyprland-nixgl
+```
+
+If any wrapper path moved, a comment edit escaped into a `''…''` string that
+becomes a `buildCommand`; find it before committing.
 
 - [ ] **Step 4: Commit**
 
@@ -715,7 +752,9 @@ Also narrows 'Neither needs the nixGL wrapper' to 'neither needs one of
 its own'. The bare run happened inside the session, so both inherited
 the five variables.
 
-Comments only; the activation package's store path is unchanged."
+Comments only: zero non-comment lines in the diff, and all five wrapper
+store paths unchanged. The activation package's own path does move,
+because nixglSingleSource takes the whole home/ directory as an input."
 ```
 
 ---
