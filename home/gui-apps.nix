@@ -13,29 +13,38 @@ let
   # Nix's package has full parity: gammastep, gammastep-indicator, and both
   # .desktop files.
   #
-  # Both bin/gammastep and bin/gammastep-indicator are wrapGAppsHook
-  # wrappers (.gammastep-wrapped and .gammastep-indicator-wrapped siblings
-  # exist), and this entry is why the guard below has no "ships no schemas"
-  # exemption. gammastep ships no share/gsettings-schemas directory of its
+  # Both bin/gammastep and bin/gammastep-indicator are wrapGAppsHook wrappers
+  # (.gammastep-wrapped and .gammastep-indicator-wrapped siblings exist), and
+  # this entry is why the guard below has no "ships no schemas" exemption.
+  #
+  # An earlier version of this comment argued that the wrappers matter because
+  # the schema directories they prefix come from gammastep's dependencies. That
+  # is measured and false. Each wrapper does prefix XDG_DATA_DIRS with gtk+3's
+  # and gsettings-desktop-schemas' directories, and gammastep ships none of its
   # own:
   #
   #   $ G=/nix/store/bcrxrws5kwvkrgifs0fw6p4vna412l04-gammastep-2.0.11
   #   $ find $G -path '*gsettings-schemas*' | wc -l
   #   0
   #
-  # Yet each of its two wrappers still prefixes XDG_DATA_DIRS with two
-  # schema directories -- gtk+3's and gsettings-desktop-schemas':
+  # But the indicator does not read a schema, from any source. Its module has
+  # zero Gio, Settings or GSettings references, and adding the wrapper's
+  # variables back to the bare stub one at a time -- adding rather than
+  # stripping, because a shell that has none of them set returns the same
+  # failure whatever you strip -- isolates the one that matters:
   #
-  #   $ for b in gammastep gammastep-indicator; do \
-  #       grep -oE "/nix/store/[^']*/share/gsettings-schemas/[^']*" \
-  #         $G/bin/$b | sort -u | wc -l; done
-  #   2
-  #   2
+  #   nothing set                 exit=1    traceback at gi.require_version('Gtk','3.0')
+  #   GI_TYPELIB_PATH only        exit=255  runs; gammastep's own --help behaviour
+  #   XDG_DATA_DIRS only          exit=1    unchanged
+  #   GDK_PIXBUF_MODULE_FILE only exit=1    unchanged
   #
-  # So "no schemas of its own" is not "no schemas to reach": the ones that
-  # matter to this package come from its dependencies. The guard below
-  # therefore requires a wrapped binary from every member, gammastep
-  # included, and gammastep supplies two.
+  # So the wrapper IS load-bearing and GI_TYPELIB_PATH is what carries it:
+  # gammastep-indicator is a PyGObject application and gi.require_version fails
+  # without the typelib path. That makes the case against a derived exemption
+  # stronger than the old comment made it, not weaker -- whether a package
+  # needs its wrapper turns out not to be a function of schemas at all. The
+  # guard below therefore requires a wrapped binary from every member,
+  # gammastep included, and gammastep supplies two.
   #
   # Neither gammastep.desktop nor gammastep-indicator.desktop declares
   # DBusActivatable (checked directly: `grep DBusActivatable` on both files
@@ -54,10 +63,16 @@ let
   # bitwarden.desktop, NOT Debian's signal-desktop.desktop; flake.nix's
   # gui-desktop-ids requires both by those names.
   #
-  # Neither needs the nixGL wrapper: the user ran both binaries bare from a
-  # terminal in the live Hyprland session before any of this was written and
-  # both windows drew. That was measured rather than inferred, because `ldd` is
-  # worthless for the question -- Electron dlopens its GL and platform plugins.
+  # Neither needs a nixGL wrapper OF ITS OWN, which is a narrower claim than
+  # the one this comment used to make. The user ran both binaries bare from a
+  # terminal in the live Hyprland session and both windows drew -- but a
+  # session child inherits the five GL variables from the compositor's own
+  # wrap, so that run says nothing about the variables themselves. Stripped of
+  # them, Signal reports
+  #   MESA-LOADER: failed to open dri: /run/opengl-driver/lib/gbm/dri_gbm.so
+  # and its GPU process exits. The measurement was still worth taking, because
+  # `ldd` cannot answer the question at all -- Electron dlopens its GL and
+  # platform plugins.
   #
   # Having no wrapper is what makes them the first entries in wrapExemptions
   # below.
