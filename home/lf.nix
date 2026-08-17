@@ -66,10 +66,30 @@ let
     fi
   '';
 
-  lfWrapped = pkgs.writeShellScriptBin "lf" ''
-    export PATH=${lfPath}''${PATH:+:$PATH}
-    exec ${pkgs.lf}/bin/lf "$@"
-  '';
+  # A symlinkJoin rather than a writeShellScriptBin, and the difference is
+  # everything except the binary. writeShellScriptBin produces a package
+  # holding one file, so lf-41's share/ tree -- bash, fish and zsh
+  # completions, lf.1.gz and lf.desktop -- never reached the profile:
+  #
+  #   $ ls /nix/store/…-lf-41/share
+  #   applications  bash-completion  fish  man  zsh
+  #   $ find ~/.nix-profile/share -iname '*lf*' | wc -l
+  #   0
+  #
+  # apt's lf was the only source of lf completions on this machine until spec
+  # 14, which is why this had to be fixed before that package could be removed.
+  #
+  # --prefix, not --suffix: the writeShellScriptBin form prepended lfPath, so
+  # a suffix here would silently change which copy of file, gio and xdg-open
+  # lfrc's commands resolve to.
+  lfWrapped = pkgs.symlinkJoin {
+    name = "lf-wrapped";
+    paths = [ pkgs.lf ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram "$out/bin/lf" --prefix PATH : ${lfPath}
+    '';
+  };
 in
 {
   options.calango.lf = lib.mkOption {
