@@ -142,6 +142,7 @@
           ./home/services.nix
           ./home/portals.nix
           ./home/audio.nix
+          ./home/gui-apps.nix
           ./home/uwsm.nix
           {
             home.username = username;
