@@ -42,8 +42,17 @@ Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
 `dbusActivatableGuiApps`; `home/audio.nix:385` also puts `pulseaudioClients`
-there, and that derivation carries three `exit 1` guards of its own. A
-package-producing derivation can be a guard too, which is exactly what a
+there, and *that derivation's own body* carries three `exit 1` guards — a
+number that needs its own command, because the file around it has nine:
+
+```sh
+grep -c 'exit 1' home/audio.nix
+# 9   -- the whole file, a different thing
+sed -n "/pulseaudioClients = pkgs.runCommand/,/^  '';$/p" home/audio.nix | grep -c 'exit 1'
+# 3   -- inside pulseaudioClients, which is what the claim is about
+```
+
+A package-producing derivation can be a guard too, which is exactly what a
 remembered list of "the guards" misses.
 
 ---
