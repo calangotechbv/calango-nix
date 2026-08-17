@@ -1,6 +1,8 @@
 { config, lib, pkgs, ... }:
 
 let
+  nixgl = import ./../lib/nixgl.nix { inherit pkgs; };
+
   # Everything hyprland.lua invokes by bare name through hl.exec_cmd /
   # hl.dsp.exec_cmd -- 36 call sites, assembled from plain "..." literals,
   # [[...]] long brackets, `..` concatenation and function parameters (the
@@ -113,7 +115,7 @@ let
   # is unproven here and deliberately not taken now.
   hyprland-nixgl = pkgs.writeShellScriptBin "hyprland-nixgl" ''
     export PATH=${compositorPath}''${PATH:+:$PATH}
-    exec ${pkgs.nixgl.nixGLIntel}/bin/nixGLIntel \
+    exec ${nixgl.bin} \
       ${pkgs.hyprland}/bin/start-hyprland --no-nixgl -- \
       --config ${config.calango.hyprConfig}/hyprland.lua "$@"
   '';
