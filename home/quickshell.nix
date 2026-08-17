@@ -1,6 +1,35 @@
 { config, lib, pkgs, ... }:
 
 let
+  # The PATH that *launched applications* are resolved against. It is not this
+  # unit's PATH and must not be confused with runtimeDeps below -- that list
+  # answers "what does the shell run?", and this one answers "what can the
+  # shell's users run?". One list was made to serve both, and 92 of 214 desktop
+  # entries did not launch as a result: `systemd-run` resolves the executable in
+  # its own process, against its own PATH, before it creates the unit, so an
+  # entry whose Exec is a bare `foot` was handed to a PATH assembled to satisfy
+  # `awk` and `nmcli`. See docs/2026-08-15-handover-suffer-applications-panel-launch.md.
+  #
+  # Session directories, not store paths, and deliberately so: these are the
+  # directories a desktop entry's author could reasonably expect, and the same
+  # ones a login shell has. They are strings rather than package outputs because
+  # /usr/bin's contents are apt's business and no Nix expression can name them.
+  #
+  # Widened HERE and not in the unit's own PATH. Two `command -v` probes in the
+  # shell are load-bearing and fail on purpose -- ddcutil in
+  # brightness/BrightnessService.qml and swww in wallpaper/WallpaperService.qml
+  # (both recorded in runtimeDeps' comment below). Putting /usr/bin on the
+  # unit's PATH would make both start finding Debian's copies, which is a
+  # behaviour change nobody asked for. This placement avoids the question.
+  appPath = lib.concatStringsSep ":" [
+    "${config.home.homeDirectory}/.local/bin"
+    "${config.home.homeDirectory}/.nix-profile/bin"
+    "/usr/local/bin"
+    "/usr/bin"
+    "/bin"
+    "/usr/games"
+  ];
+
   # matugen reads its own TOML and cannot expand $dir the way set.sh does, so
   # input_path has to be an absolute store path -- which is not known until
   # this derivation is being built. That is why this one file is patched
@@ -13,7 +42,8 @@ let
   # @quickshellState@ placeholders as its honest, readable source, and
   # --replace-fail means a line that gets renamed or moved upstream fails
   # this build loudly instead of being silently overwritten with a heredoc
-  # that never looked at what it was replacing.
+  # that never looked at what it was replacing. AppLaunch.qml's @appPath@
+  # is substituted the same way and for the same reason.
   quickshellConfig = pkgs.runCommand "quickshell-config" { } ''
     cp -r ${./../quickshell} "$out"
     chmod -R u+w "$out"
@@ -21,6 +51,86 @@ let
     substituteInPlace "$out/theme-switcher/wallpaper-theme/matugen/config.toml" \
       --replace-fail "@quickshellStore@" "$out" \
       --replace-fail "@quickshellState@" "~/.local/state/quickshell"
+
+    substituteInPlace "$out/common/AppLaunch.qml" \
+      --replace-fail "@appPath@" '${appPath}'
+
+    # Assert the substituted list still contains the two directories that carry
+    # the applications, by content rather than by trusting the Nix list above.
+    #
+    # /usr/bin is where every apt application lives, and ~/.nix-profile/bin is
+    # where every migrated one lives. A list that lost either would leave a
+    # whole provenance unlaunchable, and the symptom is silence: the panel
+    # closes and nothing opens. That is precisely how this went unnoticed for a
+    # day.
+    #
+    # Checked against the FILE after substitution, not against the Nix
+    # expression, so a substitution that failed to land is caught here too.
+    #
+    # It reads the appPath PROPERTY'S VALUE and compares whole `:`-separated
+    # elements. The first version of this guard grepped the whole file for the
+    # directory and was vacuous, because AppLaunch.qml's own comments contain
+    # the literal `/usr/bin` -- one of them explains that quickshell.service's
+    # PATH "has no /usr/bin" -- so the guard matched its own prose. Proven by
+    # mutation: with `/usr/bin` deleted from the Nix list, the build passed.
+    # A check that cannot fail is the third of this shape in this project, and
+    # the only reason this one was caught is that it was mutated before it was
+    # trusted.
+    #
+    # Whole-element comparison, not a substring: `/usr/bin` is a substring of
+    # nothing else in this list today, but `/bin` is a substring of four of the
+    # six, so a substring test would go on passing after the wrong deletion.
+    #
+    # `if ! grep -q` and an explicit `found` flag, NOT
+    # `n="$(grep -c ...)"`. A Nix builder runs
+    # with `set -e` and `pipefail` both on -- measured: `echo $-` gives `ehB`
+    # and `set -o` reports `pipefail on`. So `grep -c` returning 1 for zero
+    # matches aborts the assignment before any message prints, and a
+    # `grep | wc -l` pipeline aborts on grep's status instead of yielding 0.
+    # CLAUDE.md's rule to count explicitly rather than trust an empty pipeline
+    # is about an interactive shell; inside a builder that same shape fails the
+    # build for the wrong reason and with no diagnostic.
+    val="$(sed -n 's/^ *readonly property string appPath: "\(.*\)"$/\1/p' \
+             "$out/common/AppLaunch.qml")"
+    if [ -z "$val" ]; then
+      echo "Could not read appPath's value out of AppLaunch.qml." >&2
+      echo "  The property was renamed or reformatted, so this guard is" >&2
+      echo "  reading nothing and would pass vacuously. Fix the sed above." >&2
+      exit 1
+    fi
+
+    for d in /usr/bin '${config.home.homeDirectory}/.nix-profile/bin'; do
+      found=0
+      oldIFS="$IFS"; IFS=":"
+      for e in $val; do
+        [ "$e" = "$d" ] && found=1
+      done
+      IFS="$oldIFS"
+      if [ "$found" -eq 0 ]; then
+        echo "AppLaunch.qml's appPath does not contain $d." >&2
+        echo "  value: $val" >&2
+        echo "  Applications resolved against it would not be found, and the" >&2
+        echo "  panel reports that by closing and doing nothing at all." >&2
+        echo "  /usr/bin carries every apt application and" >&2
+        echo "  ~/.nix-profile/bin every migrated one, so losing either" >&2
+        echo "  makes a whole provenance unlaunchable." >&2
+        echo "  See home/quickshell.nix's appPath." >&2
+        exit 1
+      fi
+    done
+
+    # No @token@ may survive anywhere in the tree. Same guard and same invariant
+    # as home/foot.nix and home/hyprland.nix: substitution tokens are
+    # lowercase-alpha, so [a-zA-Z]* cannot match end to end against an
+    # UPPERCASE placeholder. Enumerated by syntax over the whole copied tree
+    # rather than by re-listing the files known to carry tokens -- which is the
+    # rule this repo has paid for twice, and the reason appPath's own
+    # placeholder cannot be forgotten here.
+    if grep -rq '@[a-zA-Z]*@' "$out"; then
+      echo "unsubstituted token left in the quickshell tree:" >&2
+      grep -rn '@[a-zA-Z]*@' "$out" >&2
+      exit 1
+    fi
   '';
 
   # Everything the QML invokes by bare name. A systemd user unit gets a

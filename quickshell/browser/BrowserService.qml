@@ -160,10 +160,17 @@ Singleton {
   // fails whenever AppLaunch.canScope is false: true for the first moments of
   // every session (it is resolved by an async Process at startup) and true
   // forever on a machine with no systemd-run, which install.sh still treats as
-  // merely `expected`. Quickshell.execDetached() covers both without the
-  // per-app systemd scope AppLaunch.run() would have given it -- the same
-  // trade AppLauncher.qml already makes when it falls back to
-  // entry.execute().
+  // merely `expected`. AppLaunch.exec() covers both without the per-app systemd
+  // scope AppLaunch.run() would have given it -- the same trade AppLauncher.qml
+  // already makes in its own fallback.
+  //
+  // Was Quickshell.execDetached(), which resolved argv against
+  // quickshell.service's own PATH and so had no /usr/bin. For a browser that is
+  // not hypothetical: google-chrome-stable is an absolute path in its entry and
+  // survived, but any browser whose entry carries a bare-name Exec did not.
+  // AppLaunch.exec() applies the same widened PATH as run(), from one
+  // definition, so the fallback and the primary path can no longer disagree
+  // about what they can find.
   //
   // Only returns false when there is nothing runnable at all, which the
   // fallback cannot save either; callers must not treat this launch as having
@@ -185,7 +192,7 @@ Singleton {
     if (!entry) return false;
     const argv = root.launchArgv(entry, url);
     if (argv.length === 0) return false;
-    if (!AppLaunch.run(argv, entry.id, "")) Quickshell.execDetached(argv);
+    if (!AppLaunch.run(argv, entry.id, "")) AppLaunch.exec(argv);
     return true;
   }
 

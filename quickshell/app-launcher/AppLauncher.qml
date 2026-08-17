@@ -73,8 +73,19 @@ Scope {
 
   // The scope launch itself lives in common/AppLaunch.qml, shared with the
   // browser picker. What stays here is the DesktopEntry-shaped part: turning an
-  // entry into an argv, and falling back to entry.execute() when there is
-  // nothing runnable or no systemd to run it under.
+  // entry into an argv, and falling back when there is nothing runnable or no
+  // systemd to run it under.
+  //
+  // The fallback is AppLaunch.exec() and no longer entry.execute(). execute()
+  // resolves the entry's Exec against quickshell.service's own PATH, which has
+  // no /usr/bin, so it was never a safety net for a bare-name Exec -- it failed
+  // in exactly the same way as the path it was catching for, and returned
+  // normally while doing so. Measured with a synthetic `Exec=perl -e sleep(40)`:
+  // execute() threw nothing and no process appeared.
+  //
+  // When argv is empty there is nothing for exec() to run either, so that case
+  // keeps entry.execute(): quickshell parsed no command out of the entry, and
+  // its own launcher is more likely to know what to do with that than we are.
   function launchApp(entry) {
     launcherPanel.visible = false;
     if (!entry) return;
@@ -84,7 +95,7 @@ Scope {
     if (entry.runInTerminal) argv = [root.terminal, "-e"].concat(argv);
 
     if (!AppLaunch.run(argv, entry.id, entry.workingDirectory || ""))
-      entry.execute();
+      AppLaunch.exec(argv);
   }
 
   Scrim { active: launcherPanel.visible; color: root.theme.bgOverlay; onClicked: launcherPanel.visible = false }
