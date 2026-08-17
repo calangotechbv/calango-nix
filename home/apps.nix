@@ -159,12 +159,37 @@ in
   # A search of XDG_DATA_DIRS alone would report this flake's own default
   # browser as missing.
   #
-  # Non-fatal, deliberately. Measured on the live file: 12 assignment lines
-  # (10 under [Default Applications], 2 under [Added Associations]) naming 6
-  # unique ids, and only one of those six is this flake's -- the rest are
-  # flatpak Slack, bitwarden, claude-code-url-handler and Signal, whose
-  # absence is none of this flake's business and must never abort a switch.
-  # Both counts are of 2026-08-17, not standing properties: bitwarden and
+  # Non-fatal, deliberately. Measured on the live file, all six ids listed
+  # rather than summarised, because an earlier version of this comment named
+  # four of the five that are not this flake's:
+  #
+  #   $ grep -c '^[^=]*=' ~/.config/mimeapps.list
+  #   12
+  #   $ sed -n 's/^[^=]*=//p' ~/.config/mimeapps.list | tr ';' '\n' \
+  #       | sed '/^$/d' | sort -u
+  #   bitwarden.desktop
+  #   claude-code-url-handler.desktop
+  #   eu.calangotech.CalangoOpen.desktop
+  #   eu.calangotech.KBrowserSelector.desktop
+  #   signal-desktop.desktop
+  #   slack.desktop
+  #   $ grep -c 'CalangoOpen' ~/.config/mimeapps.list
+  #   5
+  #
+  # 12 assignment lines (10 under [Default Applications], 2 under [Added
+  # Associations]) naming 6 unique ids. Five of the twelve name this flake's
+  # CalangoOpen; the other seven name the five other ids above, whose absence
+  # is none of this flake's business and must never abort a switch.
+  #
+  # Two of those five do not resolve today, and they are what this hook warns
+  # about -- eu.calangotech.KBrowserSelector.desktop, this module's own
+  # displaced entry, which the [Added Associations] pair still names although
+  # it exists nowhere on the search path, and slack.desktop. Note slack.desktop
+  # is NOT flatpak Slack's id: flatpak exports com.slack.Slack.desktop, a
+  # different string, which is exactly why that association is dead. See
+  # CLAUDE.md's corp-set entry, which records the same distinction.
+  #
+  # All of this is of 2026-08-17, not a standing property: bitwarden and
   # signal-desktop are among the follow-on applications this project intends
   # to migrate. The fatal half of this property is flake.nix's
   # gui-desktop-ids, which asserts only what the flake itself ships.
@@ -187,16 +212,37 @@ in
   # Naming all three matters because Home Manager's hm.dag.topoSort feeds
   # builtins.attrValues -- attribute-name sorted -- into a stable
   # lib.toposort, so any pair of entries with no stated relation is ordered
-  # alphabetically. Measured in the built activate before this was declared,
-  # every hook after linkGeneration sat in exactly alphabetical order:
-  # defaultBrowser, desktopDatabase, footThemeColors, gtkAppearance,
-  # hyprlockConf, installPackages, mimeappsIds, onFilesChange. So "mimeappsIds"
-  # ran last of the three only because the letter m sorts after d and i;
-  # renaming this attribute to anything sorting earlier -- checkMimeappsIds,
-  # auditMimeapps -- would have moved it silently ahead of both, and it would
-  # then have reported against a search path not yet built and a file not yet
-  # rewritten, with nothing to distinguish that from a genuine finding. This
-  # is the same defect home/audio.nix's pipewireSessionManagerAlias paid for.
+  # alphabetically. The eleven hooks from linkGeneration on, in the built
+  # activate:
+  #
+  #   $ A=$(sg nix-users -c 'nix build --no-link --print-out-paths \
+  #         .#homeConfigurations."isutton@suffer".activationPackage')
+  #   $ grep -n 'Activating %s' "$A"/activate | sed -n '4,14p'
+  #   270:_iNote "Activating %s" "linkGeneration"
+  #   302:_iNote "Activating %s" "desktopDatabase"
+  #   308:_iNote "Activating %s" "defaultBrowser"
+  #   317:_iNote "Activating %s" "footThemeColors"
+  #   324:_iNote "Activating %s" "gtkAppearance"
+  #   334:_iNote "Activating %s" "hyprlockConf"
+  #   342:_iNote "Activating %s" "installPackages"
+  #   372:_iNote "Activating %s" "mimeappsIds"
+  #   391:_iNote "Activating %s" "onFilesChange"
+  #   394:_iNote "Activating %s" "pipewireSessionManagerAlias"
+  #   407:_iNote "Activating %s" "reloadSystemd"
+  #
+  # Ten hooks after linkGeneration, alphabetical with exactly one exception:
+  # desktopDatabase (302) runs BEFORE defaultBrowser (308), because
+  # defaultBrowser declares entryAfter [ "desktopDatabase" ] -- a real edge,
+  # already present at this branch's base 3afbf7a. Every other adjacent pair is
+  # ordered by nothing but its attribute name, which is the hazard: mimeappsIds
+  # sits behind all three of its dependencies only because the letter m sorts
+  # after d and i, and renaming it to anything sorting earlier --
+  # checkMimeappsIds, auditMimeapps -- would have moved it silently ahead of
+  # them, reporting against a search path not yet built and a file not yet
+  # rewritten, with nothing to distinguish that from a genuine finding. The
+  # edges above are what stop that, proven by performing exactly that rename
+  # and watching the position hold. This is the same defect home/audio.nix's
+  # pipewireSessionManagerAlias paid for.
   #
   # entryAfter and not entryBetween, unlike that precedent, and the difference
   # is that there the second edge was real: reloadSystemd had to come after
@@ -226,11 +272,20 @@ in
       ' || true
     '';
 
-  # Displaces the stale root-owned eu.calangotech.KBrowserSelector.desktop
-  # that currently holds http/https on this machine. Deliberately not
-  # xdg.mimeApps: that would freeze ~/.config/mimeapps.list, which holds six
-  # associations (slack, bitwarden, claude-cli, signal x2) this repository
-  # does not own, and no application could ever set a default again.
+  # Displaces the stale eu.calangotech.KBrowserSelector.desktop. It no longer
+  # holds the http/https *defaults* -- [Default Applications] names
+  # CalangoOpen there -- but the two [Added Associations] lines still name it,
+  # and it exists nowhere on the search path (`find` across all of
+  # $XDG_DATA_DIRS and ~/.local/share returns 0; see the results doc). Not
+  # called root-owned here any more: nothing measurable now supports that,
+  # ~/.config/mimeapps.list is isutton:nix-users, and the entry it names is
+  # simply absent.
+  #
+  # Deliberately not xdg.mimeApps: that would freeze
+  # ~/.config/mimeapps.list, and 7 of its 12 assignment lines -- all but the
+  # 5 naming CalangoOpen, both counts in the mimeappsIds comment above --
+  # belong to applications this repository does not own, so no application
+  # could ever set a default again.
   config.home.activation.defaultBrowser =
     lib.hm.dag.entryAfter [ "desktopDatabase" ] ''
       previous=$(${pkgs.xdg-utils}/bin/xdg-settings get default-web-browser 2>/dev/null || true)
