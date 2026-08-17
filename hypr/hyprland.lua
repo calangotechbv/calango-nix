@@ -687,7 +687,13 @@ hl.config({
         sensitivity = 0, -- -1.0 - 1.0, 0 means no modification.
 
         touchpad = {
-            natural_scroll = false,
+            natural_scroll = true,
+            -- 1.0 is libinput's rate, which overshoots on this ELAN pad.
+            -- Chosen by feel at runtime with
+            --   hyprctl eval 'hl.config({ input = { touchpad = { scroll_factor = N } } })'
+            -- and read back with `hyprctl getoption input:touchpad:scroll_factor`.
+            -- Note `hyprctl keyword` cannot set this: the Lua parser rejects it.
+            scroll_factor = 0.2,
         },
     },
 })
