@@ -953,13 +953,14 @@ reasoning about the comment.
   the runtime's own glibc is worse than the fallback.
 
   **This flake does not own those overrides, deliberately.**
-  `~/.local/share/flatpak/overrides/` held seven files on 2026-08-17 and six
-  were 61-byte browser overrides from 2026-08-06, for applications not
-  installed as flatpaks and owned by nobody. One Home Manager-managed file
-  among them reproduces the `pipewire-session-manager.service` alias shape:
-  unmanageable by `no-dangling-home-files`, and dangling for ever when its
-  module leaves. Run the override by hand for every flatpak application, and
-  record it here.
+  `~/.local/share/flatpak/overrides/` held seven files on 2026-08-17, and not
+  one of them is Home Manager's: six 61-byte browser overrides from
+  2026-08-06, for applications not installed as flatpaks and owned by nobody,
+  plus a 255-byte `com.slack.Slack` written by hand that day. A managed file
+  among them *would* reproduce the `pipewire-session-manager.service` alias
+  shape — invisible to `no-dangling-home-files`, and dangling for ever when its
+  module leaves — which is the reason not to add one. Run the override by hand
+  for every flatpak application, and record it here.
 - Recurring shape: a Nix library resolving a NixOS-only path
   (`/run/opengl-driver/lib`, `/run/wrappers/bin/polkit-agent-helper-1`,
   `/run/wrappers/bin/unix_chkpwd`). Fixed with scoped overlays in `flake.nix`,
