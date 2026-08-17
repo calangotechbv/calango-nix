@@ -965,6 +965,46 @@ reproduces the `pipewire-session-manager.service` alias shape: unmanageable by
 override by hand for every flatpak application, and record it here.
 ```
 
+- [ ] **Step 4b: Add the grep instrument, which this spec's own execution found**
+
+**Added after Tasks 1 to 4, not part of the original plan.** This belongs in the
+`## Tools that answer a different question than the one asked` section, beside
+the `nixpkgs#` and `systemd-analyze` entries, because it is the same species and
+it bit this spec twice:
+
+```
+**`grep` here is not GNU grep.** The interactive shell defines `grep` as a
+function backed by ugrep, and it silently returns `0` for a pattern containing
+`${` even against a file that provably holds it:
+
+```sh
+grep -c '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix            # 0   -- the function
+/usr/bin/grep -cF '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix  # 1   -- the truth
+```
+
+Spec 14 published a command whose stated output was `5`; run as written it
+printed nothing at all, because every line was filtered as `:0`. The number was
+right — one occurrence per module, re-derived — and the instrument beside it was
+not. Nothing warns you: a count that should be `1` reads `0`, and `0` is exactly
+what "the property holds" looks like for a negative check. Use `/usr/bin/grep`
+explicitly, with `-F` for a literal, whenever a count is load-bearing. Inside a
+Nix builder the shell is the real one and this does not apply.
+```
+
+- [ ] **Step 4c: Add the makeWrapper prefix-order note**
+
+Also in that same section, shorter:
+
+```
+**`wrapProgram --prefix PATH : "a:b:c"` prepends the entries one at a time,**
+so they end up in the wrapper in reverse of the order you wrote them. Measured
+on `home/lf.nix`'s `lfPath`, declared `file, xdg-utils, glib, coreutils` and
+emitted `coreutils, glib, xdg-utils, file`. All four still land before the
+ambient `PATH`, which is the property that matters, so this is harmless until
+two entries ship a binary of the same name — at which point the loser is the
+one you would have expected to win.
+```
+
 - [ ] **Step 5: Confirm no `.superpowers/` path entered the file**
 
 ```bash
