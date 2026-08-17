@@ -280,6 +280,56 @@
             fi
             touch "$out"
           '';
+
+        # The .desktop ids that ~/.config/mimeapps.list names AND that this
+        # flake is responsible for providing. Declared here, in Nix, because a
+        # flake check cannot read mimeapps.list -- it is outside the sandbox.
+        #
+        # This catches the failure that matters at the moment a package is
+        # added: nixpkgs' signal-desktop ships signal.desktop where Debian's
+        # ships signal-desktop.desktop, and mimeapps.list names the Debian id
+        # for x-scheme-handler/sgnl and x-scheme-handler/signalcaptcha. Migrate
+        # Signal without noticing and both handlers stop resolving, silently.
+        #
+        # The list is empty of migrated entries today: seahorse and gammastep
+        # are named by no handler. It exists now so that the seven follow-on
+        # applications cannot be added without it, and the check below proves
+        # the machinery works by asserting the ids the flake DOES ship.
+        #
+        # Unlike the two checks above this one needs no "does the directory
+        # exist" preamble, and the difference is the direction of the
+        # assertion, not an inconsistency. Those two are negative checks
+        # (nothing dangling, no pulseaudio binary), where a missing directory
+        # produces an empty result that reads as a pass. This one is positive:
+        # every id in `required` must be present, so a $apps that does not
+        # exist makes every `[ ! -e ... ]` true and the check fails on its
+        # first entry. Path drift is loud here by construction.
+        gui-desktop-ids =
+          pkgs.runCommand "gui-desktop-ids" { } ''
+            apps=${suffer.activationPackage}/home-path/share/applications
+            fail=0
+
+            # Every id this flake must ship, with the reason it is required.
+            # Format: <desktop-id> <why>
+            required="org.gnome.seahorse.Application.desktop seahorse-launcher
+            gammastep.desktop gammastep-launcher
+            gammastep-indicator.desktop gammastep-indicator-launcher"
+
+            echo "$required" | while read -r id why; do
+              [ -n "$id" ] || continue
+              if [ ! -e "$apps/$id" ]; then
+                echo "missing .desktop id: $id (needed for: $why)" >&2
+                echo "  The package that should ship it does not, or ships it" >&2
+                echo "  under a different name. nixpkgs and Debian do not" >&2
+                echo "  always agree on the id -- signal-desktop is the known" >&2
+                echo "  case. Check what the package actually ships." >&2
+                exit 1
+              fi
+            done || fail=1
+
+            [ "$fail" -eq 0 ] || exit 1
+            touch "$out"
+          '';
       };
     };
 }

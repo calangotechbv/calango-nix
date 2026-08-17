@@ -149,6 +149,37 @@ in
         || echo "update-desktop-database failed; the browser handler may not resolve" >&2
     '';
 
+  # Warn when ~/.config/mimeapps.list names a .desktop id that nothing on
+  # XDG_DATA_DIRS provides any more.
+  #
+  # Non-fatal, deliberately. That file holds ten associations and several name
+  # things this flake does not own -- flatpak Slack, claude-code-url-handler --
+  # whose absence is none of this flake's business and must never abort a
+  # switch. The fatal half of this property is flake.nix's gui-desktop-ids,
+  # which asserts what the flake itself ships.
+  #
+  # This is the layer that can see the live file at all: a flake check runs in
+  # the Nix sandbox, where ~/.config and /usr/share are both invisible.
+  config.home.activation.mimeappsIds =
+    lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+      run ${pkgs.bash}/bin/sh -c '
+        list="$HOME/.config/mimeapps.list"
+        [ -r "$list" ] || exit 0
+        missing=0
+        ids=$(sed -n "s/^[^=]*=//p" "$list" | tr ";" "\n" | sed "/^$/d" | sort -u)
+        for id in $ids; do
+          found=0
+          IFS=":"
+          for d in $XDG_DATA_DIRS $HOME/.local/share; do
+            [ -e "$d/applications/$id" ] && { found=1; break; }
+          done
+          unset IFS
+          [ "$found" -eq 1 ] || { echo "mimeapps.list names a missing .desktop id: $id" >&2; missing=$((missing+1)); }
+        done
+        [ "$missing" -eq 0 ] || echo "$missing unresolved id(s) in mimeapps.list -- handlers for them will do nothing" >&2
+      ' || true
+    '';
+
   # Displaces the stale root-owned eu.calangotech.KBrowserSelector.desktop
   # that currently holds http/https on this machine. Deliberately not
   # xdg.mimeApps: that would freeze ~/.config/mimeapps.list, which holds six
