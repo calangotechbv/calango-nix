@@ -2116,6 +2116,42 @@ before either was applied (`sha256sum` equal,
 counts were taken *before* each build: a `sed` or a patch that matches nothing
 exits 0, so "the mutation is in the file" is its own measurement.
 
+This fix changes the generation store path, and the paths quoted throughout
+this document do not follow it. `wrappedGuiApps`' build script is part of its
+derivation, so editing it rehashes `gui-apps-schema-wrapped`,
+`home-manager-path` and the generation in turn. The task's generation was
+`mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation`, which is what the
+sections above cite and what the whole-branch review reproduced; from the fix
+commit onward:
+
+```
+$ sg nix-users -c 'nix build --no-link --print-out-paths \
+    .#homeConfigurations."isutton@suffer".activationPackage'
+/nix/store/qf6nspw8ncbafapa5fbzvaiyk348snhr-home-manager-generation
+```
+
+The rehash propagates and nothing else does. Compared against the old
+generation, the installed binaries are identical and the only differing file
+under `home-files` is one that embeds the profile path:
+
+```
+$ A=/nix/store/mrfhzdidk627kg1v9x345lasl4lwsm6j-home-manager-generation
+$ B=/nix/store/qf6nspw8ncbafapa5fbzvaiyk348snhr-home-manager-generation
+$ diff <(ls -1 $A/home-path/bin) <(ls -1 $B/home-path/bin) | wc -l
+0
+$ diff -r --no-dereference $A/home-files/ $B/home-files/
+Symbolic links …/home-files/.config/fontconfig/conf.d/10-hm-fonts.conf and
+…/home-files/.config/fontconfig/conf.d/10-hm-fonts.conf differ
+$ diff $A/activate $B/activate | grep -c '^[<>]'
+4
+```
+
+`10-hm-fonts.conf` differs in five lines, all of them the
+`home-manager-path` hash inside an `<include>`, `<dir>` or `<cachedir>`; the
+four `activate` lines are `newGenPath` and the `home-manager-path` argument.
+The guard's verdict is unchanged — the same two `ok` lines — and `seahorse`
+and `gammastep` keep the store paths quoted throughout this document.
+
 **17. Deferred and now recorded: the wrapped-binary test counts wrappers but
 never compares them to the number of binaries.** `home/gui-apps.nix`'s
 `wrapped="$(find "$pkg/bin" -maxdepth 1 -name '.*-wrapped' … | wc -l)"` is
