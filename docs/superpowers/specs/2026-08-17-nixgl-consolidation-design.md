@@ -42,11 +42,20 @@ rests on a figure quoted from another document.
 ```sh
 grep -c 'nixGLIntel' home/*.nix | grep -v ':0' | awk -F: '{s+=$2} END {print s}'
 # 10   -- counts prose; useless as a property
-grep -rc '${pkgs.nixgl.nixGLIntel}' home/*.nix | grep -v ':0' | awk -F: '{s+=$2} END {print s}'
-# 5    -- the interpolated form, code only
+/usr/bin/grep -rcF '${pkgs.nixgl.nixGLIntel}' home/*.nix | /usr/bin/grep -v ':0' | awk -F: '{s+=$2} END {print s}'
+# 5    -- the interpolated form, code only; one per module
 grep -rn '^\s*pkgs\.nixgl\.nixGLIntel\s*$' home/*.nix
 # home/default.nix:110    -- a home.packages entry, not a wrapper
 ```
+
+**The second command names `/usr/bin/grep -F` for a reason, and this document
+originally did not.** `grep` in this shell is a function backed by ugrep, and it
+returns `0` for a pattern containing `${` even against a file that provably
+holds it. The count of 5 is correct — re-derived per module with real GNU grep —
+but the command first published beside it printed nothing at all, which would
+have read as "the property already holds". Found during spec 14's own execution,
+by an implementer who noticed its expected `1` came back `0`. Any literal search
+in this project must call `/usr/bin/grep -F` explicitly.
 
 | site | current shape | what it produces |
 |---|---|---|

@@ -20,6 +20,7 @@
 - A Nix builder runs with `set -e` and `pipefail`. Put every `grep` in a **condition** (`if grep -q … ; then`), never in a bare assignment: `n="$(grep -c … )"` aborts the build before any message prints.
 - **Prove every guard by mutation, and confirm the mutation by a count before the build runs.** Three checks in this project passed while the property they stood for was false.
 - **Ask what else answers to the needle.** A guard that greps for a string can be satisfied by the tree's own prose, or by the guard's own source.
+- **`grep` in this shell is not GNU grep.** It is a shell function backed by ugrep, and it silently returns `0` for a pattern containing `${` even on a file that provably holds it. Measured during Task 1: `grep -c '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix` reports `0` where `/usr/bin/grep -cF` reports `1`. Every count in this plan that searches for a literal therefore calls `/usr/bin/grep -F` explicitly. Do not "simplify" one back to a bare `grep`: the failure is silent and reads as the property holding.
 - Build with `sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."isutton@suffer".activationPackage'`.
 - Commit after each task. Do not squash tasks together.
 
@@ -335,8 +336,8 @@ in
 
 ```bash
 cd /home/isutton/Projects/calango-nix
-grep -rc '${pkgs.nixgl.nixGLIntel}' home/*.nix | grep -v ':0' | awk -F: '{s+=$2} END {print s+0}'
-grep -rc '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix
+/usr/bin/grep -rcF '${pkgs.nixgl.nixGLIntel}' home/*.nix | /usr/bin/grep -v ':0' | awk -F: '{s+=$2} END {print s+0}'
+/usr/bin/grep -rcF '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix
 ```
 
 Expected: `0` then `1`.
@@ -505,7 +506,7 @@ must be fully qualified. Add it as the last element of that list, mirroring
 
 ```bash
 cd /home/isutton/Projects/calango-nix
-grep -rc '${pkgs.nixgl.nixGLIntel}' home/*.nix | grep -v ':0' | awk -F: '{s+=$2} END {print s+0}'
+/usr/bin/grep -rcF '${pkgs.nixgl.nixGLIntel}' home/*.nix | /usr/bin/grep -v ':0' | awk -F: '{s+=$2} END {print s+0}'
 ```
 
 Expected: `0`. A non-zero count here means the needle was written literally and
@@ -532,7 +533,7 @@ Add a genuine wrapper site to `home/foot.nix`'s `let` block:
 Confirm the mutation landed **before** building:
 
 ```bash
-grep -c '${pkgs.nixgl.nixGLIntel}' home/foot.nix
+/usr/bin/grep -cF '${pkgs.nixgl.nixGLIntel}' home/foot.nix
 ```
 
 Expected: `1`. Then build:
@@ -547,7 +548,7 @@ number. Then revert:
 
 ```bash
 git checkout home/foot.nix
-grep -c '${pkgs.nixgl.nixGLIntel}' home/foot.nix
+/usr/bin/grep -cF '${pkgs.nixgl.nixGLIntel}' home/foot.nix
 ```
 
 Expected: `0`.
@@ -564,7 +565,7 @@ nixGL:
 Confirm the mutation landed before building:
 
 ```bash
-grep -c '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix
+/usr/bin/grep -cF '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix
 ```
 
 Expected: `0`. Then build:
@@ -580,7 +581,7 @@ there is nothing left to check. Then revert:
 
 ```bash
 git checkout lib/nixgl.nix
-grep -c '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix
+/usr/bin/grep -cF '${pkgs.nixgl.nixGLIntel}' lib/nixgl.nix
 ```
 
 Expected: `1`.
@@ -794,7 +795,7 @@ L=$(sg nix-users -c 'nix eval --raw .#homeConfigurations."isutton@suffer".config
 echo "$L"
 ls "$L/share"
 ls "$L/share/man/man1" "$L/share/applications"
-grep -c 'file-5\|xdg-utils\|glib-2\|coreutils-9' "$L/bin/lf"
+/usr/bin/grep -c 'file-5\|xdg-utils\|glib-2\|coreutils-9' "$L/bin/lf"
 ```
 
 Expected: `applications bash-completion fish man zsh`; then `lf.1.gz` and
@@ -873,8 +874,8 @@ returns 0, because every site goes through `lib/nixgl.nix`. Replace the
 enumeration instruction with the current one and say what changed:
 
 ```
-grep -rn 'nixgl\.\(wrap\|wrapBin\|bin\)' home/*.nix   # the five call sites
-grep -c 'pkgs.nixgl.nixGLIntel' lib/nixgl.nix         # 1 -- the only definition
+/usr/bin/grep -rn 'nixgl\.\(wrap\|wrapBin\|bin\)' home/*.nix   # the five call sites
+/usr/bin/grep -c 'pkgs.nixgl.nixGLIntel' lib/nixgl.nix         # 1 -- the only definition
 ```
 
 Keep every measurement in that bullet. The 5-of-5 and 0-of-5 table, the two
@@ -922,7 +923,7 @@ override by hand for every flatpak application, and record it here.
 
 ```bash
 cd /home/isutton/Projects/calango-nix
-grep -c '\.superpowers/' CLAUDE.md
+/usr/bin/grep -c '\.superpowers/' CLAUDE.md
 ```
 
 Expected: `0`.
@@ -931,9 +932,9 @@ Expected: `0`.
 
 ```bash
 cd /home/isutton/Projects/calango-nix
-grep -rn 'nixgl\.\(wrap\|wrapBin\|bin\)' home/*.nix | wc -l
-grep -c 'pkgs.nixgl.nixGLIntel' lib/nixgl.nix
-grep -n 'home.packages' home/*.nix | wc -l
+/usr/bin/grep -rn 'nixgl\.\(wrap\|wrapBin\|bin\)' home/*.nix | wc -l
+/usr/bin/grep -c 'pkgs.nixgl.nixGLIntel' lib/nixgl.nix
+/usr/bin/grep -n 'home.packages' home/*.nix | wc -l
 ```
 
 Expected: `5`, `1`, and a count the sentence added in Step 1 must agree with.
