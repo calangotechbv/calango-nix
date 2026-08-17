@@ -112,6 +112,10 @@ grep -c '^/usr/bin/python3$' "$FILES"                              # 1  -- seen
 ls -l /proc/3823/fd | grep -c system-config-printer                # 0
 ```
 
+(Those three print `0`, `1`, `0` and the two zeroes *exit 1*, which is fine typed
+into a shell and is the trap described further down if you paste them into
+anything with `set -e`.)
+
 and `dpkg -S /usr/bin/python3` resolves to `python3-minimal`, not to the package
 whose code was executing. Its sibling `python3-cups` *was* caught, but only
 because it is a compiled extension module and therefore mmapped;
@@ -193,11 +197,31 @@ Inside a builder, put the grep in a **condition**, which `set -e` exempts:
 `if grep -rq … ; then` — which is how `home/foot.nix`'s token guard has always
 been written. In an activation hook a condition is often not available, because
 the count itself is the message; there, append `|| true` to the assignment and
-default the variable, which is what `home/apt-hygiene.nix` does and why that
-clause is load-bearing rather than defensive — without it, a machine with a
-*clean* orphan list aborts its own switch, and the healthy case is the one that
-fails. Count explicitly in an interactive shell; test by condition in a builder;
-guard the assignment in an activation hook.
+default the variable.
+
+**But first ask which shell the code actually runs in, because the options are
+not inherited across an exec.** `activate` sets `-eu` and `pipefail` for
+*itself*. A hook body written inline runs under them; a body handed to a child —
+`run ${pkgs.bash}/bin/sh -c '…'`, which is how `home/apt-hygiene.nix` and
+`home/apps.nix`'s `mimeappsIds` are both written — does not:
+
+```sh
+# from inside such a child, measured
+echo $-                          # hBc     <- no `e`
+set -o | grep -E 'errexit|pipefail'   # both off
+```
+
+`SHELLOPTS` is not exported by `activate`, so nothing carries them in. Spec 12's
+`|| true` was documented as load-bearing on the strength of a mutation run
+against the body *inlined* — where deleting it does return 1 — while the shipped
+child-shell form runs to the end and returns 0. Real command, real output, and a
+conclusion about a program the flake does not contain. The clause is worth
+keeping anyway, since it is free and correct for the inline shape, but do not
+call it what it is not.
+
+Count explicitly in an interactive shell; test by condition in a builder; and in
+an activation hook, check `$-` in the shell that will really run the line before
+deciding what protects it.
 
 **`pgrep` on a Nix binary.** Nix wraps binaries, so the process name is
 `.fumon-wrapped` or `.Hyprland-wrapp` (truncated at 15 chars). `pgrep -x fumon`
@@ -346,11 +370,24 @@ packages and did not move it: six of them shipped a user unit and all six were
 
 ```sh
 find /etc/systemd/user -xtype l          # dangling symlinks only; 0 right now
-# or, if you want the loop rather than find:
+```
+
+Use `find`, and treat the loop below as the narrower thing it is rather than an
+equivalent:
+
+```sh
+# NOT equivalent -- only *.wants/ and *.upholds/, and only one level
 for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do
   [ -L "$f" ] && [ ! -e "$f" ] && echo "$f"
 done
 ```
+
+`deb-systemd-helper` also creates `.requires/`, and `/etc/systemd/user` holds
+top-level symlinks the loop never looks at — `dbus.service` and
+`dbus-org.bluez.obex.service` are there right now. Measured on a scratch tree
+holding four dangling links, one each under `.wants/`, `.upholds/`, `.requires/`
+and at top level: the loop found **2**, `find` found **4**. It misses exactly the
+two it never looks at.
 
 **The obvious form of that loop — `[ -e "$f" ] || echo "$f"` — reports a false
 positive on this machine right now**, so it is written above with a `-L` test

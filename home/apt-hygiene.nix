@@ -19,13 +19,33 @@
   # conclusion spec 10 reached for .desktop identity: the fatal half asserts
   # what the flake ships, and only the activation half can observe the machine.
   #
-  # `|| true` on the count, and this is load-bearing rather than defensive:
-  # `grep -c` prints 0 and exits 1 when it matches nothing, and the activation
-  # script runs with `set -eu` and `set -o pipefail` both on (activate lines
-  # 2-3). Without it, a machine with a clean orphan list would abort its own
-  # switch, and the failure would arrive with no message at all. This is the
-  # same trap spec 11 hit inside a Nix builder; it applies here for the same
-  # reason.
+  # `|| true` on the count is DEFENSIVE here, not load-bearing, and an earlier
+  # version of this comment claimed the opposite on the strength of a mutation
+  # that tested a different program from the one this file ships.
+  #
+  # The reasoning was: `grep -c` prints 0 and exits 1 at zero matches, the
+  # activation script runs `set -eu` with `set -o pipefail` (activate lines
+  # 2-3), so without the clause a machine with a *clean* orphan list would abort
+  # its own switch. Every clause of that is true except the one that matters.
+  # This body does not run in the activation script's shell. It runs in a child
+  # `sh -c`, and shell options are not inherited across an exec:
+  #
+  #   $-                      hBc          <- no `e`
+  #   set -o | grep errexit   errexit  off
+  #   set -o | grep pipefail  pipefail off
+  #
+  # `SHELLOPTS` is not exported by `activate`, so nothing carries them in.
+  # Measured with the clause deleted and the census genuinely 0: the body runs
+  # to the end and returns 0. The mutation that "proved" it necessary had been
+  # run on the body *inlined* into a `set -eu`/`pipefail` shell, where it does
+  # return 1 — a real measurement of a program this flake does not contain.
+  #
+  # The clause stays. It costs nothing and it is correct if this body is ever
+  # inlined, which is the shape most activation hooks take. But it is not what
+  # keeps this hook non-fatal. Three other things do: the child shell has no
+  # errexit; `run … || true` puts the whole call in an OR list, which exempts it
+  # from the caller's errexit; and `[ "$n" -eq 0 ] && exit 0` is not the last
+  # command in the body, so its false branch cannot become the exit status.
   #
   # Costs about one second per switch, measured: `apt-get -s autoremove` took
   # 989 ms. It needs no privileges -- verified as uid 1000, exit 0.

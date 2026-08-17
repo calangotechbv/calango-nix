@@ -878,18 +878,58 @@ activation hook that warns when `apt-get -s autoremove` proposes anything.
 It was built before the removal on purpose, so that it could be observed
 above zero and then at zero. Commit `5075787`.
 
-Two properties were proven rather than assumed. The hook body was
-extracted from the built `activate` — not retyped, or the proof would be
-about the wrong text — confirmed non-empty and `diff -w`-identical to the
-module source before being run, and it printed
+The hook body was extracted from the built `activate` — not retyped, or the
+proof would be about the wrong text — confirmed non-empty and
+`diff -w`-identical to the module source before being run, and it printed
 `apt: 137 package(s) are autoremovable.` The zero-count branch exited `0`
-silently; **the same body with `|| true` removed exited `1` with no output
-at all** under `set -eu` and `set -o pipefail`, which is the abort that
-clause exists to prevent. That is the trap spec 11 met inside a Nix
-builder, in a second place: `activate`'s own lines 2 and 3 are `set -eu`
-and `set -o pipefail`, so a machine with a *clean* orphan list would have
-aborted its own switch, and the healthy case would have been the failing
-one.
+silently.
+
+### The `|| true` is defensive, and this document said otherwise
+
+An earlier version of this section claimed the clause was load-bearing:
+that removing it made the body exit `1` silently under `set -eu` and
+`pipefail`, so a machine with a *clean* orphan list would abort its own
+switch. The mutation was really run and really returned `1`. It was run on
+the body **inlined** into such a shell — which is not what this flake
+ships.
+
+The shipped body runs in a child `sh -c`, and shell options do not survive
+an exec:
+
+```
+$-                                 hBc          <- no `e`
+set -o | grep -E 'errexit|pipefail'   both off
+```
+
+`SHELLOPTS` is not exported by `activate`. With the clause deleted and the
+census genuinely `0`, the body runs to the end and returns `0`. So the
+measurement was of a program this repository does not contain, and the
+conclusion drawn from it was about one that does. Same shape as every other
+defect this project records: the command was real, the output was real, and
+the inference crossed a boundary the measurement never did.
+
+The clause stays — free, and correct if the body is ever inlined, which is
+the shape most hooks take. What actually keeps this hook non-fatal is three
+other things: the child shell has no errexit; `run … || true` places the
+whole call in an OR list, exempting it from the caller's errexit; and
+`[ "$n" -eq 0 ] && exit 0` is not the body's last command, so its false
+branch cannot become the exit status.
+
+### The zero branch, observed for real
+
+The plan noted that the silent branch could only be tested with a
+substituted command, because the machine could not produce an empty orphan
+list until Task 3 had run. It can now, and the shipped body was re-run
+against it after the reboot:
+
+```
+$ sh -c '… n=$(/usr/bin/apt-get -s autoremove | grep -c "^Remv " || true) …'
+SILENT (census is 0)
+rc=0
+```
+
+So both branches are now observed against the real machine rather than one
+of them against a stand-in.
 
 ## Task 3: mark, remove, verify
 
@@ -969,8 +1009,19 @@ ii  gvfs 1.57.2-2+deb13u1
 Some land at `rc` and some at `un`, which is the difference between having
 conffiles and not. Both are removed. `gvfs`, `cups` and `cups-daemon` were
 never in the census and are untouched, so printing itself is unaffected by
-the applet's removal — `cupsd` (pid 1281), `cups-browsed` (pid 1333) and
-`avahi-daemon` (pid 1067) all still run.
+the applet's removal — `cupsd`, `cups-browsed` and `avahi-daemon` all still
+run. Re-read after the reboot, since an earlier version of this paragraph
+quoted pre-reboot pids (1281 and 1333) inside a post-reboot section, and
+neither `/proc/1281` nor `/proc/1333` exists any more:
+
+```
+cups.service           MainPID=1272  ActiveEnter=Mon 2026-08-17 15:27:15 -03
+cups-browsed.service   MainPID=1309  ActiveEnter=Mon 2026-08-17 15:27:19 -03
+avahi-daemon.service   MainPID=1067  ActiveEnter=Mon 2026-08-17 15:27:14 -03
+```
+
+The claim was true either way; the evidence cited for it was stale, which is
+the same species of error as quoting a count from an earlier spec.
 
 ### The dangling-link prediction held
 
