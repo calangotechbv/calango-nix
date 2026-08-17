@@ -870,3 +870,268 @@ Whichever way they go, the census must be re-derived after the marking and
 before the removal — marking changes what is orphaned — and the simulated
 plan read in full. That is Task 3's job, and its two `sudo` commands are
 the user's to run.
+
+## Task 2: the autoremovable warning
+
+`home/apt-hygiene.nix`, registered in `flake.nix`, adds one non-fatal
+activation hook that warns when `apt-get -s autoremove` proposes anything.
+It was built before the removal on purpose, so that it could be observed
+above zero and then at zero. Commit `5075787`.
+
+Two properties were proven rather than assumed. The hook body was
+extracted from the built `activate` — not retyped, or the proof would be
+about the wrong text — confirmed non-empty and `diff -w`-identical to the
+module source before being run, and it printed
+`apt: 137 package(s) are autoremovable.` The zero-count branch exited `0`
+silently; **the same body with `|| true` removed exited `1` with no output
+at all** under `set -eu` and `set -o pipefail`, which is the abort that
+clause exists to prevent. That is the trap spec 11 met inside a Nix
+builder, in a second place: `activate`'s own lines 2 and 3 are `set -eu`
+and `set -o pipefail`, so a machine with a *clean* orphan list would have
+aborted its own switch, and the healthy case would have been the failing
+one.
+
+## Task 3: mark, remove, verify
+
+### The user's decisions
+
+All three questions came back **remove**: the printer applet and GUI (14
+packages), `gvfs-fuse` (1), and the screensaver family (6). By the
+arithmetic recorded above that gives 107 + 21 = **128 removed** and
+**9 marked manual**, and 128 + 9 = 137.
+
+### The two commands, run by the user
+
+```
+sudo apt-mark manual libpipewire-0.3-modules libffado2 libroc0.4 \
+     libconfig++11 libglibmm-2.4-1t64 libxml++2.6-2v5 libsigc++-2.0-0v5 \
+     libopenfec1 libspeexdsp1
+      -> census fell 137 -> 128
+sudo apt autoremove
+      -> census fell 128 -> 0
+```
+
+The marking step moved the census by exactly 9, which is the check that
+the keeper list and the census were talking about the same packages.
+Terminals were restarted before the removal, because `xscreensaver`'s
+`gallant12x22.ttf` was mmapped by Nix's `foot`.
+
+### The endpoint, verified independently
+
+```
+$ n=$(apt-get -s autoremove 2>/dev/null | grep -c '^Remv ' || true); echo "$n"
+0
+
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' \
+    libpipewire-0.3-modules libffado2 libroc0.4 libconfig++11 \
+    libglibmm-2.4-1t64 libxml++2.6-2v5 libsigc++-2.0-0v5 libopenfec1 libspeexdsp1
+ii  libconfig++11 1.7.3-2
+ii  libffado2 2.4.9-2
+ii  libglibmm-2.4-1t64 2.66.8-1
+ii  libopenfec1 1.4.2.11+dfsg-1
+ii  libpipewire-0.3-modules 1.4.2-1
+ii  libroc0.4 0.4.0+dfsg-5
+ii  libsigc++-2.0-0v5 2.12.1-3
+ii  libspeexdsp1 1.2.1-3
+ii  libxml++2.6-2v5 2.42.3-2
+
+$ apt-mark showmanual <those nine> | wc -l
+9
+```
+
+All nine `ii` and all nine manual. The census reads `0`, and the `|| true`
+on that count is the same guard the activation hook needs, for the same
+reason — `grep -c` prints `0` and exits `1`.
+
+The removal's effect on the packages that were decided rather than
+inferred:
+
+```
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' \
+    system-config-printer python3-cups python3-cupshelpers cups-pk-helper \
+    avahi-utils gvfs-fuse xscreensaver xscreensaver-gl xscreensaver-data
+un  avahi-utils
+rc  cups-pk-helper 0.2.6-2.1
+un  gvfs-fuse
+un  python3-cups
+rc  python3-cupshelpers 1.5.18-4
+rc  system-config-printer 1.5.18-4
+rc  xscreensaver 6.09+dfsg1-1
+rc  xscreensaver-data 6.09+dfsg1-1
+rc  xscreensaver-gl 6.09+dfsg1-1
+
+$ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' gvfs cups cups-daemon
+ii  cups 2.4.10-3+deb13u2
+ii  cups-daemon 2.4.10-3+deb13u2
+ii  gvfs 1.57.2-2+deb13u1
+```
+
+Some land at `rc` and some at `un`, which is the difference between having
+conffiles and not. Both are removed. `gvfs`, `cups` and `cups-daemon` were
+never in the census and are untouched, so printing itself is unaffected by
+the applet's removal — `cupsd` (pid 1281), `cups-browsed` (pid 1333) and
+`avahi-daemon` (pid 1067) all still run.
+
+### The dangling-link prediction held
+
+The audit predicted no new dangling `/etc/systemd/user` links, because all
+six unit-shipping orphans were `static` or `disabled`. Measured after the
+removal:
+
+```
+$ find /etc/systemd/user -xtype l | wc -l
+0
+```
+
+Six `.wants` directories remain and every entry in them resolves.
+
+**But the naive sweep loop reports `1`, and it is the false positive this
+document predicted in "Two side findings":**
+
+```
+$ for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do
+    [ -e "$f" ] || echo "$f"
+  done
+/etc/systemd/user/*.upholds/*
+```
+
+`/etc/systemd/user/sockets.target.upholds/` exists and is empty
+(`ls -A` returns nothing), so `*.upholds/*` never expands and the loop
+prints the literal glob — a line that reads exactly like a finding.
+Requiring the entry to be a symlink fixes it, and the fixed form was
+proven able to fail before being trusted, against a throwaway tree
+containing one deliberately dangling link:
+
+```
+$ for f in /etc/systemd/user/*.wants/* /etc/systemd/user/*.upholds/*; do
+    [ -L "$f" ] && [ ! -e "$f" ] && echo "$f"
+  done | wc -l
+0
+
+# same shape, against a tree with one real dangler and one empty dir:
+$ mkdir -p /tmp/t/a.wants /tmp/t/b.upholds
+$ ln -s /nonexistent /tmp/t/a.wants/dangler.service
+$ for f in /tmp/t/*.wants/* /tmp/t/*.upholds/*; do
+    [ -L "$f" ] && [ ! -e "$f" ] && echo "$f"
+  done | wc -l
+1
+```
+
+`find /etc/systemd/user -xtype l` gives the same answers and was checked
+the same way. `CLAUDE.md` now carries the fixed loop rather than only a
+note about the old one.
+
+### The post-reboot check: taken, and passed
+
+The plan left this owed, because absence is only measurable once the
+session ends. The user rebooted during the close-out — `who -b` reports
+`system boot 2026-08-17 15:27`, and `graphical-session.target` entered
+active at `15:27:47` — so it could be taken for real:
+
+```
+$ systemctl --user --state=failed --no-pager --no-legend | wc -l
+0
+$ systemctl --system --state=failed --no-pager --no-legend | wc -l
+0
+```
+
+The desktop's units are all up on the new session — `quickshell`,
+`hyprpolkitagent`, `fumon`, the portal frontend and both backends
+(`xdg-desktop-portal`, `-hyprland`, `-gtk`), `pipewire`, `wireplumber`,
+`pipewire-pulse` and `night-light`, each `active/running` with a MainPID.
+The compositor is Nix's Hyprland 0.55.4, `bluetooth.service` and
+`rtkit-daemon.service` are active, and Nix's `pactl info` reaches
+`/run/user/1000/pulse/native`.
+
+The removed packages' processes are gone, which is the property the
+reboot was needed for:
+
+```
+$ { ps -eo args= | awk '{print $1}'
+    for p in /proc/[0-9]*; do readlink "$p/exe" 2>/dev/null; done
+  } | grep -E 'gvfsd-fuse|/deskflow|xscreensaver|system-config-printer' | sort -u | wc -l
+0
+$ mount | grep -c gvfs
+0
+
+$ c=0; for p in /proc/[0-9]*; do
+    case "$(readlink "$p/exe" 2>/dev/null)" in *"(deleted)") c=$((c+1));; esac
+  done; echo "$c"
+0
+```
+
+Before the reboot all three were still alive with deleted backing files —
+`/proc/4116/exe` read `/usr/libexec/gvfsd-fuse (deleted)`, `/proc/3790/exe`
+read `/usr/bin/deskflow (deleted)`, and the printer applet was still
+running from a script that no longer existed. That last one is worth
+keeping: its `exe` carried **no** `(deleted)` marker at all, because `exe`
+was `/usr/bin/python3.13` and the interpreter had not been removed. The
+`(deleted)` tell does not work for an interpreted program, which is the
+same blindness recorded below.
+
+**Scope of this check.** It covers units, processes and mounts. It does
+not cover interactive behaviour — a screen-sharing dialog, an actual
+print job, mounting a phone — none of which was exercised. What is
+claimed is that nothing failed to start and nothing removed is still
+running, not that every feature was used.
+
+## Close-out
+
+### What the audit found that its own instrument could not
+
+Two findings outlived the task, and both are limits of the in-use check
+that `CLAUDE.md` presents as authoritative. They are now recorded there.
+
+**The union of a `/proc` walk with `ps -eo args` is blind to interpreted
+programs.** `system-config-printer` was in the census *and* its
+`applet.py` was running, and neither half of the union saw it: `exe` and
+`argv[0]` are both the interpreter, and the script is `read()` rather than
+mapped. `python3-cups` was caught only because it is a compiled extension
+module; `python3-cupshelpers`, pure Python, was missed exactly as the
+applet was. Had the six hits been treated as the complete live set, two
+packages would have been swept from under a running process. This is the
+most valuable thing the spec found, because the union is the strongest
+instrument this project has and this is where it fails silently.
+
+**`libpipewire-0.3-modules` is a dependency no running-process check could
+ever have found.** It fills the compiled-in plugin directory of Debian's
+`libpipewire-0.3.so`, kept installed by `libfluidsynth3` and
+`qemu-system-gui` — both `ii`, both outside the census, neither running.
+No measurement at any instant would have flagged it. It was found by
+reading, and its eight transitive `Depends` are the rest of the keeper
+list.
+
+### The instrument that produced the backlog
+
+`CLAUDE.md` recorded the "read the no longer required list" rule after the
+audio spec, and then four specs did not apply it. That is the whole
+mechanism: not one bad decision, but a documented rule that was not a
+habit. The count reached 137 — none of them orphaned by anything current,
+all of them armed to go at whatever moment someone typed
+`apt autoremove`, with the breakage then attributable to whatever had
+changed most recently. `home/apt-hygiene.nix` makes regrowth visible at
+every switch; only reading the list at each removal prevents it.
+
+### Numbers, and where each came from
+
+Every figure in this document was counted with the command shown beside
+it. The partitions close: 107 unconditional removals + 21
+decision-contingent + 9 keepers = 137; with all three decisions "remove",
+128 removed + 9 kept = 137; the marking moved the census 137 → 128, which
+is 9, and the removal moved it 128 → 0.
+
+One number in `CLAUDE.md` was corrected as a consequence rather than as
+part of the plan: the `rc` package count read 128 "as of spec 10" and now
+reads **145**. That is not a running total of removals — 128 packages went
+in this spec alone — because a package with no conffiles leaves no `rc`
+entry. No `rc` count was taken between spec 10 and spec 12, so the
+difference cannot be attributed to either alone.
+
+### One thing this spec did not settle
+
+`gvfs-fuse` was removed on the strength of an empty mount point at one
+moment and the absence of its former consumers. That is a good reason and
+it is not a proof: the bridge exists for mounts not yet made. If a phone
+or an SMB share ever needs to appear as a real path,
+`sudo apt install gvfs-fuse` is the answer and it is not a reversal of
+anything argued here.
