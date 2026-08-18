@@ -924,13 +924,18 @@ Add to the outer attrset (the one starting at line 357, alongside `home.packages
   # loaded. Every automated check clears all nine, because nothing that needs
   # them was running. That is exactly why they are declared rather than
   # measured.
+  # NOTE: an attribute name containing a dot followed by a digit MUST be
+  # quoted -- `libpipewire-0.3-modules` unquoted is a Nix parse error, because
+  # `0.3` lexes as a float inside an attribute path. The `+` names below were
+  # quoted from the start and the digit ones were not, which is the whole trap:
+  # they look equally awkward and only some of them are.
   calango.deb.keep = {
     rtkit = "rtkit-daemon runs from /usr/lib/systemd/system/rtkit-daemon.service, a system unit, and standalone Home Manager writes only ~/.config/systemd/user. It grants pipewire's data-loop.0 thread SCHED_RR priority 20, measured under Nix's pipewire.";
-    libpipewire-0.3-modules = "Fills the compiled-in module directory of DEBIAN's libpipewire-0.3.so, /usr/lib/x86_64-linux-gnu/pipewire-0.3, with 44 .so files. That client library is kept installed by libfluidsynth3 and qemu-system-gui, and a Debian-linked PipeWire client -- a qemu VM's audio device, in practice -- loads its protocol and client-node modules from there. Nix's pipewire has its own closure and is unaffected. It has zero reverse dependencies, so nothing but this declaration holds it.";
+    "libpipewire-0.3-modules" = "Fills the compiled-in module directory of DEBIAN's libpipewire-0.3.so, /usr/lib/x86_64-linux-gnu/pipewire-0.3, with 44 .so files. That client library is kept installed by libfluidsynth3 and qemu-system-gui, and a Debian-linked PipeWire client -- a qemu VM's audio device, in practice -- loads its protocol and client-node modules from there. Nix's pipewire has its own closure and is unaffected. It has zero reverse dependencies, so nothing but this declaration holds it.";
     libffado2 = "A hard Depends of libpipewire-0.3-modules.";
-    libroc0.4 = "A hard Depends of libpipewire-0.3-modules.";
+    "libroc0.4" = "A hard Depends of libpipewire-0.3-modules.";
     "libconfig++11" = "In libffado2's dependency chain.";
-    libglibmm-2.4-1t64 = "In libffado2's dependency chain.";
+    "libglibmm-2.4-1t64" = "In libffado2's dependency chain.";
     "libxml++2.6-2v5" = "In libffado2's dependency chain.";
     "libsigc++-2.0-0v5" = "In libglibmm-2.4-1t64's and libxml++2.6-2v5's dependency chain.";
     libopenfec1 = "In libroc0.4's dependency chain.";
