@@ -365,6 +365,11 @@ count, which is a prediction worth checking rather than assuming.
 10. Both hand-made files are gone; `no-dangling-home-files` still passes.
 11. Both apt packages are removed, `apt-get -s autoremove` proposes zero, and
     `find /etc/systemd/user -xtype l` still returns zero.
+12. `CLAUDE.md` records the module-versus-verbatim-copy precedent, the
+    `syncthing-init` trap, `tray.target`, and the first use of `assertions` in
+    this flake. Added after the plan's self-review noticed the omission: every
+    prior spec here ends with a `CLAUDE.md` edit, and a deliberate departure
+    from the copy-verbatim rule is precisely what that file exists to record.
 
 ---
 
