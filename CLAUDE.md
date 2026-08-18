@@ -23,12 +23,22 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` now runs **three** checks (see `flake.nix`):
-`no-dangling-home-files`, `no-pulseaudio-daemon` and `gui-desktop-ids`.
+`nix flake check` runs **four** checks. Count them rather than quoting this
+line — the number was stale at three the moment `bar-title-slot` landed:
+
+```sh
+sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation'
+```
+
+`bar-title-slot` is unlike the other three: it *runs* this flake's QML under
+the pinned Qt with the offscreen platform, rather than inspecting a built
+tree. So the shell tree is now covered by a build-time guard as well, and a
+change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
 
 Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
 `home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
-`home/apps.nix`, or the `required` list in `flake.nix`. The first of those is
+`home/apps.nix`, `quickshell/bar/TitleSlot.qml`, or the `required` list in
+`flake.nix`. The first of those is
 deliberately stated as *syntax* rather than as a list of modules: an earlier
 version of this passage named `home/portals.nix` and `home/uwsm.nix`, and
 `grep -l 'source =' home/*.nix` returns **ten** modules, so the named pair
