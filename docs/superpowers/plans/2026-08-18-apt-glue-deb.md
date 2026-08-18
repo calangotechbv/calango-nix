@@ -752,25 +752,56 @@ sg nix-users -c 'nix build --no-link .#calangoDeb' && echo "clean build OK"
 
 - [ ] **Step 4: Mutation 1 — the vacuity anchor**
 
+**REPLACE the existing definition. Do not add a second one.** Two earlier
+versions of this mutation were wrong in two different ways, and both turned the
+build red without ever reaching the guard:
+
+| attempted mutation | how it fails | why that proves nothing |
+|---|---|---|
+| `keep = lib.mkForce {} // { … }` | Nix type error | never evaluates `assertions` |
+| a second `config.calango.deb.keep = …` line | Nix duplicate-attribute error | a *language* error, raised before the module system runs |
+
+Both were caught only because an implementer declined to read "the build
+failed" as "the guard fired". That distinction is the entire point of this task.
+
+The `keep` block opens with a line that is exactly
+`  config.calango.deb.keep = {`, ends with a line that is exactly `  };`, and
+contains no nested `  };`, so replacing its whole span is safe:
+
 ```bash
 cp home/deb.nix /tmp/deb.nix.bak
 python3 - <<'MUT'
-import io; p='home/deb.nix'; s=io.open(p,encoding='utf-8').read()
-old = "  config.calango.deb.ban = {"
-assert s.count(old)==1
-io.open(p,'w',encoding='utf-8').write(
-    s.replace(old, "  config.calango.deb.keep = lib.mkForce { };\n\n" + old))
+import io
+p = 'home/deb.nix'
+s = io.open(p, encoding='utf-8').read()
+open_tok  = '  config.calango.deb.keep = {'
+close_tok = '\n  };\n'
+start = s.index(open_tok)
+end   = s.index(close_tok, start) + len(close_tok)
+s = s[:start] + '  config.calango.deb.keep = lib.mkForce { };\n' + s[end:]
+io.open(p, 'w', encoding='utf-8').write(s)
 MUT
-/usr/bin/grep -c 'mkForce { };' home/deb.nix        # must print 1 BEFORE building
-sg nix-users -c 'nix build --no-link .#calangoDeb' 2>&1 | tail -6
+/usr/bin/grep -c 'config.calango.deb.keep = lib.mkForce { };' home/deb.nix   # 1
+/usr/bin/grep -c 'bluez = "bluetoothd runs from' home/deb.nix                # 0
+sg nix-users -c 'nix build --no-link .#calangoDeb' 2>&1 | tail -8
 cp /tmp/deb.nix.bak home/deb.nix
+git diff --stat home/deb.nix   # must be empty
 ```
 
-Expected: the count is `1`, and the build **fails** naming `calango.deb.keep is empty`. If it succeeds, the mutation did not take effect — re-check the count before concluding anything about the guard.
+**Both counts are required and they check different things.** The first proves
+the forcing definition landed; the second proves the original block is really
+gone rather than the new line merely prepended — which is precisely the
+condition whose absence produced the duplicate-attribute error above.
 
-The mutation adds a **second, forcing definition** rather than editing the
-existing block. `lib.mkForce {} // { … }` would be a type error, which is a
-different failure and would prove nothing about this guard.
+Expected: counts `1` and `0`, and the build **fails with the assertion's own
+message**, beginning `calango.deb.keep is empty`. A duplicate-attribute error,
+a type error, or any other Nix failure means the guard is still unproven — do
+not record it as passing.
+
+`lib.mkForce` carries priority 50 against a normal definition's 100, so this
+mutation stays valid after Task 4 adds `calango.deb.keep` entries from
+`home/audio.nix`: the force still wins and `cfg.keep` really evaluates to `{ }`.
+
 
 - [ ] **Step 5: Mutation 2 — keep and ban intersecting**
 
