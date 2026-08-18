@@ -206,10 +206,14 @@ it can be while still differing:
 Confirm the mutation landed before building:
 
 ```bash
-/usr/bin/grep -c 'guiAddress' home/syncthing.nix
+/usr/bin/grep -c 'guiAddress = ' home/syncthing.nix
 ```
 
-Expected: `1`. Then build:
+Expected: `1`. Note the trailing `= ` in the needle: the bare word `guiAddress`
+appears three times in this file's own comments, so counting it returns `3` on
+a clean file and `4` on a mutated one. Count the assignment.
+
+Then build:
 
 ```bash
 sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | tail -20
@@ -235,7 +239,7 @@ restore a file that has never been committed, and `home/syncthing.nix` is not
 committed until Step 9. Then confirm:
 
 ```bash
-/usr/bin/grep -c 'guiAddress' home/syncthing.nix
+/usr/bin/grep -c 'guiAddress = ' home/syncthing.nix
 ```
 
 Expected: `0`.
@@ -564,10 +568,11 @@ module instead of copying the distribution's unit, and the first guard
 that is not a derivation -- a property about the generation cannot be
 checked by a derivation inside it.
 
-Also records that a module option set to its own default value is not a
-no-op: services.syncthing compares the option's value, not its effect,
-so writing guiAddress=127.0.0.1:8384 turns on the config writer that
-value was chosen to avoid."
+Also records what services.syncthing's config writer really keys on.
+hasCustomGuiAddress compares the RESOLVED value of cfg.guiAddress, not
+whether anyone assigned it, so writing the default back in explicitly is
+a genuine no-op -- the opposite of what this plan first claimed, in three
+places, before an implementer read the module source."
 ```
 
 ---
