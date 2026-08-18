@@ -61,12 +61,18 @@
   # The guard for the paragraph above, and the first use of `assertions` in
   # this flake.
   #
-  # Not a runCommand in home.packages, which is where every other build-time
-  # guard here lives. Those all inspect a *package* -- wrappedGuiApps reads
-  # bin/, pulseaudioClients reads its own output -- and this property is about
-  # the generation, which a derivation inside the generation cannot inspect.
-  # config.systemd.user.services is readable at eval time, so the property is
-  # checked where it is decided rather than where it would be observed.
+  # Not a runCommand in home.packages. The guards that live there --
+  # wrappedGuiApps, pulseaudioClients -- each inspect a *package*, and this
+  # property is about the generation, which a derivation inside the generation
+  # cannot inspect.
+  #
+  # It is not the only option, and an earlier version of this comment claimed
+  # it was. flake.nix's checks read ${suffer.activationPackage}/home-files from
+  # outside the generation, so a check could grep the built unit directory for
+  # syncthing-init.service. assertions is chosen over that because it runs on
+  # every generation build rather than only under `nix flake check`, and
+  # because config.systemd.user.services is readable at eval -- so the property
+  # is checked where it is decided rather than where it would be observed.
   assertions = [
     {
       assertion = config.systemd.user.services ? syncthing;

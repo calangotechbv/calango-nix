@@ -62,13 +62,16 @@ source text rather than a built package's contents.
 
 `home/syncthing.nix` adds the first guard in this flake that is not a
 derivation: two entries in Home Manager's `assertions`, evaluated at build
-time. It had to be, and the reason generalises. Every guard above inspects a
-*package* -- `wrappedGuiApps` reads `bin/`, `pulseaudioClients` reads its own
-output -- so a `runCommand` in `home.packages` can see what it needs. A
-property about the *generation* cannot be checked that way, because a
-derivation inside the generation cannot inspect the generation it belongs to.
-`config.systemd.user.services` is readable at eval, so enumerate assertions
-too, with `grep -n 'assertions' home/*.nix`.
+time. An earlier version of this passage said it *had* to be, which is not
+true and was not derived. What cannot work is a `runCommand` in
+`home.packages`: those guards inspect a *package*, and a derivation inside the
+generation cannot inspect the generation it belongs to. A `checks` entry could
+have -- `flake.nix` already reads `${suffer.activationPackage}/home-files` from
+outside the generation in three places. `assertions` wins on frequency, not on
+possibility: it runs on every generation build, where a check runs only under
+`nix flake check`. Enumerate assertions with
+`grep -n 'assertions' home/*.nix`, which returns 4 -- one binding and three
+prose, so read the lines rather than the count.
 
 ---
 
@@ -816,12 +819,18 @@ answers that with `options.<path>.isDefined`, not with a value comparison.
 life until spec 15.** It is `~/.config/systemd/user/tray.target`, "Home Manager
 System Tray", `Requires=graphical-session-pre.target` -- and it carries no
 `[Install]` section, so nothing pulled it in. Any Home Manager tray service is
-`Requires=tray.target`, which means it could never start. The missing piece is
-that the *tray host* has to want it: quickshell owns
-`org.kde.StatusNotifierWatcher` and `org.kde.StatusNotifierHost-*` on the
-session bus, so `home/quickshell.nix` declares `Wants = [ "tray.target" ]`.
-Check with `busctl --user list | grep StatusNotifier` before assuming some
-other component is the host.
+`Requires=tray.target`, and an earlier version of this entry said that meant
+such a service was unable to start at all. That is wrong:
+`Requires=` is an activation dependency, so the consumer pulls the target in
+itself -- measured, `tray.target` has no `ExecStart`, `RefuseManualStart=no`,
+and its own `Requires=graphical-session-pre.target` is satisfied. The target was
+inactive because nothing had ever asked for it, not because anything prevented
+it. `home/quickshell.nix` declares `Wants = [ "tray.target" ]` so the target is
+active because the tray's *provider* runs, not only when a consumer asks --
+quickshell owns `org.kde.StatusNotifierWatcher` and
+`org.kde.StatusNotifierHost-*` on the session bus. Check with
+`busctl --user list | /usr/bin/grep StatusNotifier` before assuming some other
+component is the host.
 
 ---
 
@@ -870,7 +879,8 @@ other component is the host.
   recorded here because that is twice on one branch.
 
   What IS new with syncthing is narrower and is the part worth carrying: it is
-  the first module adopted here that can **write user data**. `services.syncthing`
+  the first module adopted here that mutates state this flake does not own,
+  in place and at runtime. `services.syncthing`
   creates `syncthing-init` -- a oneshot that PATCHes the live `config.xml` over
   syncthing's REST API -- whenever `settings`, `guiCredentials` or a non-default
   `guiAddress` is set. That is why those options are deliberately omitted in
@@ -879,6 +889,13 @@ other component is the host.
   lacks -- `LockPersonality`, `PrivateUsers`, `RestrictNamespaces` and
   `SystemCallFilter=@system-service` -- on top of the three they share; the
   results document records whether any had to be reverted.
+
+  One coverage gap, accepted on purpose: `syncthingtray` is installed by the
+  module's own `home.packages`, so it is outside `guiPackages` and
+  `wrappedGuiApps` does not check it. It is wrapped today --
+  `.syncthingtray-wrapped` and `.syncthingctl-wrapped` both exist -- so nothing
+  is broken; what is given up is a build failure if a future nixpkgs bump drops
+  the wrapper.
 - **`gcr4` cannot be removed either — it takes `gnome-keyring` with it.**
   `apt-get -s remove gcr4` removes `gcr`, `gcr4`, `gnome-keyring`, `seahorse`,
   `pinentry-gnome3` and `golang-docker-credential-helpers`; `gnome-keyring`

@@ -265,9 +265,18 @@ in
       #
       # tray.target is Home Manager's own, has been present on this machine
       # for as long as it has existed, and has never been active, because it
-      # carries no [Install] section and nothing wanted it. syncthingtray's
-      # unit is Requires=tray.target and After=tray.target, so without this
-      # line it could never start at all.
+      # carries no [Install] section and nothing wanted it.
+      #
+      # This line is not what makes syncthingtray able to start. An earlier
+      # version of this comment said it was, and that was wrong: Requires= is
+      # an activation dependency, so syncthingtray.service pulls tray.target
+      # in by itself, and nothing blocks it -- the target has no ExecStart,
+      # RefuseManualStart=no, and its own Requires=graphical-session-pre.target
+      # is satisfied. What this line buys is that the target is active because
+      # the thing that PROVIDES a tray is running, rather than only when some
+      # consumer happens to ask. quickshell owns
+      # org.kde.StatusNotifierWatcher and org.kde.StatusNotifierHost-* on the
+      # session bus, so it is the right unit to declare that a tray exists.
       #
       # Note this orders nothing against quickshell being *ready* rather than
       # merely started. syncthingtray's --wait is what covers that gap, and
