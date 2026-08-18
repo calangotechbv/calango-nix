@@ -382,6 +382,74 @@
             [ "$fail" -eq 0 ] || exit 1
             touch "$out"
           '';
+
+        # The bar's title slot, run for real: test/title-slot.qml drives
+        # quickshell/bar/TitleSlot.qml with four bar geometries and asserts the
+        # title's ink never crosses into the right section. The first of them
+        # is the measured failure -- bar 1516, left 546, right 742, a bluetooth
+        # headset connected -- where the old arithmetic painted the window
+        # title across every pill on the right.
+        #
+        # This is the first check here that RUNS this flake's own QML rather
+        # than inspecting a built tree, and the sandbox turned out to allow it:
+        # Qt's offscreen platform needs no display, and a fonts.conf carrying
+        # one font is enough for text metrics. The metrics are not the session's
+        # -- DejaVu here against the session's own family -- so the assertions
+        # are inequalities against the section boundaries and never fixed pixel
+        # counts. Measured both ways inside the sandbox: it passes as shipped,
+        # and removing TitleSlot's gap fallback fails it.
+        #
+        # Two environment variables are load-bearing and both fail silently.
+        # Without QML2_IMPORT_PATH every file dies with "Did not load any
+        # objects" and exit 0; without QT_ASSUME_STDERR_HAS_CONSOLE the runtime
+        # prints nothing at all and exits 0. Hence the anchor below, which was
+        # itself proven by deleting that export and watching this check fail.
+        bar-title-slot =
+          pkgs.runCommand "bar-title-slot"
+            {
+              nativeBuildInputs = [ pkgs.qt6.qtdeclarative ];
+            }
+            ''
+              export HOME=$TMPDIR
+              export XDG_RUNTIME_DIR=$TMPDIR
+              export QT_QPA_PLATFORM=offscreen
+              export QT_ASSUME_STDERR_HAS_CONSOLE=1
+              export QT_LOGGING_RULES='*=true;qt.*=false'
+              export QML2_IMPORT_PATH=${pkgs.qt6.qtdeclarative}/lib/qt-6/qml
+              export FONTCONFIG_FILE=${
+                pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }
+              }
+
+              mkdir -p src/quickshell src/test
+              cp -r ${./quickshell/bar} src/quickshell/bar
+              cp ${./test/title-slot.qml} src/test/title-slot.qml
+              cd src
+
+              log=$TMPDIR/qml.log
+              if qml test/title-slot.qml > "$log" 2>&1; then
+                status=ok
+              else
+                status=failed
+              fi
+              cat "$log"
+
+              # The anti-vacuity anchor this file's other checks carry, and it
+              # is not theoretical here: without QT_ASSUME_STDERR_HAS_CONSOLE
+              # the qml runtime prints NOTHING and exits 0. A bare exit-status
+              # test would read that silence as a pass.
+              for want in "bt connected" "bt disconnected" "empty bar" "no room at all"; do
+                if ! grep -qF "$want" "$log"; then
+                  echo "the QML test printed no line for case: $want" >&2
+                  exit 1
+                fi
+              done
+              if ! grep -qF PASS "$log"; then
+                echo "the QML test did not report PASS." >&2
+                exit 1
+              fi
+              [ "$status" = ok ] || exit 1
+              touch "$out"
+            '';
       };
     };
 }
