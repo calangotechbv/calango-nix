@@ -67,7 +67,8 @@ true and was not derived. What cannot work is a `runCommand` in
 `home.packages`: those guards inspect a *package*, and a derivation inside the
 generation cannot inspect the generation it belongs to. A `checks` entry could
 have -- `flake.nix` already reads `${suffer.activationPackage}/home-files` from
-outside the generation in three places. `assertions` wins on frequency, not on
+outside the generation, in `no-dangling-home-files` and in
+`gui-desktop-ids`. `assertions` wins on frequency, not on
 possibility: it runs on every generation build, where a check runs only under
 `nix flake check`. Enumerate assertions with
 `grep -n 'assertions' home/*.nix`, which returns 4 -- one binding and three
