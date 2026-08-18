@@ -384,6 +384,26 @@ in
   # libraries) -- so pipewire needed no equivalent fix.
   home.packages = [ pkgs.pipewire pkgs.wireplumber pulseaudioClients ];
 
+  # apt packages this audio stack needs Debian to keep. Nine of the ten fill
+  # the compiled-in module directory of DEBIAN's libpipewire-0.3.so, which is a
+  # dependency no in-use check can ever see: a plugin directory is not
+  # something apt models, and nothing holds a mapping on it until a plugin is
+  # loaded. Every automated check clears all nine, because nothing that needs
+  # them was running. That is exactly why they are declared rather than
+  # measured.
+  calango.deb.keep = {
+    rtkit = "rtkit-daemon runs from /usr/lib/systemd/system/rtkit-daemon.service, a system unit, and standalone Home Manager writes only ~/.config/systemd/user. It grants pipewire's data-loop.0 thread SCHED_RR priority 20, measured under Nix's pipewire.";
+    "libpipewire-0.3-modules" = "Fills the compiled-in module directory of DEBIAN's libpipewire-0.3.so, /usr/lib/x86_64-linux-gnu/pipewire-0.3, with 44 .so files. That client library is kept installed by libfluidsynth3 and qemu-system-gui, and a Debian-linked PipeWire client -- a qemu VM's audio device, in practice -- loads its protocol and client-node modules from there. Nix's pipewire has its own closure and is unaffected. It has zero reverse dependencies, so nothing but this declaration holds it.";
+    libffado2 = "A hard Depends of libpipewire-0.3-modules.";
+    "libroc0.4" = "A hard Depends of libpipewire-0.3-modules.";
+    "libconfig++11" = "In libffado2's dependency chain.";
+    "libglibmm-2.4-1t64" = "In libffado2's dependency chain.";
+    "libxml++2.6-2v5" = "In libffado2's dependency chain.";
+    "libsigc++-2.0-0v5" = "In libglibmm-2.4-1t64's and libxml++2.6-2v5's dependency chain.";
+    libopenfec1 = "In libroc0.4's dependency chain.";
+    libspeexdsp1 = "In libroc0.4's dependency chain.";
+  };
+
   # xdg.configFile rather than home.file.".config/...": home-manager's own
   # systemd module writes user units through xdg.configFile, and sd-switch
   # follows xdg.configHome rather than a literal ".config". Identical today,

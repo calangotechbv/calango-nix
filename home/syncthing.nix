@@ -58,6 +58,38 @@
     command = "syncthingtray qt-widgets-gui --single-instance --wait";
   };
 
+  # The firewall vocabulary for the daemon above.
+  #
+  # The file is named `calango`, not `syncthing`, and the profile inside it is
+  # `calango-syncthing`, not `syncthing`. Debian's syncthing package is `rc`,
+  # and dpkg still records it owning /etc/ufw/applications.d/syncthing while in
+  # that state -- shipping the same path would need a conffile handover between
+  # packages, and shipping the same profile NAME would collide in ufw's own
+  # namespace with the one that file defines.
+  #
+  # No postinst is needed and none is written: ufw already declares
+  # `interest-noawait /etc/ufw/applications.d`, and its postinst's triggered)
+  # branch runs `ufw app update all`. dpkg fires it for us.
+  #
+  # A profile is not a rule. `ufw app update` refreshes profiles and any rule
+  # already citing them; it never creates one. `sudo ufw allow calango-syncthing`
+  # stays a deliberate human act -- which is just as well, since
+  # /etc/ufw/user.rules is 0640 root:root and nothing here could verify a rule.
+  #
+  # No GUI entry, deliberately: 8384 listens on 127.0.0.1 only, measured with
+  # `ss -lntup`. Shipping a profile for it would invite opening a shut port.
+  calango.deb.ufwProfiles.calango = ''
+    [calango-syncthing]
+    title=Syncthing (calango-nix)
+    description=Syncthing sync protocol and local discovery
+    ports=22000|21027/udp
+  '';
+
+  calango.deb.ban = {
+    syncthing = "Nix's, as of spec 15: syncthing 2.1.2 through services.syncthing. Debian's 1.29.5 cannot read the upgraded config.xml, which went version 37 to 52.";
+    syncthingtray = "Nix's, as of spec 15. Debian's build embeds Qt WebEngine for its web GUI, which was 186 MB of the 288 MB the migration reclaimed; Nix's does not.";
+  };
+
   # The guard for the paragraph above, and the first use of `assertions` in
   # this flake.
   #
