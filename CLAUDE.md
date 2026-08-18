@@ -859,14 +859,26 @@ other component is the host.
   the login password through to unlock the keyring, and that is the part with
   no user-space replacement. Do not re-open this without answering the PAM
   question first.
-- **`syncthing` and `syncthingtray` are Nix's, and they are the first
-  migration in this project to adopt an upstream Home Manager service module
-  instead of copying the distribution's unit.** The copy-verbatim rule exists
-  because a hand-authored unit drifts from what upstream ships. It was set
-  aside here on purpose: `services.syncthing`'s unit is close to Debian's --
-  same `WantedBy=default.target`, the same three hardening directives plus
-  four more -- and the module is maintained, where a copy would not be. What
-  the departure costs is recorded in the results document.
+- **`syncthing` and `syncthingtray` are Nix's, and they join `hypridle` and
+  `hyprpolkitagent` as services this flake runs from an upstream Home Manager
+  module rather than a copied unit.** An earlier draft of this entry called
+  syncthing the *first* such migration. It is at least the third —
+  `home/default.nix:231` declares `services.hyprpolkitagent` and
+  `home/hyprland.nix:135` declares `services.hypridle`, and both packages are
+  `rc` in dpkg, so both were real apt migrations. The claim was written without
+  enumerating `home/*.nix`, which is the rule this file opens with, and it is
+  recorded here because that is twice on one branch.
+
+  What IS new with syncthing is narrower and is the part worth carrying: it is
+  the first module adopted here that can **write user data**. `services.syncthing`
+  creates `syncthing-init` -- a oneshot that PATCHes the live `config.xml` over
+  syncthing's REST API -- whenever `settings`, `guiCredentials` or a non-default
+  `guiAddress` is set. That is why those options are deliberately omitted in
+  `home/syncthing.nix` rather than pinned, and why this flake gained its first
+  `assertions`. The module's unit also adds four hardening directives Debian's
+  lacks -- `LockPersonality`, `PrivateUsers`, `RestrictNamespaces` and
+  `SystemCallFilter=@system-service` -- on top of the three they share; the
+  results document records whether any had to be reverted.
 - **`gcr4` cannot be removed either — it takes `gnome-keyring` with it.**
   `apt-get -s remove gcr4` removes `gcr`, `gcr4`, `gnome-keyring`, `seahorse`,
   `pinentry-gnome3` and `golang-docker-credential-helpers`; `gnome-keyring`

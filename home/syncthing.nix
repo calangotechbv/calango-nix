@@ -1,13 +1,17 @@
 # syncthing 2.1.2, through Home Manager's own service module rather than a
 # verbatim copy of Debian's unit.
 #
-# This is the first module in this flake to adopt an upstream Home Manager
-# service module instead of copying the unit the distribution shipped. That is
-# a deliberate departure from the copy-verbatim rule, taken by the user with
-# the trade-off stated: the module's unit adds four hardening directives
-# Debian's lacks -- LockPersonality, PrivateUsers, RestrictNamespaces and
-# SystemCallFilter=@system-service -- on top of the three they share. The
-# results document records whether any of them had to be reverted.
+# Home Manager's module, not a copy of Debian's unit -- which is also how
+# services.hypridle and services.hyprpolkitagent already run here, so this is
+# not the departure an earlier version of this comment claimed it was.
+#
+# What is genuinely new is that this module can write user data:
+# `syncthing-init` PATCHes the live config.xml over the REST API. That is what
+# the omitted options and the assertions below are about. The module's unit
+# also adds four hardening directives Debian's lacks -- LockPersonality,
+# PrivateUsers, RestrictNamespaces and SystemCallFilter=@system-service -- on
+# top of the three they share; the results document records whether any had to
+# be reverted.
 {
   config,
   lib,
