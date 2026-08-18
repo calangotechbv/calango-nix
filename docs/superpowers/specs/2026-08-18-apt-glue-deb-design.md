@@ -81,14 +81,27 @@ than trusting this list.
 `pkgs.dpkg` 1.23.7:
 
 ```sh
-nix build --rebuild        # passed: the .deb is bit-identical on rebuild
-cmp with-fakeroot.deb without-fakeroot.deb   # identical
+nix build --rebuild                          # bit-identical on rebuild
 /usr/bin/dpkg-deb --info calango-desktop.deb # Debian's dpkg 1.22.22 parses it
 apt-get -s install ./calango-desktop.deb     # resolves clean, unprivileged
 ```
 
-`fakeroot` is **not** required: `dpkg-deb --root-owner-group` alone produces
-byte-identical output with `root/root` ownership.
+`fakeroot` is **not** required: `dpkg-deb --root-owner-group` alone gives
+`root/root` ownership.
+
+**A note on how that last claim was originally evidenced, because it is the
+mistake this spec most wants its reader not to repeat.** An earlier version of
+this passage showed `cmp with-fakeroot.deb without-fakeroot.deb # identical`.
+Those two files were throwaway derivations built while drafting this spec, they
+have never existed in the repository, and the line reproduced into `CLAUDE.md`
+before a reviewer ran it and got `No such file or directory`. The conclusion was
+correct and the transcript beside it was fiction. The claim is now carried by a
+command anyone can run:
+
+```sh
+/usr/bin/grep -c fakeroot lib/deb.nix
+# 0    -- the builder never invokes it, and the archive is still root/root
+```
 
 **ufw already provides the integration point.**
 

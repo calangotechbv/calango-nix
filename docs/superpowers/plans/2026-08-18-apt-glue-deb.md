@@ -1154,13 +1154,25 @@ by necessity, not by preference.
 Both were measured while building `lib/deb.nix`:
 
 ```sh
-nix build --rebuild            # passes -- dpkg-deb output is reproducible
-                               # after `find pkg -exec touch -h -d @0 {} +`
-cmp with-fakeroot.deb without-fakeroot.deb   # identical
+P=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoDeb')
+ls -1 "$P"
+# calango-desktop_0.251_all.deb        <- $out is a DIRECTORY holding the .deb
+sg nix-users -c 'nix build --no-link --rebuild .#calangoDeb'
+# checking outputs of '/nix/store/...-calango-desktop-0.251.drv'
+#                                      <- no mismatch, exit 0: bit-reproducible
+/usr/bin/dpkg-deb -c "$P"/*.deb | head -2
+# drwxr-xr-x root/root 0 1979-12-31 21:00 ./
+# drwxr-xr-x root/root 0 1979-12-31 21:00 ./etc/
+/usr/bin/grep -c fakeroot lib/deb.nix
+# 0                                    <- fakeroot is never invoked at all
 ```
 
+The version moves with every commit, so the exact number above will not match
+what you get; everything else will.
+
 `dpkg-deb --root-owner-group` alone gives `root/root` ownership, so `fakeroot`
-buys nothing. And `$out` must be a **directory** containing
+buys nothing — and the count above is better evidence than comparing two builds
+would be, because it shows the builder never reaches for it in the first place. And `$out` must be a **directory** containing
 `calango-desktop_<version>_all.deb`: apt requires a path ending in `.deb` with
 a package-shaped name, and a bare-file output yields `./result`, which
 `apt install` rejects. The build succeeds either way; only the install fails.
