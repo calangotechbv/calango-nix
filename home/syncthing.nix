@@ -38,6 +38,22 @@
     package = pkgs.syncthing;
   };
 
+  # The tray, from the same module. Both overrides are load-bearing and
+  # neither is obvious from reading the option names.
+  #
+  # `package` defaults to syncthingtray-MINIMAL, which is a different build
+  # from the syncthingtray running here today; accepting the default would
+  # swap it silently. `command` defaults to "syncthingtray --wait", dropping
+  # the qt-widgets-gui and --single-instance that the hand-made
+  # ~/.config/autostart/syncthingtray.desktop has been passing since
+  # 2026-07-15. qt-widgets-gui is still a valid operation in 2.1.0, checked
+  # against the binary's own --help.
+  services.syncthing.tray = {
+    enable = true;
+    package = pkgs.syncthingtray;
+    command = "syncthingtray qt-widgets-gui --single-instance --wait";
+  };
+
   # The guard for the paragraph above, and the first use of `assertions` in
   # this flake.
   #

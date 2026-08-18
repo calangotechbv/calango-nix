@@ -258,6 +258,21 @@ in
       Documentation = "https://quickshell.outfoxxed.me";
       PartOf = [ "graphical-session.target" ];
       After = [ "graphical-session.target" ];
+      # quickshell owns org.kde.StatusNotifierWatcher and
+      # org.kde.StatusNotifierHost-* on the session bus, which makes it the
+      # thing that causes a tray to exist -- so it is the right unit to
+      # declare that one does.
+      #
+      # tray.target is Home Manager's own, has been present on this machine
+      # for as long as it has existed, and has never been active, because it
+      # carries no [Install] section and nothing wanted it. syncthingtray's
+      # unit is Requires=tray.target and After=tray.target, so without this
+      # line it could never start at all.
+      #
+      # Note this orders nothing against quickshell being *ready* rather than
+      # merely started. syncthingtray's --wait is what covers that gap, and
+      # the tray icon appearing is the check.
+      Wants = [ "tray.target" ];
       # Carried over from calango-desktop's unit. Under uwsm the race this
       # once guarded cannot happen, and it stays as a statement of what the
       # unit needs rather than as a guard.
