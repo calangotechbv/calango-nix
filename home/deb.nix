@@ -101,9 +101,18 @@ in
     description = "The built .deb, in a directory. flake.nix exposes it.";
   };
 
+  # guards = [ noStorePaths ]: the guard rides as an INPUT of the built
+  # package, not merely a sibling in home.packages. `nix build .#calangoDeb`
+  # never evaluates home.packages at all -- proven by placing a store path in
+  # the manifest and observing the activation build fail while calangoDeb
+  # still wrote a .deb containing it -- so a guard that lives only in
+  # home.packages protects the path that is never used to produce the
+  # installable artifact. Passing it here forces Nix to build noStorePaths
+  # before it can build debPackage, on both paths.
   config.calango.debPackage = deb.build {
     inherit manifest manifestFile;
     inherit (cfg) version;
+    guards = [ noStorePaths ];
   };
 
   # Entries with no natural owner. Anything a specific module is responsible
@@ -142,7 +151,7 @@ in
     hyprpolkitagent = "Nix's, through services.hyprpolkitagent.";
     pipewire = "Nix's. Note this is the DAEMON; libpipewire-0.3-modules is kept, because it fills the module directory of Debian's client library for Debian-linked clients.";
     wireplumber = "Nix's. It resolves scripts through XDG_DATA_DIRS, so a Nix wireplumber would happily execute Debian's Lua scripts -- home/audio.nix pins it with WIREPLUMBER_DATA_DIR.";
-    xdg-desktop-portal = "Nix's. flatpak Recommends this (not Depends) and the recommendation currently sits unsatisfied, so a recommends-processing install would restore Debian's frontend to shadow Nix's. Conflicts makes that fail loudly instead.";
+    xdg-desktop-portal = "Nix's. flatpak Recommends this (not Depends) and the recommendation currently sits unsatisfied. Conflicts only fails loudly when the package is named explicitly; on the recommends-processing path (e.g. installing libglib2.0-tests) apt silently leaves xdg-desktop-portal uninstalled instead, with no warning -- verified both ways with apt-get -s install.";
     xdg-desktop-portal-hyprland = "Nix's, and the backend half of the pair above.";
     hyprland = "Nix's. The compositor is launched through lib/nixgl.nix's wrapper.";
     quickshell = "Owned by Nix, and the session tray host: it holds org.kde.StatusNotifierWatcher and org.kde.StatusNotifierHost-* on the session bus.";

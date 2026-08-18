@@ -45,7 +45,7 @@ let
 in
 {
   build =
-    { manifest, manifestFile, version }:
+    { manifest, manifestFile, version, guards ? [ ] }:
     let
       control = ''
         Package: calango-desktop
@@ -85,6 +85,13 @@ in
         inherit control conffiles;
         passAsFile = [ "control" "conffiles" ];
         nativeBuildInputs = [ pkgs.dpkg ];
+        # Referenced but never used below: an attribute Nix must instantiate
+        # and build before this derivation can, the same way `inherit
+        # manifestFile;` above forces the manifest to exist first. This is
+        # what makes `nix build .#calangoDeb` -- which never evaluates
+        # home.packages -- run each of `guards` too, rather than only the
+        # activation build that happens to sit beside it in home.packages.
+        inherit guards;
       }
       ''
         mkdir -p pkg/DEBIAN pkg/usr/share/calango-desktop
