@@ -325,6 +325,39 @@ install is clean. The authority on whether a dependency can be met is
 `apt-get -s install`, which simulates the solver; `apt-cache policy` only
 answers about a real package of that name.
 
+**`xdg-mime query default` does not report what `mimeapps.list` says.** It
+walks a *search path* rather than reading one file: a `[Default
+Applications]` entry naming a `.desktop` id that resolves to no installed
+application is skipped, and the query falls through to the next candidate on
+the path — here, all the way to `mimeinfo.cache` and a `MimeType=` line
+inside an unrelated, already-installed application. Measured on
+`x-scheme-handler/slack`:
+
+```sh
+grep -n -i slack ~/.config/mimeapps.list
+# 8:x-scheme-handler/slack=slack.desktop     -- the file names this id
+grep -c 'com.slack.Slack' ~/.config/mimeapps.list
+# 0                                          -- and never mentions this one
+xdg-mime query default x-scheme-handler/slack
+# com.slack.Slack.desktop                    -- but this is what gets reported
+grep -n 'x-scheme-handler/slack' /var/lib/flatpak/exports/share/applications/mimeinfo.cache
+# 2:x-scheme-handler/slack=com.slack.Slack.desktop;   -- the actual source
+# control -- an id that DOES resolve reports as named:
+xdg-mime query default x-scheme-handler/sgnl
+# signal.desktop
+```
+
+So "the handler is set to X" and "`xdg-mime` reports X" are different
+questions, and the difference is invisible unless you check that X exists on
+the search path. The consequence here is not cosmetic:
+`x-scheme-handler/slack` is not a dead association today — it silently opens
+flatpak's Slack rather than doing nothing. `home/apps.nix`'s `mimeappsIds`
+hook reports the id as missing and its own message says "handlers for them
+will do nothing"; for this id that message overstates — `xdg-open slack:…`
+does something, just not the thing anyone configured. Whether the same
+overstatement applies to `eu.calangotech.KBrowserSelector.desktop` is
+unmeasured; the hook's code is unchanged this round.
+
 **Pipelines that report by printing nothing.** `grep … | sed …` exits 0 even
 when grep matched nothing, so "the property holds" and "the pipeline broke" are
 indistinguishable. Count explicitly (`| wc -l`) and compare the number.
@@ -1107,11 +1140,15 @@ for deliberate testing.
   and that agent holds the SSH keys — which is why Debian's `ssh-agent` and
   `gcr-ssh-agent` serve nothing here.
 - **Slack is a standalone `.deb` with no repository behind it, and its
-  `.deb` ships a cron job that tries to create one.** As of spec 17 Slack is
-  apt's — 4.51.180, where nixpkgs has an unfree 4.49.89 — installed from a file
-  rather than a repo, so `apt upgrade` will never mention it.
-  `bin/slack-latest` asks Slack's release feed and prints the two commands; a
-  human runs them.
+  `.deb` ships a cron job that tries to create one.** Spec 17 moves Slack
+  from flatpak to apt — a decision this branch makes, not yet a state the
+  machine has reached. Upstream's current release is 4.51.180 against
+  nixpkgs' unfree 4.49.89 (`nix eval` against this flake's pinned input, not
+  the registry — see above); once installed it comes from a file rather
+  than a repo, so `apt upgrade` will never mention it. `bin/slack-latest`
+  asks Slack's release feed and prints the two commands; a human runs
+  them — and as of this writing has not yet: `dpkg -l slack-desktop` reads
+  "no packages found matching slack-desktop".
 
   The package has **no maintainer scripts at all** — its control archive holds
   `./control` and nothing else — which reads as "the retired packagecloud repo
@@ -1286,13 +1323,15 @@ for deliberate testing.
   `ldd` still cannot answer the per-application question: it `dlopen`s its
   platform and GL plugins, so `ldd` is clean for a binary that aborts on first
   draw. The instrument is one person and one window.
-- **That same inheritance broke flatpak, and there is no flatpak here any
-  more — kept because it explains why the session inheritance must not be
-  scrubbed.** The sandbox had no `/nix/store`, so the inherited paths resolved
-  to nothing inside it and mesa loaded no driver at all — Debian's flatpak
-  Slack fell back to software rendering and lost VA-API too. Reproduced
-  inside the sandbox, measured 2026-08-17 while `com.slack.Slack` was still
-  installed:
+- **That same inheritance breaks flatpak, and spec 17's plan removes flatpak
+  entirely — pending, not done. Kept regardless, because it explains why the
+  session inheritance must not be scrubbed.** The sandbox has no
+  `/nix/store`, so the inherited paths resolve to nothing inside it and mesa
+  loads no driver at all — Debian's flatpak Slack falls back to software
+  rendering and loses VA-API too. Reproduced inside the sandbox, measured
+  2026-08-17 while `com.slack.Slack` was installed — and it still is, as of
+  this writing (`flatpak list --app | grep slack` reads `Slack
+  com.slack.Slack 4.50.143 stable system`):
 
   ```sh
   flatpak run --command=sh com.slack.Slack -c 'echo $GBM_BACKENDS_PATH'
@@ -1301,23 +1340,25 @@ for deliberate testing.
 
   The file exists; the namespace does not contain it. Flatpak ships its own
   matched GL stack (`org.freedesktop.Platform.GL.default`), which is the
-  accelerated path — our variables override it with dead paths. The fix was to
+  accelerated path — our variables override it with dead paths. The fix is to
   unset them per application with `flatpak override --user --unset-env=…`,
   never by scrubbing the session. Do not mount `/nix/store` into the sandbox
   either: a host mesa against the runtime's own glibc is worse than the
   fallback.
 
-  **This flake never owned those overrides, deliberately, and the whole tree
-  is gone now.** `~/.local/share/flatpak/overrides/` held seven files on
-  2026-08-17, and not one of them was Home Manager's: six 61-byte browser
-  overrides from 2026-08-06, for applications not installed as flatpaks and
-  owned by nobody, plus a 255-byte `com.slack.Slack` written by hand that day.
-  Spec 17 deleted `~/.local/share/flatpak` along with the flatpak runtime
-  itself, and the seven override files went with it. If a flatpak is ever
-  installed again, the per-application `--unset-env` treatment above is
-  required, for the same reason it was here: the session's five nixGL
-  variables are real paths on the host and dead paths inside any sandbox that
-  does not contain `/nix/store`.
+  **This flake never owned those overrides, deliberately.**
+  `~/.local/share/flatpak/overrides/` held seven files on 2026-08-17, and
+  still holds seven as of this writing: six 61-byte browser overrides from
+  2026-08-06, for applications not installed as flatpaks and owned by
+  nobody, plus a 255-byte `com.slack.Slack` written by hand that day. Spec
+  17's plan is to delete `~/.local/share/flatpak` along with the flatpak
+  runtime itself, taking the seven override files with it — that removal is
+  pending the live migration (`dpkg -l flatpak flatseal` both still read
+  `ii`; see the corp-set and `flatseal` entries). Once it happens, and if a
+  flatpak is ever installed again after that, the per-application
+  `--unset-env` treatment above is required, for the same reason it was
+  here: the session's five nixGL variables are real paths on the host and
+  dead paths inside any sandbox that does not contain `/nix/store`.
 - Recurring shape: a Nix library resolving a NixOS-only path
   (`/run/opengl-driver/lib`, `/run/wrappers/bin/polkit-agent-helper-1`,
   `/run/wrappers/bin/unix_chkpwd`). Fixed with scoped overlays in `flake.nix`,
@@ -1449,11 +1490,18 @@ for deliberate testing.
   removal.
 - **`fresh-editor` stays on apt.** nixpkgs' `fresh-editor` is 0.3.6 against
   Debian's 0.4.7, so moving it would be a downgrade.
-- **`flatseal` is gone**, with flatpak, in spec 17. It edited flatpak
-  permissions and there is no flatpak. It was kept for being absent from
-  nixpkgs, which was a reason to keep it only while flatpak existed — and it
-  was what made the removal order load-bearing, since `calango-desktop`
-  `Depends: flatseal` and `flatseal` `Depends: flatpak`.
+- **`flatseal` leaves apt with flatpak, in spec 17's plan — pending, not
+  done yet.** `home/deb.nix` moves it from `keep` to `ban`: it edits flatpak
+  permissions and this project is removing flatpak. As of this writing
+  neither has actually gone — `dpkg -l flatpak flatseal` still reads `ii`
+  for both, because the installed `calango-desktop` is still 0.258, from
+  before this branch. `flatseal` was kept for being absent from nixpkgs,
+  which was a reason to keep it only while flatpak existed — and it is what
+  makes the removal order load-bearing: `dpkg -s calango-desktop` shows
+  `Depends: … flatseal …` right now, and `apt-cache show flatseal` shows
+  `Depends: … flatpak …`, so flatpak cannot be removed before flatseal is,
+  and flatseal cannot be removed before the rebuilt `.deb` — which drops
+  the `Depends` — is installed.
 - **`~/.config/mimeapps.list` has at least one dead association, and it is
   not this flake's.** `eu.calangotech.KBrowserSelector.desktop` — the stale
   root-owned entry `home/apps.nix`'s `defaultBrowser` hook displaced in
@@ -1465,12 +1513,22 @@ for deliberate testing.
   rather than by convenience** — a fatal version would now abort every switch
   on this machine over associations this flake does not own and never will.
 
-  `slack.desktop` was the second until spec 17. It is live now, and repaired by
-  nothing: Slack's `.deb` ships `/usr/share/applications/slack.desktop`, the
-  exact id `mimeapps.list` already named. No fixer hook was needed, which is the
-  opposite of spec 13's Signal case — where nixpkgs' id differed from Debian's
-  and `home/apps.nix`'s `signalMimeappsId` hook had to rewrite the file. Two
+  `slack.desktop` was the second until spec 17's `.deb` lands, and repaired
+  by nothing once it does: Slack's `.deb` ships
+  `/usr/share/applications/slack.desktop`, the exact id `mimeapps.list`
+  already names, so no fixer hook is needed — the opposite of spec 13's
+  Signal case, where nixpkgs' id differed from Debian's and
+  `home/apps.nix`'s `signalMimeappsId` hook had to rewrite the file. Two
   migrations, two outcomes; do not generalise from either.
+
+  Naming the id and resolving it are different questions, and as of this
+  writing only the first is true: `slack-desktop` is not installed
+  (`dpkg -l slack-desktop` reads "no packages found"), so
+  `xdg-mime query default x-scheme-handler/slack` falls through past the
+  named-but-nonexistent `slack.desktop` to flatpak's still-installed export
+  and reports `com.slack.Slack.desktop` — see the `xdg-mime` entry above.
+  Re-running that same command after the `.deb` is installed is the check
+  that the association actually took.
 - **Nine packages are held for one reason, and as of 2026-08-18 they are held
   by a `Depends`, not by a flag:** `libpipewire-0.3-modules`, its two hard
   `Depends` `libffado2` and
