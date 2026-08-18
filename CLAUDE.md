@@ -881,7 +881,7 @@ component is the host.
 ```sh
 cat /var/lib/dpkg/info/ufw.triggers
 # interest-noawait /etc/ufw/applications.d
-sed -n '137,139p' /var/lib/dpkg/info/ufw.postinst
+sed -n '137,138p' /var/lib/dpkg/info/ufw.postinst
 #     triggered)
 #         ufw app update all || echo "Processing ufw triggers failed. Ignoring."
 ```
@@ -906,13 +906,16 @@ ls -1 "$P"
 sg nix-users -c 'nix build --no-link --rebuild .#calangoDeb'
 # checking outputs of '/nix/store/...-calango-desktop-0.250.drv'...
 #                                       <- no error, exit 0: bit-reproducible
-/usr/bin/dpkg-deb -c "$P"/*.deb | head -2
+/usr/bin/dpkg-deb -c "$P"/*.deb | sed -n '1,2p'
 # drwxr-xr-x root/root  0 1979-12-31 21:00 ./
 # drwxr-xr-x root/root  0 1979-12-31 21:00 ./etc/
 #                                       <- root/root ownership
 /usr/bin/grep -c fakeroot lib/deb.nix
 # 0                                    <- and no fakeroot anywhere in the builder
 ```
+
+The version moves with every commit, so the exact number above will not
+match what you get; everything else will.
 
 `dpkg-deb --root-owner-group` alone gives `root/root` ownership, so `fakeroot`
 buys nothing. And `$out` must be a **directory** containing

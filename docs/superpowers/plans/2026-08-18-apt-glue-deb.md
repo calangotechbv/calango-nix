@@ -475,7 +475,7 @@ in
     hyprpolkitagent = "Nix's, through services.hyprpolkitagent.";
     pipewire = "Nix's. Note this is the DAEMON; libpipewire-0.3-modules is kept, because it fills the module directory of Debian's client library for Debian-linked clients.";
     wireplumber = "Nix's. It resolves scripts through XDG_DATA_DIRS, so a Nix wireplumber would happily execute Debian's Lua scripts -- home/audio.nix pins it with WIREPLUMBER_DATA_DIR.";
-    xdg-desktop-portal = "Nix's. flatpak Recommends this (not Depends) and the recommendation currently sits unsatisfied, so a recommends-processing install would restore Debian's frontend to shadow Nix's. Conflicts makes that fail loudly instead.";
+    xdg-desktop-portal = "Nix's. flatpak Recommends this (not Depends) and the recommendation currently sits unsatisfied. Conflicts only fails loudly when the package is named explicitly; on the recommends-processing path (e.g. installing libglib2.0-tests) apt silently leaves xdg-desktop-portal uninstalled instead, with no warning -- verified both ways with apt-get -s install.";
     xdg-desktop-portal-hyprland = "Nix's, and the backend half of the pair above.";
     hyprland = "Nix's. The compositor is launched through lib/nixgl.nix's wrapper.";
     quickshell = "Owned by Nix, and the session tray host: it holds org.kde.StatusNotifierWatcher and org.kde.StatusNotifierHost-* on the session bus.";
@@ -1131,7 +1131,7 @@ free" are different questions.
 ```sh
 cat /var/lib/dpkg/info/ufw.triggers
 # interest-noawait /etc/ufw/applications.d
-sed -n '137,139p' /var/lib/dpkg/info/ufw.postinst
+sed -n '137,138p' /var/lib/dpkg/info/ufw.postinst
 #     triggered)
 #         ufw app update all || echo "Processing ufw triggers failed. Ignoring."
 ```
@@ -1160,7 +1160,7 @@ ls -1 "$P"
 sg nix-users -c 'nix build --no-link --rebuild .#calangoDeb'
 # checking outputs of '/nix/store/...-calango-desktop-0.251.drv'
 #                                      <- no mismatch, exit 0: bit-reproducible
-/usr/bin/dpkg-deb -c "$P"/*.deb | head -2
+/usr/bin/dpkg-deb -c "$P"/*.deb | sed -n '1,2p'
 # drwxr-xr-x root/root 0 1979-12-31 21:00 ./
 # drwxr-xr-x root/root 0 1979-12-31 21:00 ./etc/
 /usr/bin/grep -c fakeroot lib/deb.nix

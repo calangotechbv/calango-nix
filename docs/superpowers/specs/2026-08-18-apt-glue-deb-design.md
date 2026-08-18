@@ -46,6 +46,9 @@ sg nix-users -c 'nix build .#calangoDeb'
 sudo apt install ./result/calango-desktop_0.239_all.deb
 ```
 
+The version moves with every commit, so the exact number above will not
+match what you get; everything else will.
+
 | declaration | control field | enforced by |
 |---|---|---|
 | keep set | `Depends:` | apt cannot autoremove a dependency of a manual package |
@@ -108,7 +111,7 @@ command anyone can run:
 ```sh
 cat /var/lib/dpkg/info/ufw.triggers
 # interest-noawait /etc/ufw/applications.d
-sed -n '137,140p' /var/lib/dpkg/info/ufw.postinst
+sed -n '137,138p' /var/lib/dpkg/info/ufw.postinst
 #     triggered)
 #         ufw app update all || echo "Processing ufw triggers failed. Ignoring."
 ```
@@ -139,10 +142,16 @@ have a candidate version.
 **No ban-set member is `ii`**, so `Conflicts:` installs cleanly today. All 19
 read `rc`, `un` or absent.
 
-**One latent conflict exists and is wanted.** `flatpak` is `ii` and
-**Recommends** (not Depends) `xdg-desktop-portal (>= 1.6)`, which is `rc`. A
-`Conflicts:` makes any recommends-processing install fail visibly rather than
-silently restoring Debian's portal frontend to shadow Nix's.
+**One latent conflict exists and is wanted, and `Conflicts:` only protects it
+on one of the two paths a user can hit it from.** `flatpak` is `ii` and
+**Recommends** (not Depends) `xdg-desktop-portal (>= 1.6)`, which is `rc`.
+Measured both ways with `apt-get -s install`: naming `xdg-desktop-portal`
+explicitly alongside `calango-desktop` fails loudly (`E: unmet dependencies`).
+Installing something that merely *recommends* it — `libglib2.0-tests`, say —
+does not: apt silently drops `xdg-desktop-portal` from the install set, with
+no warning and no error, and Debian's portal frontend simply stays absent
+rather than being restored. `Conflicts:` still does its job either way — the
+frontend never gets installed — but only the explicit path is loud.
 
 **The greetd session file names no store path.**
 
@@ -442,7 +451,7 @@ Build-time, runnable by an agent:
 Privileged, and therefore the **user's** steps only:
 
 9. `sudo apt install ./result/calango-desktop_*.deb`.
-10. **The central claim, proven by mutation.** That `Depends:` protects the
+10. **The central claim, and how to prove it.** That `Depends:` protects the
     keep set has been reasoned, not measured:
 
     ```sh
