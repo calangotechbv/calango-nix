@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Fourteen specs are done and written up in
+standalone Home Manager. Fifteen specs are done and written up in
 `docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -890,6 +890,21 @@ component is the host.
   lacks -- `LockPersonality`, `PrivateUsers`, `RestrictNamespaces` and
   `SystemCallFilter=@system-service` -- on top of the three they share; the
   results document records whether any had to be reverted.
+
+  **The 1.x database is renamed, not deleted, and the name is the trap.**
+  Migrating to 2.x leaves `~/.local/state/syncthing/index-v0.14.0.db-migrated`
+  — 163 MB, intact — beside the new `index-v2`. A check written as
+  `ls -d …/index-v0.14.0.db` therefore fails, and reads as "the rollback is
+  gone". Spec 15's close-out shipped exactly that check and the wrong
+  conclusion was one `ls` away from being recorded. A check for a file's
+  *absence* proves nothing unless you know every name the file could have.
+  Syncthing also writes its own `config.xml.v37` beside the upgraded config, so
+  both halves of the rollback exist whether or not anyone arranged them.
+
+  **2.1.2 neither honours nor rejects a folder with an empty id.** One such
+  entry survives in `config.xml` with `paused=false` and `fsWatcherEnabled=true`;
+  syncthing loads only the two real folders, logs no complaint, and the GUI
+  cannot show it because the GUI lists loaded folders. Left in place, inert.
 
   One coverage gap, accepted on purpose: `syncthingtray` is installed by the
   module's own `home.packages`, so it is outside `guiPackages` and
