@@ -448,7 +448,7 @@ day has not passed.
 
 ### Piece 7 — the documents
 
-`CLAUDE.md` takes five corrections, two of which are findings:
+`CLAUDE.md` takes six corrections, three of which are findings:
 
 1. **The standing fact "there is no longer a file outside `$HOME` that no
    package owns" is false**, by 182 files in `/etc` alone. Restate it to the
@@ -470,6 +470,12 @@ day has not passed.
 5. **`apt-cache policy` joins the tools-that-answer-a-different-question
    list**, for `Candidate: (none)` on a name that is fully satisfiable through
    `Provides`.
+6. **"`flatseal` and `fresh-editor` stay on apt" is half false**, found while
+   writing the plan rather than while writing this spec. `flatseal` does not
+   stay: it edits flatpak permissions and there is no flatpak. Split the entry,
+   and record that `flatseal`'s keep reason — absent from nixpkgs — was a reason
+   to keep it only while flatpak existed, and was what made the removal order
+   load-bearing.
 
 Outside `CLAUDE.md`:
 
