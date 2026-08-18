@@ -289,7 +289,20 @@ sed 's/spec 15/spec 99/' "$M" > /tmp/stale.json
 echo "--- stale:";         "$D" /tmp/stale.json
 ```
 
-Expected, in order: `calango-desktop is not installed.`; **nothing at all** for the current case; `calango-desktop is out of date.` for the stale case. Every invocation also prints `bash is installed and this flake declares it banned`, because the fixture bans `bash` on purpose — that is the banned-package branch proving it can fire. Each run must exit `0`.
+Expected, in order:
+
+| case | drift line | banned line |
+|---|---|---|
+| not installed | `apt: calango-desktop is not installed.` | present |
+| current | **none** | present |
+| stale | `apt: calango-desktop is out of date.` | present |
+
+`bash` is `ii` on this machine and the fixture bans it on purpose, so
+`apt: bash is installed and this flake declares it banned.` appears in **all
+three** runs — that is the banned-package branch proving it can fire, and it is
+why the "current" case is not silent overall. `syncthing` is `rc`, not `ii`, so
+it must **not** appear: a banned package that is merely removed is not a
+finding. Each run must exit `0`.
 
 - [ ] **Step 7: Commit**
 
@@ -417,12 +430,18 @@ in
   config.calango.deb.keep = {
     bluez = "bluetoothd runs from /usr/lib/systemd/system/bluetooth.service, a system unit, and standalone Home Manager writes only ~/.config/systemd/user. Permanent by architecture.";
     gnome-keyring = "Serves org.freedesktop.secrets and backs org.freedesktop.impl.portal.Secret, which hyprland-portals.conf names. nixpkgs' package ships no systemd units and no D-Bus activation files, so all five artifacts would have to be hand-authored.";
-    libpam-gnome-keyring = "pam_gnome_keyring.so is in /etc/pam.d/greetd and is the auto-unlock path. Using nixpkgs' copy would put a /nix/store path in a root-owned login file; a garbage collection would then break login, which is the one failure this project will not accept.";
+    libpam-gnome-keyring = "pam_gnome_keyring.so is in /etc/pam.d/greetd and is the auto-unlock path. Using nixpkgs' copy would point a root-owned login file at the Nix store, and a garbage collection would then break login -- the one failure this project will not accept.";
     ufw = "This package ships ufw application profiles and depends on ufw's own dpkg trigger, interest-noawait /etc/ufw/applications.d, to load them.";
     cups = "Printing. The job applet and the add-a-printer GUI were removed in spec 12 on purpose; cupsd was not.";
     google-chrome-stable = "Corp set, permanently apt. nixpkgs cannot supply it either way: the package is unfree, and flake.nix imports nixpkgs with overlays but no config, so allowUnfree would be a decision taken on its own merits.";
     code = "Corp set, permanently apt. Debian is the freshest source for it, which inverts this project's usual direction.";
     "1password" = "Corp set, permanently apt, and load-bearing well beyond its own window: ~/.ssh/config sets IdentityAgent ~/.1password/agent.sock for github.com, so this agent holds the SSH keys -- which is why Debian's ssh-agent and gcr-ssh-agent serve none here.";
+
+    # NOTE: no reason string below may contain the literal Nix store path
+    # prefix. Every reason is serialised into manifest.json, which the
+    # noStorePaths guard greps -- so a reason that merely TALKS about store
+    # paths fails the build. Say "the Nix store" in prose instead. This cost a
+    # clean build once, in preflight.
     "1password-cli" = "Corp set, permanently apt. Pairs with the 1password desktop agent above.";
     endpoint-verification = "Corp set, permanently apt. A managed-device agent; there is no Nix equivalent and there should not be one.";
     flatseal = "Absent from nixpkgs, and really a flatpak.";
