@@ -183,9 +183,18 @@ with a package-shaped name, so `nix build .#calangoDeb` must yield
 `./result/calango-desktop_0.239_all.deb`. A bare-file output would give
 `./result`, which `apt install` rejects.
 
-`touch -h -d @0` before the build is what makes it reproducible — `dpkg-deb`
-then clamps to its 1980 floor, deterministically. The probe proved this with
-the equivalent `@''${SOURCE_DATE_EPOCH:-0}`, which is `@0` in the sandbox.
+Pinning every mtime before the build is what makes it reproducible. The value
+is `SOURCE_DATE_EPOCH`, which Nix's stdenv sets to `315532800` (1980-01-01
+UTC), with `@0` as the fallback.
+
+An earlier version of this passage said `dpkg-deb` "clamps to its 1980 floor".
+**It does not clamp at all** — that is a ZIP/FAT timestamp behaviour, and the
+1980 in the probe's output came from `SOURCE_DATE_EPOCH` alone. The claim was
+written from a real command whose output was 1980 and an invented mechanism to
+explain it; it was caught by a reviewer who extracted `data.tar.xz` and read a
+tar member's `mtime` with Python, getting `0` for a build that used a plain
+`@0`. Note also that `dpkg-deb --contents` renders in local time, so the same
+archive reads `1980-01-01` under `TZ=UTC` and `1979-12-31 21:00` here.
 
 ### `home/deb.nix` — the module
 

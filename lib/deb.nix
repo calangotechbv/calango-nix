@@ -104,14 +104,17 @@ in
           cp ${pkgs.writeText "debfile-${baseNameOf path}" body} "pkg/${path}"
         '') manifest.files)}
 
-        # Reproducibility. dpkg-deb clamps to its own 1980 floor from here, so
-        # the archive is a function of content alone. Proven by `nix build
-        # --rebuild`, which is step 4 of this task.
+        # Reproducibility. Nix's stdenv sets SOURCE_DATE_EPOCH to 315532800
+        # (1980-01-01 UTC), so every file gets that timestamp instead of its
+        # real mtime, and the archive is a function of content alone.
+        # dpkg-deb itself clamps nothing -- it writes whatever mtime the tar
+        # member already has. Proven by `nix build --rebuild`, which is step
+        # 4 of this task.
         #
         # chmod BEFORE touch: `cp` out of the store leaves files mode 444, and
         # the permission bits go into the archive exactly as they are here.
         chmod -R u+w,go-w pkg
-        find pkg -exec touch -h -d @0 {} +
+        find pkg -exec touch -h -d @''${SOURCE_DATE_EPOCH:-0} {} +
 
         # $out is a DIRECTORY, not the file. apt needs a path ending in .deb
         # with a package-shaped name; a bare-file output gives ./result, which

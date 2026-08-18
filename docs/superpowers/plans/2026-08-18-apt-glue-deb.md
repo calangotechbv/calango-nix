@@ -161,14 +161,20 @@ in
           cp ${pkgs.writeText "debfile-${baseNameOf path}" body} "pkg/${path}"
         '') manifest.files)}
 
-        # Reproducibility. dpkg-deb clamps to its own 1980 floor from here, so
-        # the archive is a function of content alone. Proven by `nix build
-        # --rebuild`, which is step 4 of this task.
+        # Reproducibility: with every mtime pinned, the archive is a function
+        # of content alone. Proven by `nix build --rebuild`, step 4 of this task.
+        #
+        # Nix's stdenv sets SOURCE_DATE_EPOCH to 315532800, which is
+        # 1980-01-01 UTC, and that is the only reason the timestamps read 1980.
+        # dpkg-deb clamps NOTHING -- an earlier version of this comment said it
+        # imposed a 1980 floor, which is a ZIP/FAT behaviour misattributed to
+        # tar. Measured by reading a tar member's mtime with Python tarfile:
+        # plain `@0` really does produce 0.
         #
         # chmod BEFORE touch: `cp` out of the store leaves files mode 444, and
         # the permission bits go into the archive exactly as they are here.
         chmod -R u+w,go-w pkg
-        find pkg -exec touch -h -d @0 {} +
+        find pkg -exec touch -h -d @''${SOURCE_DATE_EPOCH:-0} {} +
 
         # $out is a DIRECTORY, not the file. apt needs a path ending in .deb
         # with a package-shaped name; a bare-file output gives ./result, which
@@ -267,7 +273,16 @@ ls -1 "$P"                                            # calango-desktop_0.1_all.
 sg nix-users -c 'nix build --no-link --impure --rebuild -f /tmp/deb-probe.nix pkg'
 ```
 
-Expected: `$out` holds exactly one file, named `calango-desktop_0.1_all.deb`. `--info` shows `Depends: libffado2`, `Conflicts: syncthing`, and an extended description containing both reasons. `--contents` shows `root/root` ownership, `1980-01-01` timestamps, `./etc/ufw/applications.d/calango`, `./usr/share/calango-desktop/manifest.json` and `./usr/share/calango-desktop/probe.txt`. `--rebuild` passes with no diff — that is the reproducibility proof.
+Expected: `$out` holds exactly one file, named `calango-desktop_0.1_all.deb`. `--info` shows `Depends: libffado2`, `Conflicts: syncthing`, and an extended description containing both reasons. `--contents` lists `root/root` ownership, `./etc/ufw/applications.d/calango`, `./usr/share/calango-desktop/manifest.json` and `./usr/share/calango-desktop/probe.txt`. `--rebuild` passes with no diff — that is the reproducibility proof.
+
+**On the timestamps.** They come from `SOURCE_DATE_EPOCH`, which Nix's stdenv
+sets to `315532800` — 1980-01-01 UTC. `dpkg-deb --contents` renders in **local
+time**, so on this machine (UTC-3) that prints `1979-12-31 21:00`, not
+`1980-01-01`. Read it under `TZ=UTC` if you want the unambiguous value, or read
+the tar member's `mtime` out of `data.tar.xz` directly with Python `tarfile`,
+which is the only reading that depends on no formatter at all. Do **not**
+describe any of this as dpkg-deb clamping to a floor: it does not clamp, and
+with a plain `@0` the recorded mtime really is `0`.
 
 - [ ] **Step 5: Prove apt accepts it**
 
