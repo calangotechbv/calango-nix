@@ -1142,13 +1142,22 @@ for deliberate testing.
 - **Slack is a standalone `.deb` with no repository behind it, and its
   `.deb` ships a cron job that tries to create one.** Spec 17 moves Slack
   from flatpak to apt — a decision this branch makes, not yet a state the
-  machine has reached. Upstream's current release is 4.51.180 against
-  nixpkgs' unfree 4.49.89 (`nix eval` against this flake's pinned input, not
-  the registry — see above); once installed it comes from a file rather
-  than a repo, so `apt upgrade` will never mention it. `bin/slack-latest`
-  asks Slack's release feed and prints the two commands; a human runs
-  them — and as of this writing has not yet: `dpkg -l slack-desktop` reads
-  "no packages found matching slack-desktop".
+  machine has reached. nixpkgs carries an unfree 4.49.89 (`nix eval` against
+  this flake's pinned input, not the registry — see above); once installed
+  Slack comes from a file rather than a repo, so `apt upgrade` will never
+  mention it. Upstream's own release is a moving target, not a pinned one,
+  so state it only as of the day it was read rather than as a bare fact —
+  as of 2026-08-18, per Slack's own feed:
+
+  ```sh
+  curl -sS 'https://slack.com/api/desktop.latestRelease?arch=x64&variant=deb'
+  # {"ok":true,"version":"4.51.180",...}   -- measured 2026-08-18
+  ```
+
+  `bin/slack-latest` runs that same query and prints the two commands to
+  catch up when the reading moves; re-run it rather than trust the figure
+  above. A human runs them — and as of this writing has not yet:
+  `dpkg -l slack-desktop` reads "no packages found matching slack-desktop".
 
   The package has **no maintainer scripts at all** — its control archive holds
   `./control` and nothing else — which reads as "the retired packagecloud repo
