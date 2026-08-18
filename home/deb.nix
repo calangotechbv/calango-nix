@@ -135,11 +135,16 @@ in
     # clean build once, in preflight.
     "1password-cli" = "Corp set, permanently apt. Pairs with the 1password desktop agent above.";
     endpoint-verification = "Corp set, permanently apt. A managed-device agent; there is no Nix equivalent and there should not be one.";
-    flatseal = "Absent from nixpkgs, and really a flatpak.";
     fresh-editor = "nixpkgs has 0.3.6 against Debian's 0.4.7, so moving it would be a downgrade.";
   };
 
   config.calango.deb.ban = {
+    # These two are unlike every other entry here, and the reasons have to say
+    # so. The other 19 mean "the Nix side owns this now". These mean "removed
+    # deliberately, and nothing replaces them" -- a reader who generalises from
+    # the rest will look for the Nix flatpak and not find one.
+    flatpak = "Removed deliberately in spec 17, and nothing here replaces it. Slack was the last flatpak and moved to its own .deb; org.gnome.Snapshot, the other one, was removed on 2026-08-17. The sandbox is not wanted back: the session exports five nixGL variables that name paths a flatpak namespace does not contain, so every flatpak application needed a per-application override to undo them. Note gnome-software-plugin-flatpak, plasma-discover-backend-flatpak, flatpak-builder and podman-toolbox all Depend on flatpak, so installing any of them would propose removing this metapackage instead.";
+    flatseal = "Removed deliberately in spec 17, with flatpak. It edits flatpak permissions and there is no flatpak. It was in keep until then, for being absent from nixpkgs -- which was a reason to keep it only while flatpak existed. It is also why the removal had to be ordered: this metapackage Depends on flatseal and flatseal Depends on flatpak, so apt remove flatpak took calango-desktop and all 22 keeps with it.";
     lf = "Nix's, as of spec 14. apt's copy shadowed it on PATH and was the machine's only source of lf completions until home/lf.nix stopped using writeShellScriptBin.";
     signal-desktop = "Nix's, as of spec 13. Note the .desktop id differs between the trees: nixpkgs ships signal.desktop where Debian ships signal-desktop.desktop.";
     bitwarden = "Nix's, as of spec 13, through the bitwarden-desktop attribute.";
@@ -151,7 +156,7 @@ in
     hyprpolkitagent = "Nix's, through services.hyprpolkitagent.";
     pipewire = "Nix's. Note this is the DAEMON; libpipewire-0.3-modules is kept, because it fills the module directory of Debian's client library for Debian-linked clients.";
     wireplumber = "Nix's. It resolves scripts through XDG_DATA_DIRS, so a Nix wireplumber would happily execute Debian's Lua scripts -- home/audio.nix pins it with WIREPLUMBER_DATA_DIR.";
-    xdg-desktop-portal = "Nix's. flatpak Recommends this (not Depends) and the recommendation currently sits unsatisfied. Conflicts only fails loudly when the package is named explicitly; on the recommends-processing path (e.g. installing libglib2.0-tests) apt silently leaves xdg-desktop-portal uninstalled instead, with no warning -- verified both ways with apt-get -s install.";
+    xdg-desktop-portal = "Nix's. Until spec 17 this reason also recorded that flatpak Recommends it (not Depends) with the recommendation sitting unsatisfied, and that Conflicts only fails loudly when the package is named explicitly -- on the recommends-processing path apt silently leaves it uninstalled instead. Both were verified with apt-get -s install, and both are now historical: flatpak is gone and banned. The general lesson is not: an unsatisfied Recommends against a Conflicts is silent.";
     xdg-desktop-portal-hyprland = "Nix's, and the backend half of the pair above.";
     hyprland = "Nix's. The compositor is launched through lib/nixgl.nix's wrapper.";
     quickshell = "Owned by Nix, and the session tray host: it holds org.kde.StatusNotifierWatcher and org.kde.StatusNotifierHost-* on the session bus.";
