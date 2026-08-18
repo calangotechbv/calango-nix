@@ -26,12 +26,13 @@
   # machine's ~/.local/state/syncthing/config.xml holds three folders and two
   # devices and is the authority. Nothing in this flake may write it.
   #
-  # The trap is that the safe-looking setting is the dangerous one. The
-  # module's guiAddress default is 127.0.0.1:8384, which is exactly what
-  # config.xml already serves and what ~/.config/syncthingtray.ini connects
-  # to. Writing that same value in explicitly, to "make it match", sets
-  # hasCustomGuiAddress and switches syncthing-init ON. Matching by omission
-  # is the only correct way to match.
+  # The module compares cfg.guiAddress against its own literal default
+  # (127.0.0.1:8384, exactly what config.xml already serves and what
+  # ~/.config/syncthingtray.ini connects to) -- not whether the option was
+  # assigned. So writing that same default value back in explicitly is a
+  # genuine no-op, and any *other* value flips hasCustomGuiAddress and
+  # switches syncthing-init ON. Omission is the only way that is guaranteed
+  # safe; do not "match" the value by hand.
   services.syncthing = {
     enable = true;
     package = pkgs.syncthing;
@@ -61,9 +62,8 @@
       message = ''
         services.syncthing produced `syncthing-init`, which PATCHes
         config.xml over syncthing's REST API. Something in home/syncthing.nix
-        set `settings`, `guiCredentials` or `guiAddress` -- and note that
-        setting guiAddress to its own default value, 127.0.0.1:8384, is
-        enough on its own. This machine's config.xml is the authority: three
+        set `settings`, `guiCredentials` or `guiAddress` to something other
+        than its default. This machine's config.xml is the authority: three
         folders and two devices, none of it declared here. Remove the option
         rather than changing its value.
       '';
