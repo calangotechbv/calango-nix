@@ -145,6 +145,7 @@
           ./home/gui-apps.nix
           ./home/apt-hygiene.nix
           ./home/uwsm.nix
+          ./home/syncthing.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";

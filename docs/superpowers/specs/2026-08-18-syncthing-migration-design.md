@@ -212,12 +212,33 @@ services.syncthing = {
 REST API; with three folders, two devices and an authoritative `config.xml` on
 disk, it is the one part of this module that must never run here.
 
-**The trap is that the safe-looking setting is the dangerous one.** The module's
-`guiAddress` default is `127.0.0.1:8384` — verified by eval — which is exactly
-what `config.xml` serves and what `syncthingtray.ini` connects to. Writing that
-same value in explicitly to "make it match" sets `hasCustomGuiAddress`, which
-turns `syncthing-init` **on**. Matching by omission is the only correct way to
-match.
+**An earlier draft of this spec claimed the trap was subtler than it is, and
+was wrong.** It said that writing `guiAddress = "127.0.0.1:8384"` explicitly —
+the module's own default, and exactly what `config.xml` serves — would set
+`hasCustomGuiAddress` and turn the writer on. It does not. The module computes
+
+```nix
+hasCustomGuiAddress = cfg.guiAddress != defaultGuiAddress;
+```
+
+and `cfg.guiAddress` is the **resolved value**, not a record of whether anyone
+assigned it. In the Nix module system an explicit assignment equal to the
+default is indistinguishable from no assignment, so that spelling is a genuine
+no-op. The draft conflated "the option was set" with "the value differs from
+the default" — which is this project's recurring failure in its usual shape,
+committed in a spec this time. Found by Task 1's implementer, which read the
+module source rather than trusting the paragraph.
+
+**The real trap is smaller but still real:** three unrelated-looking options
+each switch on a config writer, and `guiAddress` is the one someone would
+plausibly set for clarity. Pinning it to any value other than `127.0.0.1:8384`
+turns `syncthing-init` on, and the person doing it is thinking about an address,
+not about a REST client that rewrites their folder list.
+
+**And the guard has a matching limit, stated rather than hidden.** Because it
+asserts on the *effect* — does `syncthing-init` exist — it cannot catch someone
+writing the option redundantly. It catches every case where that writing would
+actually do something, which is the property worth defending.
 
 **Guard: two entries in Home Manager's `assertions`.**
 

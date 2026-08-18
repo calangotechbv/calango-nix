@@ -150,9 +150,8 @@ If this differs, stop and report — the branch is not on the commit this plan w
       message = ''
         services.syncthing produced `syncthing-init`, which PATCHes
         config.xml over syncthing's REST API. Something in home/syncthing.nix
-        set `settings`, `guiCredentials` or `guiAddress` -- and note that
-        setting guiAddress to its own default value, 127.0.0.1:8384, is
-        enough on its own. This machine's config.xml is the authority: three
+        set `settings`, `guiCredentials` or `guiAddress` to something other
+        than its default. This machine's config.xml is the authority: three
         folders and two devices, none of it declared here. Remove the option
         rather than changing its value.
       '';
@@ -196,10 +195,12 @@ path, with `serve`, `--no-browser`, `--no-restart`, `--no-upgrade` and
 - [ ] **Step 6: Mutation one — the config writer must fail the build**
 
 Add `guiAddress` to `home/syncthing.nix`'s `services.syncthing` block, set to
-its own default value:
+a value that is **not** the module's default of `127.0.0.1:8384`. The port is
+deliberately one off, so the mutation is as close to a plausible real edit as
+it can be while still differing:
 
 ```nix
-    guiAddress = "127.0.0.1:8384";
+    guiAddress = "127.0.0.1:8385";
 ```
 
 Confirm the mutation landed before building:
@@ -217,8 +218,17 @@ sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activ
 Expected: the build FAILS, and the output contains
 `services.syncthing produced ` and `syncthing-init`.
 
-This is the mutation that matters most in this plan: it proves the guard fires
-on the *specific* mistake a careful person would make.
+This proves the guard fires when the option actually changes something.
+
+**It deliberately does not use the module's own default value**, and the reason
+is worth knowing. `hasCustomGuiAddress = cfg.guiAddress != defaultGuiAddress`
+compares the resolved value, not whether anyone assigned it, so
+`guiAddress = "127.0.0.1:8384"` is a true no-op and would build green. An
+earlier version of this plan asserted the opposite and made that spelling the
+central mutation; it was wrong, and the guard's own message repeated the error.
+The guard asserts on the effect — does `syncthing-init` exist — so it catches
+every case where setting the option would do something, and cannot catch a
+redundant write. That limit is real and accepted.
 
 Revert by deleting the line you added — not with `git checkout`, which cannot
 restore a file that has never been committed, and `home/syncthing.nix` is not
@@ -454,23 +464,35 @@ holds elsewhere:
   the departure costs is recorded in the results document.
 ```
 
-- [ ] **Step 2: Record the `syncthing-init` trap**
+- [ ] **Step 2: Record what the module's config writer really keys on**
 
-This belongs in **Mechanisms that are not what they look like**, because it is
-one:
+This belongs in **Mechanisms that are not what they look like**. Note the
+entry records a correction, because the correction is the useful part:
 
 ```
-**A Home Manager module option set to its own default value is not a no-op.**
-`services.syncthing` creates `syncthing-init` -- a oneshot that PATCHes the
-running configuration over syncthing's REST API -- whenever `settings`,
-`guiCredentials` or `guiAddress` is set. The condition for the last of those
-is `hasCustomGuiAddress = cfg.guiAddress != defaultGuiAddress`, and it compares
-the *option's value*, not its effect. So writing `guiAddress = "127.0.0.1:8384"`
--- which is both the module's default and exactly what this machine's
-config.xml already serves -- turns the config writer on. Matching by omission
-is the only correct way to match. `home/syncthing.nix` carries two
-`assertions` that fail the build if `syncthing-init` ever appears, and the
-mutation that proves them is setting that option to that value.
+**A Home Manager module's `cfg.<option>` is the resolved value, not a record
+that someone set it.** `services.syncthing` creates `syncthing-init` -- a
+oneshot that PATCHes the running configuration over syncthing's REST API --
+whenever `settings` is non-empty, `guiCredentials` is set, or
+
+    hasCustomGuiAddress = cfg.guiAddress != defaultGuiAddress
+
+is true. Spec 15 first claimed that writing `guiAddress = "127.0.0.1:8384"`
+explicitly -- the module's own default -- would trip that and turn the writer
+on. It does not: the comparison reads the merged value, so an explicit
+assignment equal to the default is indistinguishable from no assignment and is
+a genuine no-op. The claim conflated "the option was set" with "the value
+differs from the default", reached a spec, a plan and a guard's own error
+message, and was caught by an implementer who read the module source instead of
+the paragraph describing it.
+
+What is true is smaller and still worth guarding: three unrelated-looking
+options each switch on a writer that rewrites a config this flake does not own.
+`home/syncthing.nix` asserts on the *effect* -- that `syncthing-init` does not
+exist -- which catches every case where setting one of them would do something,
+and by construction cannot catch a redundant write. If you need to know whether
+an option was written at all rather than what it resolved to, the module system
+answers that with `options.<path>.isDefined`, not with a value comparison.
 ```
 
 - [ ] **Step 3: Record `tray.target`**
