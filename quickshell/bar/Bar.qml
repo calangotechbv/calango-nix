@@ -430,38 +430,19 @@ Scope {
           }
         }
 
-        // Center section: Window Title (truly centered in bar)
-        Item {
-          anchors.centerIn: parent
-          height: parent.height
-          width: Math.max(0, parent.width - 2 * Math.max(leftSection.width, rightSection.width) - 32)
-
-          Rectangle {
-            anchors.centerIn: parent
-            height: 24
-            // Grows with the title but stops where the section does: a pill
-            // wider than the gap between the two sections would sit under
-            // them.
-            width: Math.min(titleText.implicitWidth + 16, parent.width)
-            radius: 12
-            color: root.tint(root.theme.bgSurface)
-            // No focused window, no pill -- an empty one is just a smudge in
-            // the middle of the bar.
-            visible: titleText.text !== ""
-
-            Text {
-              id: titleText
-              Accessible.role: Accessible.StaticText
-              Accessible.name: "Active window: " + text
-              text: Hyprland.activeToplevel ? Hyprland.activeToplevel.title : ""
-              color: root.theme.textPrimary
-              font.pixelSize: 13
-              font.family: root.font
-              elide: Text.ElideRight
-              width: Math.min(implicitWidth, parent.width - 16)
-              anchors.centerIn: parent
-            }
-          }
+        // Center section: Window Title. Centred on the bar while it fits
+        // there, and centred in the real gap between the two sections once it
+        // does not -- see TitleSlot.qml, which owns that arithmetic and is
+        // tested on it. The two section widths go in as numbers so the
+        // component knows nothing about this file.
+        TitleSlot {
+          anchors.fill: parent
+          leftWidth: leftSection.width
+          rightWidth: rightSection.visible ? rightSection.width : 0
+          title: Hyprland.activeToplevel ? Hyprland.activeToplevel.title : ""
+          pillColor: root.tint(root.theme.bgSurface)
+          textColor: root.theme.textPrimary
+          fontFamily: root.font
         }
 
         // Right section: System Info + System Tray
