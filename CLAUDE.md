@@ -60,6 +60,16 @@ the tree's own source text for a literal wrapper call and fails the build if
 one turns up outside `lib/nixgl.nix` — the first guard here that inspects
 source text rather than a built package's contents.
 
+`home/syncthing.nix` adds the first guard in this flake that is not a
+derivation: two entries in Home Manager's `assertions`, evaluated at build
+time. It had to be, and the reason generalises. Every guard above inspects a
+*package* -- `wrappedGuiApps` reads `bin/`, `pulseaudioClients` reads its own
+output -- so a `runCommand` in `home.packages` can see what it needs. A
+property about the *generation* cannot be checked that way, because a
+derivation inside the generation cannot inspect the generation it belongs to.
+`config.systemd.user.services` is readable at eval, so enumerate assertions
+too, with `grep -n 'assertions' home/*.nix`.
+
 ---
 
 ## Tools that answer a different question than the one asked
@@ -778,6 +788,41 @@ were identical and `buildCommand` differed by exactly one comment line. If you
 want to know whether a comment mattered, diff the derivation rather than
 reasoning about the comment.
 
+**A Home Manager module's `cfg.<option>` is the resolved value, not a record
+that someone set it.** `services.syncthing` creates `syncthing-init` -- a
+oneshot that PATCHes the running configuration over syncthing's REST API --
+whenever `settings` is non-empty, `guiCredentials` is set, or
+
+    hasCustomGuiAddress = cfg.guiAddress != defaultGuiAddress
+
+is true. Spec 15 first claimed that writing `guiAddress = "127.0.0.1:8384"`
+explicitly -- the module's own default -- would trip that and turn the writer
+on. It does not: the comparison reads the merged value, so an explicit
+assignment equal to the default is indistinguishable from no assignment and is
+a genuine no-op. The claim conflated "the option was set" with "the value
+differs from the default", reached a spec, a plan and a guard's own error
+message, and was caught by an implementer who read the module source instead of
+the paragraph describing it.
+
+What is true is smaller and still worth guarding: three unrelated-looking
+options each switch on a writer that rewrites a config this flake does not own.
+`home/syncthing.nix` asserts on the *effect* -- that `syncthing-init` does not
+exist -- which catches every case where setting one of them would do something,
+and by construction cannot catch a redundant write. If you need to know whether
+an option was written at all rather than what it resolved to, the module system
+answers that with `options.<path>.isDefined`, not with a value comparison.
+
+**`tray.target` exists here, is Home Manager's, and was inactive for its whole
+life until spec 15.** It is `~/.config/systemd/user/tray.target`, "Home Manager
+System Tray", `Requires=graphical-session-pre.target` -- and it carries no
+`[Install]` section, so nothing pulled it in. Any Home Manager tray service is
+`Requires=tray.target`, which means it could never start. The missing piece is
+that the *tray host* has to want it: quickshell owns
+`org.kde.StatusNotifierWatcher` and `org.kde.StatusNotifierHost-*` on the
+session bus, so `home/quickshell.nix` declares `Wants = [ "tray.target" ]`.
+Check with `busctl --user list | grep StatusNotifier` before assuming some
+other component is the host.
+
 ---
 
 ## Standing facts about this machine
@@ -814,6 +859,14 @@ reasoning about the comment.
   the login password through to unlock the keyring, and that is the part with
   no user-space replacement. Do not re-open this without answering the PAM
   question first.
+- **`syncthing` and `syncthingtray` are Nix's, and they are the first
+  migration in this project to adopt an upstream Home Manager service module
+  instead of copying the distribution's unit.** The copy-verbatim rule exists
+  because a hand-authored unit drifts from what upstream ships. It was set
+  aside here on purpose: `services.syncthing`'s unit is close to Debian's --
+  same `WantedBy=default.target`, the same three hardening directives plus
+  four more -- and the module is maintained, where a copy would not be. What
+  the departure costs is recorded in the results document.
 - **`gcr4` cannot be removed either — it takes `gnome-keyring` with it.**
   `apt-get -s remove gcr4` removes `gcr`, `gcr4`, `gnome-keyring`, `seahorse`,
   `pinentry-gnome3` and `golang-docker-credential-helpers`; `gnome-keyring`
