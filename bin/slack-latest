@@ -41,7 +41,14 @@ status=$(@dpkgQuery@ --admindir="$admindir" -W \
 
 installed=""
 case $status in
-  'ii '*) installed=${status#ii } ;;
+  # ${db:Status-Abbrev} is a three-column field whose third column is a
+  # space ("ii "), and the format string above adds its own separator space,
+  # so status reads "ii  0.258" -- two spaces. Stripping the fixed 3-char
+  # prefix "ii " left a leading space in installed. Take the last
+  # whitespace-delimited field instead: a Debian version cannot contain a
+  # space, so this is exact regardless of how many separator spaces precede
+  # it.
+  'ii '*) installed=${status##* } ;;
 esac
 
 json=$(@curl@ -sS --max-time 20 "$feed") || {
