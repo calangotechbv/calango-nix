@@ -35,6 +35,37 @@ let
   # register as drift.
   manifestFile =
     pkgs.writeText "calango-deb-manifest.json" (builtins.toJSON manifest);
+
+  # A root-owned file must never name /nix/store. That is the pam_gnome_keyring
+  # hazard this project declined: if the path is garbage-collected the file
+  # points at nothing, and unlike everything else here the failure is not
+  # recoverable from a running desktop.
+  #
+  # The needle is built by concatenation, exactly as home/default.nix's
+  # nixglSingleSource is, and for the same reason: written plainly the guard's
+  # own source contains it and fails for ever.
+  noStorePaths =
+    pkgs.runCommand "calango-deb-no-store-paths"
+      {
+        inherit manifestFile;
+        needle = "/nix" + "/store";
+      }
+      ''
+        # A condition, not a bare command: a builder runs with errexit, and a
+        # grep that matches nothing exits 1 -- which here is the PASSING case.
+        if grep -n -F -- "$needle" "$manifestFile" >&2; then
+          echo "" >&2
+          echo "The deb manifest names a /nix/store path." >&2
+          echo "  calango.deb.files and calango.deb.ufwProfiles take file" >&2
+          echo "  CONTENT, never a path. A path put in the manifest is both" >&2
+          echo "  non-reproducible and, once installed, a root-owned file" >&2
+          echo "  referencing the store -- which breaks when that path is" >&2
+          echo "  garbage-collected. Read the file in Nix and pass its text:" >&2
+          echo "    files.\"usr/share/x\" = builtins.readFile ./x;" >&2
+          exit 1
+        fi
+        mkdir -p "$out"
+      '';
 in
 {
   options.calango.deb = {
@@ -118,6 +149,58 @@ in
     pulseaudio = "Never wanted. flake.nix's no-pulseaudio-daemon check exists to stop the Nix side gaining a daemon; this stops the apt side.";
     pulseaudio-utils = "Nix's, through home/audio.nix's pulseaudioClients, which supplies pactl and withholds the daemon deliberately.";
   };
+
+  # Three assertions rather than a runCommand: these read merged OPTION
+  # VALUES, and a derivation inside the generation cannot inspect the
+  # generation it belongs to. home/syncthing.nix established the shape.
+  config.assertions = [
+    {
+      # The anti-vacuity anchor every guard in this flake carries. Without it
+      # the package builds with an empty Depends and the whole mechanism
+      # asserts nothing about anything, silently.
+      assertion = cfg.keep != { };
+      message = ''
+        calango.deb.keep is empty, so the generated package would carry no
+        Depends at all and would protect nothing from autoremove. Either the
+        declarations were lost or every module stopped contributing. Decide
+        which, on purpose.
+      '';
+    }
+    {
+      assertion = lib.intersectLists (builtins.attrNames cfg.keep) (builtins.attrNames cfg.ban) == [ ];
+      message = ''
+        A package is in both calango.deb.keep and calango.deb.ban: ${
+          lib.concatStringsSep ", "
+            (lib.intersectLists (builtins.attrNames cfg.keep) (builtins.attrNames cfg.ban))
+        }.
+        Depends and Conflicts naming the same package makes an uninstallable
+        package. Note pipewire and libpipewire-0.3-modules are DIFFERENT
+        packages and being on opposite sides is correct; check you have not
+        confused them.
+      '';
+    }
+    {
+      # The wrapExemptions idiom: a name in a table must be typed by a person
+      # who then has to write the sentence beside it. An empty reason is a
+      # name nobody had to justify.
+      assertion =
+        lib.all (s: lib.trim s != "")
+          (lib.attrValues cfg.keep ++ lib.attrValues cfg.ban);
+      message = ''
+        An entry in calango.deb.keep or calango.deb.ban has an empty reason.
+        The reason is the point: it ships in the package's own extended
+        description, which is the only place anyone reading `apt show
+        calango-desktop` will find out why the entry exists.
+      '';
+    }
+  ];
+
+  config.home.packages = [
+    # Not a program. A build-time assertion that rides in home.packages so it
+    # runs on every generation build -- strictly more often than
+    # `nix flake check`. Same shape as home/default.nix's nixgl-guard.
+    (pkgs.runCommand "calango-deb-guard" { } "ln -s ${noStorePaths} $out")
+  ];
 
   # Non-fatal, for the reason home/apt-hygiene.nix records at length: this is
   # apt's state, not this flake's, and a switch must never abort over it.
