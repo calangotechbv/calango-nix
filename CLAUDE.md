@@ -897,12 +897,21 @@ rule either — `/etc/ufw/user.rules` is `0640 root:root`, and `nft` and
 by necessity, not by preference.
 
 **A Nix-built `.deb` must have a directory as `$out`, and needs no `fakeroot`.**
-Both were measured while building `lib/deb.nix`:
+Measured directly against `.#calangoDeb`:
 
 ```sh
-nix build --rebuild            # passes -- dpkg-deb output is reproducible
-                               # after `find pkg -exec touch -h -d @0 {} +`
-cmp with-fakeroot.deb without-fakeroot.deb   # identical
+P=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoDeb')
+ls -1 "$P"
+# calango-desktop_0.250_all.deb        <- $out is a DIRECTORY holding the .deb
+sg nix-users -c 'nix build --no-link --rebuild .#calangoDeb'
+# checking outputs of '/nix/store/...-calango-desktop-0.250.drv'...
+#                                       <- no error, exit 0: bit-reproducible
+/usr/bin/dpkg-deb -c "$P"/*.deb | head -2
+# drwxr-xr-x root/root  0 1979-12-31 21:00 ./
+# drwxr-xr-x root/root  0 1979-12-31 21:00 ./etc/
+#                                       <- root/root ownership
+/usr/bin/grep -c fakeroot lib/deb.nix
+# 0                                    <- and no fakeroot anywhere in the builder
 ```
 
 `dpkg-deb --root-owner-group` alone gives `root/root` ownership, so `fakeroot`
