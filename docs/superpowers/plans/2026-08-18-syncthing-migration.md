@@ -90,13 +90,17 @@ If this differs, stop and report — the branch is not on the commit this plan w
 # syncthing 2.1.2, through Home Manager's own service module rather than a
 # verbatim copy of Debian's unit.
 #
-# This is the first module in this flake to adopt an upstream Home Manager
-# service module instead of copying the unit the distribution shipped. That is
-# a deliberate departure from the copy-verbatim rule, taken by the user with
-# the trade-off stated: the module's unit adds four hardening directives
-# Debian's lacks -- LockPersonality, PrivateUsers, RestrictNamespaces and
-# SystemCallFilter=@system-service -- on top of the three they share. The
-# results document records whether any of them had to be reverted.
+# Home Manager's module, not a copy of Debian's unit -- which is also how
+# services.hypridle and services.hyprpolkitagent already run here, so this is
+# not the departure an earlier version of this comment claimed it was.
+#
+# What is genuinely new is that this module can write user data:
+# `syncthing-init` PATCHes the live config.xml over the REST API. That is what
+# the omitted options and the assertions below are about. The module's unit
+# also adds four hardening directives Debian's lacks -- LockPersonality,
+# PrivateUsers, RestrictNamespaces and SystemCallFilter=@system-service -- on
+# top of the three they share; the results document records whether any had to
+# be reverted.
 {
   config,
   lib,
@@ -452,20 +456,33 @@ command and its real output, and say what a wrong conclusion cost.
 - [ ] **Step 1: Record the module-versus-verbatim-copy precedent**
 
 The file states that "every migration in this project copied units verbatim",
-in the `gnome-keyring` standing fact, and uses it as an argument. Syncthing is
-the first exception. Add a bullet to the **Standing facts** section recording
-that, with the reason it was safe to depart here and the reason the rule still
-holds elsewhere:
+in the `gnome-keyring` standing fact, and uses it as an argument. That rule is
+narrower than it sounds: **enumerate `home/*.nix` before repeating it**, because
+`home/default.nix:231` already declares `services.hyprpolkitagent` and
+`home/hyprland.nix:135` already declares `services.hypridle`, and both packages
+are `rc` in dpkg. Add a bullet to the **Standing facts** section:
 
 ```
-- **`syncthing` and `syncthingtray` are Nix's, and they are the first
-  migration in this project to adopt an upstream Home Manager service module
-  instead of copying the distribution's unit.** The copy-verbatim rule exists
-  because a hand-authored unit drifts from what upstream ships. It was set
-  aside here on purpose: `services.syncthing`'s unit is close to Debian's --
-  same `WantedBy=default.target`, the same three hardening directives plus
-  four more -- and the module is maintained, where a copy would not be. What
-  the departure costs is recorded in the results document.
+- **`syncthing` and `syncthingtray` are Nix's, and they join `hypridle` and
+  `hyprpolkitagent` as services this flake runs from an upstream Home Manager
+  module rather than a copied unit.** An earlier draft of this entry called
+  syncthing the *first* such migration. It is at least the third —
+  `home/default.nix:231` declares `services.hyprpolkitagent` and
+  `home/hyprland.nix:135` declares `services.hypridle`, and both packages are
+  `rc` in dpkg, so both were real apt migrations. The claim was written without
+  enumerating `home/*.nix`, which is the rule this file opens with, and it is
+  recorded here because that is twice on one branch.
+
+  What IS new with syncthing is narrower and is the part worth carrying: it is
+  the first module adopted here that can **write user data**. `services.syncthing`
+  creates `syncthing-init` -- a oneshot that PATCHes the live `config.xml` over
+  syncthing's REST API -- whenever `settings`, `guiCredentials` or a non-default
+  `guiAddress` is set. That is why those options are deliberately omitted in
+  `home/syncthing.nix` rather than pinned, and why this flake gained its first
+  `assertions`. The module's unit also adds four hardening directives Debian's
+  lacks -- `LockPersonality`, `PrivateUsers`, `RestrictNamespaces` and
+  `SystemCallFilter=@system-service` -- on top of the three they share; the
+  results document records whether any had to be reverted.
 ```
 
 - [ ] **Step 2: Record what the module's config writer really keys on**
@@ -563,10 +580,12 @@ file's own rule, stated in its opening paragraph.
 git add CLAUDE.md
 git commit -m "docs: syncthing, and three things it taught
 
-The first migration here to adopt an upstream Home Manager service
-module instead of copying the distribution's unit, and the first guard
-that is not a derivation -- a property about the generation cannot be
-checked by a derivation inside it.
+syncthing joins hypridle and hyprpolkitagent as services run from an
+upstream Home Manager module rather than a copied unit -- it is not the
+first, which an earlier draft claimed without enumerating home/*.nix.
+What is new is the first guard here that is not a derivation, because a
+property about the generation cannot be checked by a derivation inside
+it.
 
 Also records what services.syncthing's config writer really keys on.
 hasCustomGuiAddress compares the RESOLVED value of cfg.guiAddress, not
