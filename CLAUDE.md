@@ -27,8 +27,24 @@ which reads as a broken Nix install. A fresh login also picks the group up, but
 line — the number was stale at three the moment `bar-title-slot` landed:
 
 ```sh
-sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation'
+sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 ```
+
+**The `checks\.` part of that pattern is load-bearing, and was added after the
+looser version started lying.** `nix flake check` validates *every* flake
+output, not only `checks`, so it emits a `checking derivation` line for
+`packages.x86_64-linux.calangoDeb` as well. Measured the moment the glue-deb
+work landed a `packages` output:
+
+```sh
+… | grep -c '^checking derivation'          # 5   <- includes the package
+… | grep -c '^checking derivation checks\.'  # 4   <- the checks
+… | grep -o 'running [0-9]* flake checks'   # running 4 flake checks
+```
+
+The looser pattern disagreed with nix's own summary line and nothing warned
+about it. Prefer the summary if you only want the number; use the `checks\.`
+form when you want to see which ones ran.
 
 `bar-title-slot` is unlike the other three: it *runs* this flake's QML under
 the pinned Qt with the offscreen platform, rather than inspecting a built
@@ -47,7 +63,7 @@ for the property; do not trust a list of names, including this sentence's.
 
 Further build-time guards ride in `home.packages` rather than in `checks`, so
 they run on every generation build — strictly more often than
-`nix flake check` is invoked — and none of them appears in that count of three.
+`nix flake check` is invoked — and none of them appears in that count of four.
 Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
