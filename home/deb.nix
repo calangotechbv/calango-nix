@@ -1,7 +1,7 @@
 # Declarative control over the Debian side, through a package apt understands.
 #
 # This flake has crossed the apt boundary fifteen times and could never STATE
-# anything about it. Twenty-two packages are `apt-mark manual` for reasons that
+# anything about it. Twenty-two packages were `apt-mark manual` for reasons that
 # live only in CLAUDE.md, and libpipewire-0.3-modules has zero reverse
 # dependencies -- a flag and a paragraph are the whole of what keeps nine
 # packages away from autoremove.

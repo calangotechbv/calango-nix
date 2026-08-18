@@ -971,8 +971,9 @@ for deliberate testing.
 - **`bluez` cannot move to Nix.** `bluetoothd` runs from
   `/usr/lib/systemd/system/bluetooth.service` — a *system* unit — and
   standalone Home Manager writes only `~/.config/systemd/user`. Permanent apt
-  dependency, by architecture. It is marked manual so `autoremove` cannot take
-  it. Do not re-open this.
+  dependency, by architecture. It is `auto` and held by `calango-desktop`'s
+  `Depends` — **not** by an `apt-mark manual` flag, which is what protected it
+  until 2026-08-18. Do not re-open this.
 - **`gnome-keyring` stays on apt, deliberately — and this one was decided after
   a survey, not by default.** It serves `org.freedesktop.secrets` and
   `org.gnome.keyring` on the session bus and backs
@@ -1240,8 +1241,8 @@ for deliberate testing.
   `/usr/lib/systemd/system/rtkit-daemon.service`, a *system* unit, and
   standalone Home Manager writes only `~/.config/systemd/user`. It grants
   pipewire's `data-loop.0` thread `SCHED_RR` priority 20 — measured under
-  Nix's pipewire. Marked manual so `autoremove` cannot take it. Do not
-  re-open this.
+  Nix's pipewire. It is `auto` and held by `calango-desktop`'s `Depends`, not
+  by an `apt-mark` flag. Do not re-open this.
 - `pulseaudio-utils` is gone; `pactl` comes from Nix through
   `home/audio.nix`'s `pulseaudioClients`, which withholds the daemon
   deliberately. Never add `pkgs.pulseaudio` to `home.packages` —
@@ -1372,8 +1373,9 @@ for deliberate testing.
   hook is **non-fatal by requirement rather than by convenience** — a fatal
   version would now abort every switch on this machine over associations this
   flake does not own and never will.
-- **Nine packages are permanently `apt-mark manual`, and all nine for one
-  reason:** `libpipewire-0.3-modules`, its two hard `Depends` `libffado2` and
+- **Nine packages are held for one reason, and as of 2026-08-18 they are held
+  by a `Depends`, not by a flag:** `libpipewire-0.3-modules`, its two hard
+  `Depends` `libffado2` and
   `libroc0.4`, and their chain `libconfig++11`, `libglibmm-2.4-1t64`,
   `libxml++2.6-2v5`, `libsigc++-2.0-0v5`, `libopenfec1`, `libspeexdsp1` —
   1 + 2 + 3 + 2 + 1, verified by reading each package's `Depends`. 12166 KiB
@@ -1384,9 +1386,36 @@ for deliberate testing.
   qemu VM's audio device, in practice) loads its protocol and client-node
   modules from there. Nix's pipewire is unaffected either way — it has its own
   closure. Every automated check clears these nine, because nothing that needs
-  them was running, which is exactly why they are marked rather than trusted to
-  a measurement. Do not re-litigate this against an in-use check; it cannot see
-  the dependency.
+  them was running, which is exactly why they are declared rather than trusted
+  to a measurement. Do not re-litigate this against an in-use check; it cannot
+  see the dependency.
+
+  **What changed on 2026-08-18, and the measurement that licensed it.** All 22
+  keep-set packages were `apt-mark manual`; they are now `auto`, and the only
+  thing standing between them and `autoremove` is `calango-desktop`'s
+  `Depends`. That was proven before the flip, on the one package whose sole
+  installed holder is the metapackage:
+
+  ```sh
+  sudo apt-mark auto libpipewire-0.3-modules
+  apt-cache rdepends --installed libpipewire-0.3-modules   # calango-desktop, alone
+  apt-get -s autoremove | grep -c '^Remv '                 # 0
+  ```
+
+  Nothing else could have been responsible, so this isolates the claim rather
+  than merely being consistent with it. Afterwards: 22 of 22 `auto`, verified
+  one at a time rather than inferred from `apt-mark showmanual | wc -l`, which
+  moved 370 → 349 — **21, not 22**, because `libffado2` had already been left
+  `auto` by a half-run acceptance test. A count that agrees with your
+  expectation for the wrong reason is the shape this file keeps warning about.
+
+  **The single point of failure this creates.** Every one of the 22 now hangs
+  off `calango-desktop`. If it were ever marked `auto`, or removed, all 22 are
+  orphaned in one step — `apt remove calango-desktop` is now a 22-package
+  operation including `bluez`, `google-chrome-stable`, `1password` and `code`.
+  apt lists them and asks first, so it cannot happen silently, but check
+  `apt-mark showmanual calango-desktop` still prints it before trusting any of
+  the above.
 - **The printer applet and GUI are gone by deliberate choice, and printing is
   not.** `system-config-printer`, `system-config-printer-udev`, `python3-cups`,
   `python3-cupshelpers`, `python3-smbc`, `cups-pk-helper`, `avahi-utils` and the

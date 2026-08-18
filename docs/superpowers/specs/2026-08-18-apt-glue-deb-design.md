@@ -473,12 +473,18 @@ Privileged, and therefore the **user's** steps only:
 
 ## Known limitations, accepted
 
-- **The declaration is not yet authoritative.** All 22 keep-set members are
-  *also* `apt-mark manual` today, so deleting an entry from `keep` does not
-  make the package removable — the mark still holds it. Flipping them to
-  `auto` would make the manifest the single source of truth, and would also
-  mean that removing the metapackage exposes all 22 to `autoremove`. That is
-  the correct end state and a deliberate later decision, not this spec's.
+- ~~**The declaration is not yet authoritative.**~~ **Resolved 2026-08-18,
+  after this spec was written.** All 22 keep-set members were *also*
+  `apt-mark manual`, so deleting an entry from `keep` did not make the package
+  removable — the mark still held it. They are now all `auto`, held solely by
+  `calango-desktop`'s `Depends`, so the manifest is the single source of truth.
+
+  The flip was licensed by isolating the claim first rather than by flipping
+  everything and hoping: only `libpipewire-0.3-modules` was flipped, because
+  the metapackage is its sole installed holder, and `apt-get -s autoremove`
+  stayed at 0. Nothing else could have accounted for that. The accepted cost is
+  the one this entry already named — removing the metapackage now exposes all
+  22, `bluez` and `google-chrome-stable` among them.
 - **ufw rules are declared nowhere.** The package ships the vocabulary;
   `sudo ufw allow calango-syncthing` remains a one-time human act. This is not
   laziness: `/etc/ufw/user.rules` is `0640 root:root`, `nft` and `iptables`
