@@ -58,7 +58,13 @@ remembered list of "the guards" misses. `home/default.nix`'s
 a different shape again: not a package at all, but a `runCommand` that greps
 the tree's own source text for a literal wrapper call and fails the build if
 one turns up outside `lib/nixgl.nix` — the first guard here that inspects
-source text rather than a built package's contents.
+source text rather than a built package's contents. `home/deb.nix`'s
+`noStorePaths` is the fifth, added by the glue-deb work: another `runCommand`
+in `home.packages`, this one grepping the rendered manifest (`calango.deb.keep`,
+`.ban`, `.ufwProfiles` and `.files` together) for a literal `/nix/store` and
+failing the build if one turns up — the property `home/session.nix`'s own
+comment names directly, since a root-owned file naming the store breaks
+unrecoverably once that path is garbage-collected.
 
 `home/syncthing.nix` adds the first guard in this flake that is not a
 derivation: two entries in Home Manager's `assertions`, evaluated at build
@@ -71,8 +77,13 @@ outside the generation, in `no-dangling-home-files` and in
 `gui-desktop-ids`. `assertions` wins on frequency, not on
 possibility: it runs on every generation build, where a check runs only under
 `nix flake check`. Enumerate assertions with
-`grep -n 'assertions' home/*.nix`, which returns 4 -- one binding and three
-prose, so read the lines rather than the count.
+`grep -n 'assertions' home/*.nix`, which returns 6 -- two bindings and four
+prose, so read the lines rather than the count. `home/deb.nix` is the second
+binding, and its three assertions are unrelated to syncthing's: `calango.deb.keep`
+is non-empty (the vacuity anchor), `keep` and `ban` name disjoint sets of
+packages (so `Depends` and `Conflicts` never contradict each other), and no
+`keep` or `ban` value is an empty reason string (the entries ship in the
+package's own extended description, so an unexplained one would be silent).
 
 ---
 
@@ -255,6 +266,19 @@ dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' <pkg>...
 
 Dependency scans over `dpkg-query` include `rc` packages too; filter to `ii`
 (`awk '$1=="ii"'`) or the count is inflated.
+
+**An `rc` package still owns its conffiles, and `dpkg -S` says so.**
+
+```sh
+dpkg -S /etc/ufw/applications.d/syncthing
+# syncthing: /etc/ufw/applications.d/syncthing   <- syncthing is rc, not ii
+```
+
+So a new package cannot simply ship a path a removed package's conffile
+occupies: dpkg refuses to unpack it without a `Replaces:`, and a conffile
+handover between packages is fiddly enough that `home/syncthing.nix` sidesteps
+it entirely with a distinct filename. "The package is gone" and "the path is
+free" are different questions.
 
 **Pipelines that report by printing nothing.** `grep … | sed …` exits 0 even
 when grep matched nothing, so "the property holds" and "the pipeline broke" are
@@ -851,6 +875,57 @@ quickshell owns `org.kde.StatusNotifierWatcher` and
 `busctl --user list | /usr/bin/grep StatusNotifier` before assuming some other
 component is the host.
 
+**`ufw` already has the integration point, so a `postinst` calling
+`ufw reload` is the wrong answer.**
+
+```sh
+cat /var/lib/dpkg/info/ufw.triggers
+# interest-noawait /etc/ufw/applications.d
+sed -n '137,139p' /var/lib/dpkg/info/ufw.postinst
+#     triggered)
+#         ufw app update all || echo "Processing ufw triggers failed. Ignoring."
+```
+
+Dropping a file into that directory makes dpkg fire ufw's own trigger. A
+package shipping ufw profiles needs no maintainer script at all — only
+`Depends: ufw`, so the trigger's owner is guaranteed present.
+
+And a profile is not a rule. `ufw app update` refreshes profiles and any rule
+already citing them; it never creates one. Nothing in this flake can verify a
+rule either — `/etc/ufw/user.rules` is `0640 root:root`, and `nft` and
+`iptables` both refuse an unprivileged read — so `ufw allow` stays a human act
+by necessity, not by preference.
+
+**A Nix-built `.deb` must have a directory as `$out`, and needs no `fakeroot`.**
+Both were measured while building `lib/deb.nix`:
+
+```sh
+nix build --rebuild            # passes -- dpkg-deb output is reproducible
+                               # after `find pkg -exec touch -h -d @0 {} +`
+cmp with-fakeroot.deb without-fakeroot.deb   # identical
+```
+
+`dpkg-deb --root-owner-group` alone gives `root/root` ownership, so `fakeroot`
+buys nothing. And `$out` must be a **directory** containing
+`calango-desktop_<version>_all.deb`: apt requires a path ending in `.deb` with
+a package-shaped name, and a bare-file output yields `./result`, which
+`apt install` rejects. The build succeeds either way; only the install fails.
+
+**A dirty flake build cannot express a Debian version that outranks a clean
+one, and that is the point.** `self.rev` and `self.revCount` are absent for a
+dirty tree while `self.lastModifiedDate` is not, which is what makes the
+fallback expressible:
+
+```sh
+dpkg --compare-versions 0.0+dirty20260818153504 lt 0.239   # true
+dpkg --compare-versions 0.239 lt 0.240                     # true
+```
+
+So `0.0+dirty<date>` always sorts below `0.<revCount>` and apt refuses to
+install a dirty build over a committed one. An artifact installed into the
+system with root should trace to a commit. `dpkg -i` remains the escape hatch
+for deliberate testing.
+
 ---
 
 ## Standing facts about this machine
@@ -978,9 +1053,18 @@ component is the host.
   config and the font baseline. Recovery is fix-forward:
   `home-manager switch` from tty1, or
   `sudo dpkg -i /root/pkg-archive/uwsm_*.deb` (note: **root's** home).
-- **One file outside `$HOME`:** `/usr/local/share/wayland-sessions/hyprland-nix.desktop`,
-  root-owned, hand-created, covered by no Nix module. greetd needs it and
-  nothing else supplies it.
+- **One file outside `$HOME`, and the flake can now declare it — but has not
+  yet installed it.** `/usr/local/share/wayland-sessions/hyprland-nix.desktop`
+  is still root-owned, hand-created and owned by no package; `dpkg -S` finds
+  nothing. `home/session.nix` declares its content as
+  `calango.deb.files."usr/share/wayland-sessions/hyprland-nix.desktop"`, so
+  `calango-desktop` will own a byte-identical copy in the policy-correct
+  directory once it is installed. `/etc/greetd/config.toml` passes
+  `--sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions`,
+  so greetd searches both; `/usr/share/wayland-sessions` does not exist today.
+  Until someone deletes the `/usr/local` copy — after confirming a login
+  against the new one — tuigreet will show two identical entries. Do not
+  delete it first: this is the login path.
 - **A Nix binary that actually uses GL needs nixGL's *environment*. Needing your
   own *wrapper* is a separate question, and the answer turns on whether you are a
   systemd unit.** This file has now been wrong on this in both directions; the
