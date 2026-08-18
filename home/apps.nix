@@ -290,8 +290,9 @@ in
   # it rewrites only the exact token signal-desktop.desktop, only where that
   # token is a whole value, and it touches nothing else. mimeapps.list also
   # carries ids this flake will never own -- a dead
-  # eu.calangotech.KBrowserSelector.desktop, and slack.desktop where flatpak
-  # exports com.slack.Slack.desktop -- and those must survive untouched.
+  # eu.calangotech.KBrowserSelector.desktop, and slack.desktop, which apt's
+  # slack-desktop ships and which this flake does not own either -- so it
+  # must survive untouched for the same reason, not because it is dead.
   #
   # Non-fatal for the same reason mimeappsIds is -- this is the user's file, and
   # a switch must not abort over it. The body runs under `sh -c`, which inherits

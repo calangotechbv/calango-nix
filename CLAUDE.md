@@ -306,6 +306,25 @@ handover between packages is fiddly enough that `home/syncthing.nix` sidesteps
 it entirely with a distinct filename. "The package is gone" and "the path is
 free" are different questions.
 
+**`apt-cache policy` reports `Candidate: (none)` for a name that is fully
+satisfiable.** A purely virtual package — one that exists only as another
+package's `Provides` — has no candidate version, and the output is
+indistinguishable from a package Debian does not have at all. Four of Slack's
+hard `Depends` read that way:
+
+```sh
+apt-cache policy libgtk-3-0 libappindicator3-1 libatspi2.0-0 libasound2
+# Candidate: (none)      -- for all four
+apt-cache showpkg libgtk-3-0 | sed -n '/Reverse Provides/,$p'
+# libgtk-3-0t64 3.24.49-3 (= 3.24.49-3)
+```
+
+All four are provided by installed packages (`libgtk-3-0t64`,
+`libayatana-appindicator3-1`, `libatspi2.0-0t64`, `libasound2t64`) and the
+install is clean. The authority on whether a dependency can be met is
+`apt-get -s install`, which simulates the solver; `apt-cache policy` only
+answers about a real package of that name.
+
 **Pipelines that report by printing nothing.** `grep … | sed …` exits 0 even
 when grep matched nothing, so "the property holds" and "the pipeline broke" are
 indistinguishable. Count explicitly (`| wc -l`) and compare the number.
@@ -1082,18 +1101,67 @@ for deliberate testing.
   from `~/.ssh/`, which needs a test against real key material. Until someone
   runs that, treat keyring persistence as unproven.
 - **The corp set stays on apt permanently:** `google-chrome-stable`, `code`,
-  `1password`, `1password-cli`, `endpoint-verification`, and flatpak Slack
-  (`com.slack.Slack`). Note `1password` is load-bearing beyond its own window:
+  `1password`, `1password-cli`, `endpoint-verification`, and `slack-desktop`.
+  Note `1password` is load-bearing beyond its own window:
   `~/.ssh/config` sets `IdentityAgent ~/.1password/agent.sock` for `github.com`,
   and that agent holds the SSH keys — which is why Debian's `ssh-agent` and
   `gcr-ssh-agent` serve nothing here.
+- **Slack is a standalone `.deb` with no repository behind it, and its
+  `.deb` ships a cron job that tries to create one.** As of spec 17 Slack is
+  apt's — 4.51.180, where nixpkgs has an unfree 4.49.89 — installed from a file
+  rather than a repo, so `apt upgrade` will never mention it.
+  `bin/slack-latest` asks Slack's release feed and prints the two commands; a
+  human runs them.
+
+  The package has **no maintainer scripts at all** — its control archive holds
+  `./control` and nothing else — which reads as "the retired packagecloud repo
+  cannot come back". It can. The payload ships `/etc/cron.daily/slack`, a
+  Chromium-derived script that recreates `/etc/apt/sources.list.d/slack.list`
+  and two signing keys, controlled by two values in `/etc/default/slack`:
+
+  ```
+  repo_add_once="false"                -> update_bad_sources; returns at once
+                                          while slack.list is unreadable
+  repo_reenable_on_distupgrade="true"  -> install_new_key runs UNCONDITIONALLY
+  ```
+
+  So with `reenable=true`, deleting `slack-desktop.gpg` is not a deletion — the
+  job rewrites it daily. And with `/etc/default/slack` **absent** the script's
+  first act is to recreate it with *both* knobs `"true"`, install both keys, and
+  write `slack.list` **active**. Deleting that file is the worst move available.
+  `calango-desktop` therefore ships it, both knobs `"false"`, as a conffile so
+  dpkg cannot restore the defaults on upgrade.
+
+  Same species as the `deb-systemd-helper` trap below: a `rm` that a
+  maintainer's own automation undoes. There it was a postinst; here it is cron.
+  `/etc/cron.daily/google-chrome` is the identical script for a repo that
+  genuinely works, which is the control that proves this reading.
 - **A previous Home Manager generation is not a recovery path.** It lacks the
   uwsm session units, both portal backends, the portal frontend, the portal
   config and the font baseline. Recovery is fix-forward:
   `home-manager switch` from tty1, or
   `sudo dpkg -i /root/pkg-archive/uwsm_*.deb` (note: **root's** home).
-- **There is no longer a file outside `$HOME` that no package owns.** The
-  greetd session entry was root-owned, hand-created and unowned for the whole
+- **No file *this project created* outside `$HOME` is unowned — which is a
+  narrower claim than the one that stood here, and the wider one was false.**
+  This entry read "there is no longer a file outside `$HOME` that no package
+  owns", and spec 16's close-out reported `unowned files : none outside
+  $HOME`. Both were a survey of the files that work created, stated as a
+  survey of the filesystem. Spec 17 took the wider measurement:
+
+  ```sh
+  cat /var/lib/dpkg/info/*.list | sort -u > /tmp/owned
+  find /etc -xdev -type f | sort -u | comm -23 - /tmp/owned | wc -l
+  # 182   -- in /etc alone
+  ```
+
+  Most are legitimately unowned: generated config (`adjtime`, `aliases`,
+  `ca-certificates.conf`), apt keyrings, admin-created `apparmor.d/local`
+  entries, and `/etc/default/google-chrome`, which Chrome's own cron job
+  writes. So "unowned" is not "wrong" here, and the 182 is not a defect list.
+  What is worth keeping is the scope discipline: a claim about a filesystem
+  needs a command that walks the filesystem.
+
+  The greetd session entry was root-owned, hand-created and unowned for the whole
   life of this flake. As of 2026-08-18 it is
   `/usr/share/wayland-sessions/hyprland-nix.desktop`, shipped by
   `calango-desktop` from `home/session.nix`'s
@@ -1218,10 +1286,13 @@ for deliberate testing.
   `ldd` still cannot answer the per-application question: it `dlopen`s its
   platform and GL plugins, so `ldd` is clean for a binary that aborts on first
   draw. The instrument is one person and one window.
-- **That same inheritance breaks flatpak, and the fix belongs at the flatpak
-  boundary.** The sandbox has no `/nix/store`, so the inherited paths resolve to
-  nothing inside it and mesa loads no driver at all — Debian's flatpak Slack falls
-  back to software rendering and loses VA-API too. Reproduced inside the sandbox:
+- **That same inheritance broke flatpak, and there is no flatpak here any
+  more — kept because it explains why the session inheritance must not be
+  scrubbed.** The sandbox had no `/nix/store`, so the inherited paths resolved
+  to nothing inside it and mesa loaded no driver at all — Debian's flatpak
+  Slack fell back to software rendering and lost VA-API too. Reproduced
+  inside the sandbox, measured 2026-08-17 while `com.slack.Slack` was still
+  installed:
 
   ```sh
   flatpak run --command=sh com.slack.Slack -c 'echo $GBM_BACKENDS_PATH'
@@ -1230,20 +1301,23 @@ for deliberate testing.
 
   The file exists; the namespace does not contain it. Flatpak ships its own
   matched GL stack (`org.freedesktop.Platform.GL.default`), which is the
-  accelerated path — our variables override it with dead paths. Unset them per
-  application with `flatpak override --user --unset-env=…`, never by scrubbing the
-  session. Do not mount `/nix/store` into the sandbox either: a host mesa against
-  the runtime's own glibc is worse than the fallback.
+  accelerated path — our variables override it with dead paths. The fix was to
+  unset them per application with `flatpak override --user --unset-env=…`,
+  never by scrubbing the session. Do not mount `/nix/store` into the sandbox
+  either: a host mesa against the runtime's own glibc is worse than the
+  fallback.
 
-  **This flake does not own those overrides, deliberately.**
-  `~/.local/share/flatpak/overrides/` held seven files on 2026-08-17, and not
-  one of them is Home Manager's: six 61-byte browser overrides from
-  2026-08-06, for applications not installed as flatpaks and owned by nobody,
-  plus a 255-byte `com.slack.Slack` written by hand that day. A managed file
-  among them *would* reproduce the `pipewire-session-manager.service` alias
-  shape — invisible to `no-dangling-home-files`, and dangling for ever when its
-  module leaves — which is the reason not to add one. Run the override by hand
-  for every flatpak application, and record it here.
+  **This flake never owned those overrides, deliberately, and the whole tree
+  is gone now.** `~/.local/share/flatpak/overrides/` held seven files on
+  2026-08-17, and not one of them was Home Manager's: six 61-byte browser
+  overrides from 2026-08-06, for applications not installed as flatpaks and
+  owned by nobody, plus a 255-byte `com.slack.Slack` written by hand that day.
+  Spec 17 deleted `~/.local/share/flatpak` along with the flatpak runtime
+  itself, and the seven override files went with it. If a flatpak is ever
+  installed again, the per-application `--unset-env` treatment above is
+  required, for the same reason it was here: the session's five nixGL
+  variables are real paths on the host and dead paths inside any sandbox that
+  does not contain `/nix/store`.
 - Recurring shape: a Nix library resolving a NixOS-only path
   (`/run/opengl-driver/lib`, `/run/wrappers/bin/polkit-agent-helper-1`,
   `/run/wrappers/bin/unix_chkpwd`). Fixed with scoped overlays in `flake.nix`,
@@ -1373,21 +1447,30 @@ for deliberate testing.
   backup does not cover and risks damage if it has not migrated. Treat every
   future GUI migration's *first launch* as the one-way step, not the apt
   removal.
-- **`flatseal` and `fresh-editor` stay on apt.** `flatseal` is absent from
-  nixpkgs and is really a flatpak; nixpkgs' `fresh-editor` is 0.3.6 against
+- **`fresh-editor` stays on apt.** nixpkgs' `fresh-editor` is 0.3.6 against
   Debian's 0.4.7, so moving it would be a downgrade.
-- **`~/.config/mimeapps.list` has at least two dead associations, and they are
+- **`flatseal` is gone**, with flatpak, in spec 17. It edited flatpak
+  permissions and there is no flatpak. It was kept for being absent from
+  nixpkgs, which was a reason to keep it only while flatpak existed — and it
+  was what made the removal order load-bearing, since `calango-desktop`
+  `Depends: flatseal` and `flatseal` `Depends: flatpak`.
+- **`~/.config/mimeapps.list` has at least one dead association, and it is
   not this flake's.** `eu.calangotech.KBrowserSelector.desktop` — the stale
   root-owned entry `home/apps.nix`'s `defaultBrowser` hook displaced in
   `[Default Applications]`, still named by both `[Added Associations]` lines,
-  and present nowhere on disk — and `slack.desktop`, where the only Slack entry
-  on the search path is flatpak's `com.slack.Slack.desktop`, a different id.
-  "At least two" rather than exactly two: the count was measured in one shell's
-  `XDG_DATA_DIRS`, not the activation script's, and a narrower search path can
-  only report more missing ids. This is why `home/apps.nix`'s `mimeappsIds`
-  hook is **non-fatal by requirement rather than by convenience** — a fatal
-  version would now abort every switch on this machine over associations this
-  flake does not own and never will.
+  and present nowhere on disk. "At least one" rather than exactly one: the
+  count was measured in one shell's `XDG_DATA_DIRS`, not the activation
+  script's, and a narrower search path can only report more missing ids. This
+  is why `home/apps.nix`'s `mimeappsIds` hook is **non-fatal by requirement
+  rather than by convenience** — a fatal version would now abort every switch
+  on this machine over associations this flake does not own and never will.
+
+  `slack.desktop` was the second until spec 17. It is live now, and repaired by
+  nothing: Slack's `.deb` ships `/usr/share/applications/slack.desktop`, the
+  exact id `mimeapps.list` already named. No fixer hook was needed, which is the
+  opposite of spec 13's Signal case — where nixpkgs' id differed from Debian's
+  and `home/apps.nix`'s `signalMimeappsId` hook had to rewrite the file. Two
+  migrations, two outcomes; do not generalise from either.
 - **Nine packages are held for one reason, and as of 2026-08-18 they are held
   by a `Depends`, not by a flag:** `libpipewire-0.3-modules`, its two hard
   `Depends` `libffado2` and

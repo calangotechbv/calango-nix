@@ -45,6 +45,9 @@ sg nix-users -c 'nix build ...'
 ## What apt still owns
 
 The vendor stack (Google Chrome, docker-ce, 1Password, Google
-endpoint-verification, Signal, VS Code), the login path (greetd, tuigreet),
+endpoint-verification, Slack, VS Code), the login path (greetd, tuigreet),
 PAM and the keyring, the system services, device-permission tools, the portal
 frontend, Mesa, and `nix-bin` itself.
+
+Slack is a standalone `.deb` with no repository behind it —
+`slack-latest` reports when it is behind upstream.
