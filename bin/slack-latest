@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+#
+# report whether the installed slack-desktop is the current one.
+#
+# Slack ships standalone .deb files with no repository behind them, so nothing
+# upgrades this package and `apt upgrade` will never mention it. This asks
+# Slack's own release feed and compares. It downloads nothing, installs
+# nothing, and needs no privilege: the whole privileged half is two commands it
+# prints for a human to run.
+#
+# There is deliberately no activation hook doing this. A version check needs
+# the network, and a home-manager switch must not fail or hang because the
+# network is down.
+
+set -euo pipefail
+
+feed='https://slack.com/api/desktop.latestRelease?arch=x64&variant=deb'
+admindir=/var/lib/dpkg
+
+# dpkg-query's own diagnostic cannot distinguish "no such package" from "no
+# such database": both print `no packages found matching <name>` and exit 1.
+# Measured on 2026-08-18 against --admindir=/nonexistent. So the database is
+# checked separately, or an unreadable one reads as "Slack is not installed".
+if [ ! -r "$admindir/status" ]; then
+  printf 'slack-latest: cannot read dpkg'"'"'s database at %s\n' "$admindir" >&2
+  exit 1
+fi
+
+# --admindir explicitly, so the answer cannot depend on how the Nix build of
+# dpkg was configured. It happens to default to /var/lib/dpkg today (verified
+# against this flake's pinned pkgs.dpkg 1.23.7, which reads calango-desktop
+# 0.258 out of Debian's database), and a future bump changing that default
+# would otherwise fail silently and look like an uninstalled package.
+#
+# ${db:Status-Abbrev} and not ${Version} alone: dpkg-query prints a version and
+# exits 0 for an `rc` package, which is exactly what `apt remove` leaves.
+# Measured -- signal-desktop is `rc` here and reports `rc 8.19.0`. A
+# version-only query would call a removed package installed.
+status=$(@dpkgQuery@ --admindir="$admindir" -W \
+           -f='@statusFmt@ ${Version}' slack-desktop 2>/dev/null || true)
+
+installed=""
+case $status in
+  'ii '*) installed=${status#ii } ;;
+esac
+
+json=$(@curl@ -sS --max-time 20 "$feed") || {
+  printf 'slack-latest: could not reach the release feed\n' >&2
+  printf '  %s\n' "$feed" >&2
+  exit 1
+}
+
+latest=$(printf '%s' "$json" | @jq@ -r '.version // empty')
+url=$(printf '%s' "$json" | @jq@ -r '.download_url // empty')
+
+if [ -z "$latest" ] || [ -z "$url" ]; then
+  printf 'slack-latest: the release feed named no version\n' >&2
+  printf '  %s\n' "$json" >&2
+  exit 1
+fi
+
+deb=${url##*/}
+
+if [ -z "$installed" ]; then
+  if [ -n "$status" ]; then
+    printf 'slack-desktop is %s, not installed; upstream is %s\n' \
+      "${status%% *}" "$latest"
+  else
+    printf 'slack-desktop is not installed; upstream is %s\n' "$latest"
+  fi
+elif @dpkg@ --compare-versions "$installed" ge "$latest"; then
+  printf 'slack-desktop %s is current (upstream %s)\n' "$installed" "$latest"
+  exit 0
+else
+  printf 'slack-desktop %s is behind upstream %s\n' "$installed" "$latest"
+fi
+
+printf '\n'
+printf '  curl -fL -o ~/Downloads/%s \\\n      %s\n' "$deb" "$url"
+printf '  sudo apt install ~/Downloads/%s\n' "$deb"
