@@ -106,12 +106,51 @@ of why the index is 160 MB". `index-v2` is 446 MB and covers only the two real
 folders, so the old 160 MB was those two as well. The word "likely" was carrying
 an estimate that had no measurement behind it.
 
-## Still to do
+## The removal
 
-Both apt packages are still `ii`. `apt-get -s autoremove` proposes 0 and the
-`rc` count stands at 147, unchanged. Removing them is the remaining step, and
-the "no longer required" list must be read at that moment rather than trusted
-from here.
+Done 2026-08-18, after the switch. The "no longer required" list was read at
+that moment, per the standing rule, and every entry on it was checked before
+anything went: **17 packages, 288 MB, one operation.**
+
+`syncthing` and `syncthingtray` named 15 orphans, of which
+`libqt6webenginecore6` alone is 186 MB — Debian's syncthingtray embeds Qt
+WebEngine for its web GUI, and `sse3-support` and `isa-support` sit behind
+WebEngine rather than behind qemu, despite `isa-support` naming its test
+helpers `qemu-good-SSE3`. That mattered enough to check directly, because
+`qemu-system-gui` is one of the two packages holding
+`libpipewire-0.3-modules` installed: a scan of `Depends`, `Pre-Depends` and
+`Recommends` across all 2068 `ii` packages found no consumer of any of the 15
+outside the removal set.
+
+The union instrument held **zero** of the 278 files those 17 packages ship —
+`maps` and `exe` over every readable pid, unioned with full `ps -eo args`
+command lines, 2035 unique paths. Both live processes were already Nix's, and
+both loaded units were Home Manager's at `~/.config/systemd/user`. Debian's
+`/usr/lib/systemd/user/syncthing.service` was shadowed and had never been
+enabled — nothing under `/var/lib/systemd/deb-systemd-helper-enabled/` named
+it — so the removal could not leave a dangling root-owned link, and did not.
+
+`remove` rather than `purge`, because `syncthing` owns
+`/etc/ufw/applications.d/syncthing` and `ufw` is enabled and active here.
+
+Afterwards:
+
+```
+autoremove proposes : 0     -- spec 12's endpoint survives
+dangling user links : 0
+rc packages         : 150   -- from 147
+syncthing.service   : active, ExecStart in /nix/store
+```
+
+**The `rc` delta was predicted as 1 and measured as 3, which disproves this
+project's stated model of the state.** `CLAUDE.md` said a package with no
+conffiles leaves no `rc` entry; `sse3-support` and `libqt6webengine6-data`
+hold no conffile and not one surviving file, and both read `Status: deinstall
+ok config-files`. What they retain is a `postrm` script under
+`/var/lib/dpkg/info/`, which is enough on its own. The 14 that went to `un`
+retained no `info` file at all. `rc` means dpkg still has work to do at purge
+time; a conffile is one cause of that and not the only one. The correction is
+in `CLAUDE.md`, in the paragraph that carried the wrong reason.
 
 ---
 

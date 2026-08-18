@@ -196,10 +196,9 @@ marked manual") is not merely cautious: for this shape of dependency there is no
 instrument to be cautious *instead* of.
 
 **Package presence.** `dpkg-query -W -f='${Version}'` prints a version and
-exits `0` for `rc` packages (removed, conffiles retained) — which is exactly
-what `apt remove` leaves. There are **147** `rc` packages on this machine as of
-spec 13 — and that figure moves every time a spec removes something, so count it
-rather than quoting this line:
+exits `0` for `rc` packages — which is exactly what `apt remove` leaves. There
+are **150** `rc` packages on this machine as of spec 15 — and that figure moves
+every time a spec removes something, so count it rather than quoting this line:
 
 ```sh
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' | awk '$1=="rc"' | wc -l
@@ -209,8 +208,8 @@ It read 120 for three specs while the true count drifted upward, and spec 10's
 own three (`thunar`, `thunar-volman`, `pcmanfm-qt`) are part of the difference.
 Note the reading rose only from 128 to 145 across specs 11 and 12 together,
 while spec 12 alone removed 128 packages: **`rc` is not a running total of what
-has been removed** and cannot be read as one, because a package with no
-conffiles leaves no `rc` entry at all. Measured among spec 12's own removals —
+has been removed** and cannot be read as one, because some removed packages
+leave no `rc` entry at all. Measured among spec 12's own removals —
 `avahi-utils`, `gvfs-fuse` and `python3-cups` are `un`, while `cups-pk-helper`,
 `system-config-printer` and `xscreensaver` are `rc`. (No `rc` count was taken
 between spec 10 and spec 12, so the 17 cannot be split between them.)
@@ -221,8 +220,8 @@ illustration of the paragraph above rather than a counterexample to it: here
 the delta happens to equal the number of packages removed, and it is precisely
 that coincidence which makes "`rc` is a running total" tempting. It is not one.
 Spec 12 removed 128 and moved the reading by part of 17; spec 13 removed 2 and
-moved it by 2. The delta is the number of removed packages *that carried
-conffiles*, which is a different quantity that sometimes agrees. Use:
+moved it by 2. The delta is the number of removed packages dpkg still has
+something to do for, which is a different quantity that sometimes agrees. Use:
 
 **Spec 14 is the clean end of that argument: it removed six and moved the
 reading by zero.** `lf`, `ueberzug`, `libxres1`, `python3-attr`,
@@ -230,6 +229,25 @@ reading by zero.** `lf`, `ueberzug`, `libxres1`, `python3-attr`,
 `dpkg-query` now finds no trace of any of them — not `ii`, not `rc`, not `un`.
 The count stood at 147 before and after. If spec 13's agreement made "`rc` is a
 running total" tempting, this is the case that settles it.
+
+**And spec 15 disproves the *reason* this file gave for all of it. `rc` does
+not mean "conffiles retained".** Removing syncthing's 17 packages moved the
+reading 147 → 150, against a prediction of 148 derived from `${Conffiles}`
+alone. Exactly one of the three carries a conffile:
+
+```sh
+dpkg-query -W -f='${Conffiles}\n' syncthing sse3-support libqt6webengine6-data
+#  /etc/ufw/applications.d/syncthing 7bc48373…   <- syncthing only
+dpkg -L sse3-support | while read -r f; do [ -e "$f" ] && echo "$f"; done
+# (nothing -- not one file of it survives on disk)
+```
+
+`sse3-support` and `libqt6webengine6-data` hold no conffile and no file, and
+both read `Status: deinstall ok config-files`. What they retain is a **`postrm`
+script** under `/var/lib/dpkg/info/`, which is enough on its own to keep the
+entry; the 14 that went to `un` retained no `info` file at all. So the state
+means "dpkg still has work to do at purge time", and a conffile is only one of
+the things that causes it. Predicting the delta from `${Conffiles}` under-counts.
 
 ```sh
 dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' <pkg>...
@@ -878,6 +896,14 @@ component is the host.
   `rc` in dpkg, so both were real apt migrations. The claim was written without
   enumerating `home/*.nix`, which is the rule this file opens with, and it is
   recorded here because that is twice on one branch.
+
+  The apt side went with them: **17 packages, 288 MB**, the two plus the 15
+  orphans they named. `libqt6webenginecore6` is 186 MB of that — Debian's
+  syncthingtray embeds Qt WebEngine for its web GUI, where Nix's does not.
+  Note `sse3-support` and `isa-support` are part of *that* chain and have
+  nothing to do with qemu, despite `isa-support` naming its test helpers
+  `qemu-good-SSE3`; check before assuming, because `qemu-system-gui` is one of
+  the two packages keeping `libpipewire-0.3-modules` installed.
 
   What IS new with syncthing is narrower and is the part worth carrying: it is
   the first module adopted here that mutates state this flake does not own,
