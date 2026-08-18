@@ -19,7 +19,7 @@
     };
   };
 
-  outputs = { nixpkgs, home-manager, nixgl, ... }:
+  outputs = { self, nixpkgs, home-manager, nixgl, ... }:
     let
       system = "x86_64-linux";
 
@@ -146,11 +146,21 @@
           ./home/apt-hygiene.nix
           ./home/uwsm.nix
           ./home/syncthing.nix
+          ./home/deb.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";
             home.stateVersion = "26.05";
             calango.host = hostname;
+
+            # A dirty build must never outrank a committed one: 0.0+dirty…
+            # sorts below 0.<revCount>, verified with dpkg --compare-versions.
+            # revCount and rev are absent for a dirty tree; lastModifiedDate is
+            # not, which is what makes the fallback expressible at all.
+            calango.deb.version =
+              if self ? revCount
+              then "0.${toString self.revCount}"
+              else "0.0+dirty${self.lastModifiedDate}";
           }
         ];
       };
@@ -160,6 +170,8 @@
       homeConfigurations = {
         "isutton@suffer" = suffer;
       };
+
+      packages.${system}.calangoDeb = suffer.config.calango.debPackage;
 
       # Every xdg.configFile/xdg.dataFile ".source" in home/portals.nix,
       # home/audio.nix and home/uwsm.nix is a bare string pointing into a

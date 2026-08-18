@@ -46,6 +46,9 @@ sg nix-users -c 'nix build .#calangoDeb'
 sudo apt install ./result/calango-desktop_0.239_all.deb
 ```
 
+The version moves with every commit, so the exact number above will not
+match what you get; everything else will.
+
 | declaration | control field | enforced by |
 |---|---|---|
 | keep set | `Depends:` | apt cannot autoremove a dependency of a manual package |
@@ -81,21 +84,34 @@ than trusting this list.
 `pkgs.dpkg` 1.23.7:
 
 ```sh
-nix build --rebuild        # passed: the .deb is bit-identical on rebuild
-cmp with-fakeroot.deb without-fakeroot.deb   # identical
+nix build --rebuild                          # bit-identical on rebuild
 /usr/bin/dpkg-deb --info calango-desktop.deb # Debian's dpkg 1.22.22 parses it
 apt-get -s install ./calango-desktop.deb     # resolves clean, unprivileged
 ```
 
-`fakeroot` is **not** required: `dpkg-deb --root-owner-group` alone produces
-byte-identical output with `root/root` ownership.
+`fakeroot` is **not** required: `dpkg-deb --root-owner-group` alone gives
+`root/root` ownership.
+
+**A note on how that last claim was originally evidenced, because it is the
+mistake this spec most wants its reader not to repeat.** An earlier version of
+this passage showed `cmp with-fakeroot.deb without-fakeroot.deb # identical`.
+Those two files were throwaway derivations built while drafting this spec, they
+have never existed in the repository, and the line reproduced into `CLAUDE.md`
+before a reviewer ran it and got `No such file or directory`. The conclusion was
+correct and the transcript beside it was fiction. The claim is now carried by a
+command anyone can run:
+
+```sh
+/usr/bin/grep -c fakeroot lib/deb.nix
+# 0    -- the builder never invokes it, and the archive is still root/root
+```
 
 **ufw already provides the integration point.**
 
 ```sh
 cat /var/lib/dpkg/info/ufw.triggers
 # interest-noawait /etc/ufw/applications.d
-sed -n '137,140p' /var/lib/dpkg/info/ufw.postinst
+sed -n '137,138p' /var/lib/dpkg/info/ufw.postinst
 #     triggered)
 #         ufw app update all || echo "Processing ufw triggers failed. Ignoring."
 ```
@@ -126,10 +142,16 @@ have a candidate version.
 **No ban-set member is `ii`**, so `Conflicts:` installs cleanly today. All 19
 read `rc`, `un` or absent.
 
-**One latent conflict exists and is wanted.** `flatpak` is `ii` and
-**Recommends** (not Depends) `xdg-desktop-portal (>= 1.6)`, which is `rc`. A
-`Conflicts:` makes any recommends-processing install fail visibly rather than
-silently restoring Debian's portal frontend to shadow Nix's.
+**One latent conflict exists and is wanted, and `Conflicts:` only protects it
+on one of the two paths a user can hit it from.** `flatpak` is `ii` and
+**Recommends** (not Depends) `xdg-desktop-portal (>= 1.6)`, which is `rc`.
+Measured both ways with `apt-get -s install`: naming `xdg-desktop-portal`
+explicitly alongside `calango-desktop` fails loudly (`E: unmet dependencies`).
+Installing something that merely *recommends* it — `libglib2.0-tests`, say —
+does not: apt silently drops `xdg-desktop-portal` from the install set, with
+no warning and no error, and Debian's portal frontend simply stays absent
+rather than being restored. `Conflicts:` still does its job either way — the
+frontend never gets installed — but only the explicit path is loud.
 
 **The greetd session file names no store path.**
 
@@ -183,9 +205,18 @@ with a package-shaped name, so `nix build .#calangoDeb` must yield
 `./result/calango-desktop_0.239_all.deb`. A bare-file output would give
 `./result`, which `apt install` rejects.
 
-`touch -h -d @0` before the build is what makes it reproducible — `dpkg-deb`
-then clamps to its 1980 floor, deterministically. The probe proved this with
-the equivalent `@''${SOURCE_DATE_EPOCH:-0}`, which is `@0` in the sandbox.
+Pinning every mtime before the build is what makes it reproducible. The value
+is `SOURCE_DATE_EPOCH`, which Nix's stdenv sets to `315532800` (1980-01-01
+UTC), with `@0` as the fallback.
+
+An earlier version of this passage said `dpkg-deb` "clamps to its 1980 floor".
+**It does not clamp at all** — that is a ZIP/FAT timestamp behaviour, and the
+1980 in the probe's output came from `SOURCE_DATE_EPOCH` alone. The claim was
+written from a real command whose output was 1980 and an invented mechanism to
+explain it; it was caught by a reviewer who extracted `data.tar.xz` and read a
+tar member's `mtime` with Python, getting `0` for a build that used a plain
+`@0`. Note also that `dpkg-deb --contents` renders in local time, so the same
+archive reads `1980-01-01` under `TZ=UTC` and `1979-12-31 21:00` here.
 
 ### `home/deb.nix` — the module
 
@@ -420,7 +451,7 @@ Build-time, runnable by an agent:
 Privileged, and therefore the **user's** steps only:
 
 9. `sudo apt install ./result/calango-desktop_*.deb`.
-10. **The central claim, proven by mutation.** That `Depends:` protects the
+10. **The central claim, and how to prove it.** That `Depends:` protects the
     keep set has been reasoned, not measured:
 
     ```sh

@@ -146,6 +146,32 @@ in
 {
   home.packages = [ hyprland-nixgl hyprland-nixgl-session ];
 
+  # The greetd session entry, which has been root-owned, hand-created and
+  # covered by no mechanism since the flake began -- `dpkg -S` finds no owner.
+  #
+  # /usr/share, not /usr/local/share: Debian policy forbids a package writing
+  # to /usr/local, and /etc/greetd/config.toml passes
+  # --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions,
+  # so greetd searches both. /usr/share/wayland-sessions does not currently
+  # exist.
+  #
+  # This does NOT remove the existing /usr/local copy. Until someone does,
+  # tuigreet shows two identical entries -- cosmetic and visible, against the
+  # alternative of a login path that depends on an untested file.
+  #
+  # It names no /nix/store path, deliberately and verifiably: it reaches Nix
+  # through $HOME/.nix-profile. home/deb.nix's noStorePaths guard fails the
+  # build if that ever changes, because a root-owned file naming the store
+  # breaks unrecoverably when the path is collected.
+  calango.deb.files."usr/share/wayland-sessions/hyprland-nix.desktop" = ''
+    [Desktop Entry]
+    Name=Hyprland (Nix)
+    Comment=calango-nix
+    Type=Application
+    DesktopNames=Hyprland
+    Exec=/bin/sh -lc 'export XDG_DATA_DIRS="$HOME/.nix-profile/share:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"; exec "$HOME/.nix-profile/bin/uwsm" start -e -D Hyprland hyprland-nixgl.desktop'
+  '';
+
   # The placeholder ~/.config/hypr/hyprland.conf that used to live here is
   # gone: the compositor is now pointed at the real Lua config in the store
   # (see the --config flag on hyprland-nixgl above), and Home Manager's

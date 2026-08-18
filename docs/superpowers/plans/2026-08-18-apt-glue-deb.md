@@ -161,14 +161,20 @@ in
           cp ${pkgs.writeText "debfile-${baseNameOf path}" body} "pkg/${path}"
         '') manifest.files)}
 
-        # Reproducibility. dpkg-deb clamps to its own 1980 floor from here, so
-        # the archive is a function of content alone. Proven by `nix build
-        # --rebuild`, which is step 4 of this task.
+        # Reproducibility: with every mtime pinned, the archive is a function
+        # of content alone. Proven by `nix build --rebuild`, step 4 of this task.
+        #
+        # Nix's stdenv sets SOURCE_DATE_EPOCH to 315532800, which is
+        # 1980-01-01 UTC, and that is the only reason the timestamps read 1980.
+        # dpkg-deb clamps NOTHING -- an earlier version of this comment said it
+        # imposed a 1980 floor, which is a ZIP/FAT behaviour misattributed to
+        # tar. Measured by reading a tar member's mtime with Python tarfile:
+        # plain `@0` really does produce 0.
         #
         # chmod BEFORE touch: `cp` out of the store leaves files mode 444, and
         # the permission bits go into the archive exactly as they are here.
         chmod -R u+w,go-w pkg
-        find pkg -exec touch -h -d @0 {} +
+        find pkg -exec touch -h -d @''${SOURCE_DATE_EPOCH:-0} {} +
 
         # $out is a DIRECTORY, not the file. apt needs a path ending in .deb
         # with a package-shaped name; a bare-file output gives ./result, which
@@ -267,7 +273,16 @@ ls -1 "$P"                                            # calango-desktop_0.1_all.
 sg nix-users -c 'nix build --no-link --impure --rebuild -f /tmp/deb-probe.nix pkg'
 ```
 
-Expected: `$out` holds exactly one file, named `calango-desktop_0.1_all.deb`. `--info` shows `Depends: libffado2`, `Conflicts: syncthing`, and an extended description containing both reasons. `--contents` shows `root/root` ownership, `1980-01-01` timestamps, `./etc/ufw/applications.d/calango`, `./usr/share/calango-desktop/manifest.json` and `./usr/share/calango-desktop/probe.txt`. `--rebuild` passes with no diff — that is the reproducibility proof.
+Expected: `$out` holds exactly one file, named `calango-desktop_0.1_all.deb`. `--info` shows `Depends: libffado2`, `Conflicts: syncthing`, and an extended description containing both reasons. `--contents` lists `root/root` ownership, `./etc/ufw/applications.d/calango`, `./usr/share/calango-desktop/manifest.json` and `./usr/share/calango-desktop/probe.txt`. `--rebuild` passes with no diff — that is the reproducibility proof.
+
+**On the timestamps.** They come from `SOURCE_DATE_EPOCH`, which Nix's stdenv
+sets to `315532800` — 1980-01-01 UTC. `dpkg-deb --contents` renders in **local
+time**, so on this machine (UTC-3) that prints `1979-12-31 21:00`, not
+`1980-01-01`. Read it under `TZ=UTC` if you want the unambiguous value, or read
+the tar member's `mtime` out of `data.tar.xz` directly with Python `tarfile`,
+which is the only reading that depends on no formatter at all. Do **not**
+describe any of this as dpkg-deb clamping to a floor: it does not clamp, and
+with a plain `@0` the recorded mtime really is `0`.
 
 - [ ] **Step 5: Prove apt accepts it**
 
@@ -289,7 +304,20 @@ sed 's/spec 15/spec 99/' "$M" > /tmp/stale.json
 echo "--- stale:";         "$D" /tmp/stale.json
 ```
 
-Expected, in order: `calango-desktop is not installed.`; **nothing at all** for the current case; `calango-desktop is out of date.` for the stale case. Every invocation also prints `bash is installed and this flake declares it banned`, because the fixture bans `bash` on purpose — that is the banned-package branch proving it can fire. Each run must exit `0`.
+Expected, in order:
+
+| case | drift line | banned line |
+|---|---|---|
+| not installed | `apt: calango-desktop is not installed.` | present |
+| current | **none** | present |
+| stale | `apt: calango-desktop is out of date.` | present |
+
+`bash` is `ii` on this machine and the fixture bans it on purpose, so
+`apt: bash is installed and this flake declares it banned.` appears in **all
+three** runs — that is the banned-package branch proving it can fire, and it is
+why the "current" case is not silent overall. `syncthing` is `rc`, not `ii`, so
+it must **not** appear: a banned package that is merely removed is not a
+finding. Each run must exit `0`.
 
 - [ ] **Step 7: Commit**
 
@@ -417,12 +445,18 @@ in
   config.calango.deb.keep = {
     bluez = "bluetoothd runs from /usr/lib/systemd/system/bluetooth.service, a system unit, and standalone Home Manager writes only ~/.config/systemd/user. Permanent by architecture.";
     gnome-keyring = "Serves org.freedesktop.secrets and backs org.freedesktop.impl.portal.Secret, which hyprland-portals.conf names. nixpkgs' package ships no systemd units and no D-Bus activation files, so all five artifacts would have to be hand-authored.";
-    libpam-gnome-keyring = "pam_gnome_keyring.so is in /etc/pam.d/greetd and is the auto-unlock path. Using nixpkgs' copy would put a /nix/store path in a root-owned login file; a garbage collection would then break login, which is the one failure this project will not accept.";
+    libpam-gnome-keyring = "pam_gnome_keyring.so is in /etc/pam.d/greetd and is the auto-unlock path. Using nixpkgs' copy would point a root-owned login file at the Nix store, and a garbage collection would then break login -- the one failure this project will not accept.";
     ufw = "This package ships ufw application profiles and depends on ufw's own dpkg trigger, interest-noawait /etc/ufw/applications.d, to load them.";
     cups = "Printing. The job applet and the add-a-printer GUI were removed in spec 12 on purpose; cupsd was not.";
     google-chrome-stable = "Corp set, permanently apt. nixpkgs cannot supply it either way: the package is unfree, and flake.nix imports nixpkgs with overlays but no config, so allowUnfree would be a decision taken on its own merits.";
     code = "Corp set, permanently apt. Debian is the freshest source for it, which inverts this project's usual direction.";
     "1password" = "Corp set, permanently apt, and load-bearing well beyond its own window: ~/.ssh/config sets IdentityAgent ~/.1password/agent.sock for github.com, so this agent holds the SSH keys -- which is why Debian's ssh-agent and gcr-ssh-agent serve none here.";
+
+    # NOTE: no reason string below may contain the literal Nix store path
+    # prefix. Every reason is serialised into manifest.json, which the
+    # noStorePaths guard greps -- so a reason that merely TALKS about store
+    # paths fails the build. Say "the Nix store" in prose instead. This cost a
+    # clean build once, in preflight.
     "1password-cli" = "Corp set, permanently apt. Pairs with the 1password desktop agent above.";
     endpoint-verification = "Corp set, permanently apt. A managed-device agent; there is no Nix equivalent and there should not be one.";
     flatseal = "Absent from nixpkgs, and really a flatpak.";
@@ -441,7 +475,7 @@ in
     hyprpolkitagent = "Nix's, through services.hyprpolkitagent.";
     pipewire = "Nix's. Note this is the DAEMON; libpipewire-0.3-modules is kept, because it fills the module directory of Debian's client library for Debian-linked clients.";
     wireplumber = "Nix's. It resolves scripts through XDG_DATA_DIRS, so a Nix wireplumber would happily execute Debian's Lua scripts -- home/audio.nix pins it with WIREPLUMBER_DATA_DIR.";
-    xdg-desktop-portal = "Nix's. flatpak Recommends this (not Depends) and the recommendation currently sits unsatisfied, so a recommends-processing install would restore Debian's frontend to shadow Nix's. Conflicts makes that fail loudly instead.";
+    xdg-desktop-portal = "Nix's. flatpak Recommends this (not Depends) and the recommendation currently sits unsatisfied. Conflicts only fails loudly when the package is named explicitly; on the recommends-processing path (e.g. installing libglib2.0-tests) apt silently leaves xdg-desktop-portal uninstalled instead, with no warning -- verified both ways with apt-get -s install.";
     xdg-desktop-portal-hyprland = "Nix's, and the backend half of the pair above.";
     hyprland = "Nix's. The compositor is launched through lib/nixgl.nix's wrapper.";
     quickshell = "Owned by Nix, and the session tray host: it holds org.kde.StatusNotifierWatcher and org.kde.StatusNotifierHost-* on the session bus.";
@@ -718,25 +752,56 @@ sg nix-users -c 'nix build --no-link .#calangoDeb' && echo "clean build OK"
 
 - [ ] **Step 4: Mutation 1 — the vacuity anchor**
 
+**REPLACE the existing definition. Do not add a second one.** Two earlier
+versions of this mutation were wrong in two different ways, and both turned the
+build red without ever reaching the guard:
+
+| attempted mutation | how it fails | why that proves nothing |
+|---|---|---|
+| `keep = lib.mkForce {} // { … }` | Nix type error | never evaluates `assertions` |
+| a second `config.calango.deb.keep = …` line | Nix duplicate-attribute error | a *language* error, raised before the module system runs |
+
+Both were caught only because an implementer declined to read "the build
+failed" as "the guard fired". That distinction is the entire point of this task.
+
+The `keep` block opens with a line that is exactly
+`  config.calango.deb.keep = {`, ends with a line that is exactly `  };`, and
+contains no nested `  };`, so replacing its whole span is safe:
+
 ```bash
 cp home/deb.nix /tmp/deb.nix.bak
 python3 - <<'MUT'
-import io; p='home/deb.nix'; s=io.open(p,encoding='utf-8').read()
-old = "  config.calango.deb.ban = {"
-assert s.count(old)==1
-io.open(p,'w',encoding='utf-8').write(
-    s.replace(old, "  config.calango.deb.keep = lib.mkForce { };\n\n" + old))
+import io
+p = 'home/deb.nix'
+s = io.open(p, encoding='utf-8').read()
+open_tok  = '  config.calango.deb.keep = {'
+close_tok = '\n  };\n'
+start = s.index(open_tok)
+end   = s.index(close_tok, start) + len(close_tok)
+s = s[:start] + '  config.calango.deb.keep = lib.mkForce { };\n' + s[end:]
+io.open(p, 'w', encoding='utf-8').write(s)
 MUT
-/usr/bin/grep -c 'mkForce { };' home/deb.nix        # must print 1 BEFORE building
-sg nix-users -c 'nix build --no-link .#calangoDeb' 2>&1 | tail -6
+/usr/bin/grep -c 'config.calango.deb.keep = lib.mkForce { };' home/deb.nix   # 1
+/usr/bin/grep -c 'bluez = "bluetoothd runs from' home/deb.nix                # 0
+sg nix-users -c 'nix build --no-link .#calangoDeb' 2>&1 | tail -8
 cp /tmp/deb.nix.bak home/deb.nix
+git diff --stat home/deb.nix   # must be empty
 ```
 
-Expected: the count is `1`, and the build **fails** naming `calango.deb.keep is empty`. If it succeeds, the mutation did not take effect — re-check the count before concluding anything about the guard.
+**Both counts are required and they check different things.** The first proves
+the forcing definition landed; the second proves the original block is really
+gone rather than the new line merely prepended — which is precisely the
+condition whose absence produced the duplicate-attribute error above.
 
-The mutation adds a **second, forcing definition** rather than editing the
-existing block. `lib.mkForce {} // { … }` would be a type error, which is a
-different failure and would prove nothing about this guard.
+Expected: counts `1` and `0`, and the build **fails with the assertion's own
+message**, beginning `calango.deb.keep is empty`. A duplicate-attribute error,
+a type error, or any other Nix failure means the guard is still unproven — do
+not record it as passing.
+
+`lib.mkForce` carries priority 50 against a normal definition's 100, so this
+mutation stays valid after Task 4 adds `calango.deb.keep` entries from
+`home/audio.nix`: the force still wins and `cfg.keep` really evaluates to `{ }`.
+
 
 - [ ] **Step 5: Mutation 2 — keep and ban intersecting**
 
@@ -859,13 +924,18 @@ Add to the outer attrset (the one starting at line 357, alongside `home.packages
   # loaded. Every automated check clears all nine, because nothing that needs
   # them was running. That is exactly why they are declared rather than
   # measured.
+  # NOTE: an attribute name containing a dot followed by a digit MUST be
+  # quoted -- `libpipewire-0.3-modules` unquoted is a Nix parse error, because
+  # `0.3` lexes as a float inside an attribute path. The `+` names below were
+  # quoted from the start and the digit ones were not, which is the whole trap:
+  # they look equally awkward and only some of them are.
   calango.deb.keep = {
     rtkit = "rtkit-daemon runs from /usr/lib/systemd/system/rtkit-daemon.service, a system unit, and standalone Home Manager writes only ~/.config/systemd/user. It grants pipewire's data-loop.0 thread SCHED_RR priority 20, measured under Nix's pipewire.";
-    libpipewire-0.3-modules = "Fills the compiled-in module directory of DEBIAN's libpipewire-0.3.so, /usr/lib/x86_64-linux-gnu/pipewire-0.3, with 44 .so files. That client library is kept installed by libfluidsynth3 and qemu-system-gui, and a Debian-linked PipeWire client -- a qemu VM's audio device, in practice -- loads its protocol and client-node modules from there. Nix's pipewire has its own closure and is unaffected. It has zero reverse dependencies, so nothing but this declaration holds it.";
+    "libpipewire-0.3-modules" = "Fills the compiled-in module directory of DEBIAN's libpipewire-0.3.so, /usr/lib/x86_64-linux-gnu/pipewire-0.3, with 44 .so files. That client library is kept installed by libfluidsynth3 and qemu-system-gui, and a Debian-linked PipeWire client -- a qemu VM's audio device, in practice -- loads its protocol and client-node modules from there. Nix's pipewire has its own closure and is unaffected. It has zero reverse dependencies, so nothing but this declaration holds it.";
     libffado2 = "A hard Depends of libpipewire-0.3-modules.";
-    libroc0.4 = "A hard Depends of libpipewire-0.3-modules.";
+    "libroc0.4" = "A hard Depends of libpipewire-0.3-modules.";
     "libconfig++11" = "In libffado2's dependency chain.";
-    libglibmm-2.4-1t64 = "In libffado2's dependency chain.";
+    "libglibmm-2.4-1t64" = "In libffado2's dependency chain.";
     "libxml++2.6-2v5" = "In libffado2's dependency chain.";
     "libsigc++-2.0-0v5" = "In libglibmm-2.4-1t64's and libxml++2.6-2v5's dependency chain.";
     libopenfec1 = "In libroc0.4's dependency chain.";
@@ -1061,7 +1131,7 @@ free" are different questions.
 ```sh
 cat /var/lib/dpkg/info/ufw.triggers
 # interest-noawait /etc/ufw/applications.d
-sed -n '137,139p' /var/lib/dpkg/info/ufw.postinst
+sed -n '137,138p' /var/lib/dpkg/info/ufw.postinst
 #     triggered)
 #         ufw app update all || echo "Processing ufw triggers failed. Ignoring."
 ```
@@ -1084,13 +1154,25 @@ by necessity, not by preference.
 Both were measured while building `lib/deb.nix`:
 
 ```sh
-nix build --rebuild            # passes -- dpkg-deb output is reproducible
-                               # after `find pkg -exec touch -h -d @0 {} +`
-cmp with-fakeroot.deb without-fakeroot.deb   # identical
+P=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoDeb')
+ls -1 "$P"
+# calango-desktop_0.251_all.deb        <- $out is a DIRECTORY holding the .deb
+sg nix-users -c 'nix build --no-link --rebuild .#calangoDeb'
+# checking outputs of '/nix/store/...-calango-desktop-0.251.drv'
+#                                      <- no mismatch, exit 0: bit-reproducible
+/usr/bin/dpkg-deb -c "$P"/*.deb | sed -n '1,2p'
+# drwxr-xr-x root/root 0 1979-12-31 21:00 ./
+# drwxr-xr-x root/root 0 1979-12-31 21:00 ./etc/
+/usr/bin/grep -c fakeroot lib/deb.nix
+# 0                                    <- fakeroot is never invoked at all
 ```
 
+The version moves with every commit, so the exact number above will not match
+what you get; everything else will.
+
 `dpkg-deb --root-owner-group` alone gives `root/root` ownership, so `fakeroot`
-buys nothing. And `$out` must be a **directory** containing
+buys nothing — and the count above is better evidence than comparing two builds
+would be, because it shows the builder never reaches for it in the first place. And `$out` must be a **directory** containing
 `calango-desktop_<version>_all.deb`: apt requires a path ending in `.deb` with
 a package-shaped name, and a bare-file output yields `./result`, which
 `apt install` rejects. The build succeeds either way; only the install fails.
