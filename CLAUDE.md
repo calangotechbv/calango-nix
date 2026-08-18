@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Fifteen specs are done and written up in
+standalone Home Manager. Sixteen specs are done and written up in
 `docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -1092,18 +1092,33 @@ for deliberate testing.
   config and the font baseline. Recovery is fix-forward:
   `home-manager switch` from tty1, or
   `sudo dpkg -i /root/pkg-archive/uwsm_*.deb` (note: **root's** home).
-- **One file outside `$HOME`, and the flake can now declare it — but has not
-  yet installed it.** `/usr/local/share/wayland-sessions/hyprland-nix.desktop`
-  is still root-owned, hand-created and owned by no package; `dpkg -S` finds
-  nothing. `home/session.nix` declares its content as
-  `calango.deb.files."usr/share/wayland-sessions/hyprland-nix.desktop"`, so
-  `calango-desktop` will own a byte-identical copy in the policy-correct
-  directory once it is installed. `/etc/greetd/config.toml` passes
+- **There is no longer a file outside `$HOME` that no package owns.** The
+  greetd session entry was root-owned, hand-created and unowned for the whole
+  life of this flake. As of 2026-08-18 it is
+  `/usr/share/wayland-sessions/hyprland-nix.desktop`, shipped by
+  `calango-desktop` from `home/session.nix`'s
+  `calango.deb.files."usr/share/wayland-sessions/hyprland-nix.desktop"`, and
+  `/usr/local/share/wayland-sessions/` is empty.
+
+  **The handover was ordered ship → login → delete, and that order is the
+  point.** `/etc/greetd/config.toml` passes
   `--sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions`,
-  so greetd searches both; `/usr/share/wayland-sessions` does not exist today.
-  Until someone deletes the `/usr/local` copy — after confirming a login
-  against the new one — tuigreet will show two identical entries. Do not
-  delete it first: this is the login path.
+  so both were searched and tuigreet showed two identical entries for as long
+  as both existed. A deletion before a confirmed login would have bet the login
+  path on an untested file.
+
+  That the login really used the package's copy is provable from timestamps
+  rather than assumed, which matters because the two files were byte-identical
+  and `Desktop=hyprland-nix` names only the basename:
+
+  ```sh
+  stat -c '%y' /usr/local/share/wayland-sessions   # 17:40:21  <- the deletion
+  loginctl show-session 42 -p Timestamp            # 17:57:20  <- the login
+  ```
+
+  The old entry did not exist when the session started, so nothing else could
+  have served it. Note `atime` cannot answer this question: the root filesystem
+  is mounted `relatime`, so a second read inside 24 hours does not move it.
 - **A Nix binary that actually uses GL needs nixGL's *environment*. Needing your
   own *wrapper* is a separate question, and the answer turns on whether you are a
   systemd unit.** This file has now been wrong on this in both directions; the
