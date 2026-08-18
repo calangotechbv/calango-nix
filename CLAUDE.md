@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Thirteen specs are done and written up in
+standalone Home Manager. Fourteen specs are done and written up in
 `docs/2026-08-1*-results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -209,6 +209,13 @@ that coincidence which makes "`rc` is a running total" tempting. It is not one.
 Spec 12 removed 128 and moved the reading by part of 17; spec 13 removed 2 and
 moved it by 2. The delta is the number of removed packages *that carried
 conffiles*, which is a different quantity that sometimes agrees. Use:
+
+**Spec 14 is the clean end of that argument: it removed six and moved the
+reading by zero.** `lf`, `ueberzug`, `libxres1`, `python3-attr`,
+`python3-docopt` and `python3-xlib` all went, none carried conffiles, and
+`dpkg-query` now finds no trace of any of them — not `ii`, not `rc`, not `un`.
+The count stood at 147 before and after. If spec 13's agreement made "`rc` is a
+running total" tempting, this is the case that settles it.
 
 ```sh
 dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' <pkg>...
@@ -1036,6 +1043,38 @@ reasoning about the comment.
   15:27 that day cleared it — a full mid-session stop and restart of
   `night-light.service` afterwards logged zero such warnings — so read those
   documents as a resolved incident rather than an open one.
+- **`lf` is entirely Nix's, as of spec 14 — and the way it nearly went wrong
+  generalises to every future migration.** apt's `lf` was `ii`, manual, with
+  zero reverse dependencies, shadowed on `PATH` by Nix's r41: the same
+  two-provenance split spec 10 found with gammastep. What made it more than one
+  `apt remove` is that `home/lf.nix` wrapped it with `writeShellScriptBin`,
+  **which produces a package holding exactly one file**. So `bin/lf` reached the
+  profile and lf-41's whole `share/` tree — bash, fish and zsh completions,
+  `lf.1.gz`, `lf.desktop` — did not, and apt's package was quietly the only
+  source of lf completions on this machine. `find ~/.nix-profile/share -iname
+  '*lf*'` returned nothing.
+
+  `writeShellScriptBin` is the obvious way to add a `PATH` to a binary and it
+  silently discards everything else the package ships. Use `symlinkJoin` over
+  the real package plus `wrapProgram`, which is what `home/lf.nix` does now.
+  Check any other wrapper in this tree the same way before trusting it: build
+  the thing `home.packages` actually receives and list its `share/`.
+
+  Two smaller traps met while verifying it. The bash completion installs as
+  `completions/lf.bash`, not `completions/lf`, so looking for the un-suffixed
+  name reads as a missing file. And files present is not completion working —
+  test the loader:
+
+  ```sh
+  bash -lic '. /usr/share/bash-completion/bash_completion; _comp_load lf; complete -p lf'
+  # complete -o filenames -F _lf lf
+  ```
+
+  Removing apt's `lf` took five packages with it — `ueberzug` and its
+  `libxres1`, `python3-attr`, `python3-docopt`, `python3-xlib`. Nothing here
+  wanted them: `lf/preview` calls `chafa`, `kitty` and `sixel`. Note `ueberzug`
+  is a Python program, so the union instrument was required to establish its
+  absence; a `/proc` walk alone cannot see an interpreted program.
 - **`signal-desktop` and `bitwarden` are Nix's, as of spec 13.** Both apt
   packages are `rc` — removed, conffiles retained — and both binaries resolve
   to `~/.nix-profile/bin`. Three things to carry:
