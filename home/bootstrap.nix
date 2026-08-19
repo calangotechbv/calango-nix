@@ -142,6 +142,7 @@ let
       '') cfg.aptSources
     )}
     cp ${runbook} "$out/RUNBOOK.md"
+    cp ${preseed} "$out/preseed.cfg"
   '';
 
   # Substitution happens in NIX, not in the builder's shell, and that is
@@ -165,12 +166,16 @@ let
   # second idiom in the tree. It is here because their substituted values are
   # store paths and hostnames, which cannot contain an apostrophe, and these
   # are English sentences, which routinely do.
-  requireToken =
-    tok: body:
+  # Takes the FILE as well as the token, because there are two templates now and
+  # a message naming the wrong one is worse than no message. The single-file
+  # version hardcoded bootstrap/runbook.md.in in its throw, so a missing preseed
+  # token would have been reported against the runbook.
+  requireTokenIn =
+    file: tok: body:
     if lib.hasInfix tok body then
       body
     else
-      throw "runbook token ${tok} is not in bootstrap/runbook.md.in";
+      throw "token ${tok} is not in ${file}";
 
   # A table row per entry, so the reason travels with the name. mapAttrsToList
   # gives them in Nix's sorted-key order, which is stable across builds.
@@ -233,10 +238,57 @@ let
     builtins.replaceStrings (builtins.attrNames substitutions)
       (builtins.attrValues substitutions)
       (
-        lib.foldl' (body: tok: requireToken tok body)
+        lib.foldl' (body: tok: requireTokenIn "bootstrap/runbook.md.in" tok body)
           (builtins.readFile ./../bootstrap/runbook.md.in)
           (builtins.attrNames substitutions)
       );
+
+  # A SECOND substitutions attrset, deliberately not merged with the runbook's.
+  # requireTokenIn asserts every token of a set appears in its template, so a
+  # merged set would demand the runbook carry @username@ and the preseed carry
+  # @corpPackagesTable@ -- and each would then have to grow a token it has no
+  # use for.
+  preseedSubstitutions = {
+    "@username@" = config.home.username;
+    "@basePackages@" = lib.concatStringsSep " " (builtins.attrNames cfg.packages.base);
+    # sudo is appended to the declared groups rather than added to the option:
+    # calango.bootstrap.groups is what the DESKTOP needs, and the drift check
+    # reports on it. sudo is what Stage C needs, which is a different question.
+    # NOT named @groupsComma@: the runbook's own substitutions attrset already
+    # has that token, holding cfg.groups WITHOUT sudo, and its template uses it.
+    # Two different values must not share one token name -- a reader seeing it in
+    # either template could not tell which they get, and moving a line between
+    # templates would silently change behaviour.
+    "@groupsWithSudo@" = lib.concatStringsSep "," (cfg.groups ++ [ "sudo" ]);
+  };
+
+  preseedText =
+    builtins.replaceStrings (builtins.attrNames preseedSubstitutions)
+      (builtins.attrValues preseedSubstitutions)
+      (
+        lib.foldl' (body: tok: requireTokenIn "bootstrap/preseed.cfg.in" tok body)
+          (builtins.readFile ./../bootstrap/preseed.cfg.in)
+          (builtins.attrNames preseedSubstitutions)
+      );
+
+  preseed =
+    pkgs.runCommand "calango-bootstrap-preseed"
+      { src = pkgs.writeText "preseed-substituted.cfg" preseedText; }
+      ''
+        cp "$src" "$out"
+
+        # The same token guard the runbook carries. A CONDITION, not a bare
+        # command: a builder runs with errexit and a grep matching nothing exits
+        # 1, which here is the PASSING case.
+        if grep -n '@[a-zA-Z]*@' "$out" >&2; then
+          echo "" >&2
+          echo "An unsubstituted token survived in the preseed." >&2
+          echo "  Either add it to home/bootstrap.nix's" >&2
+          echo "  preseedSubstitutions attrset, or remove it from" >&2
+          echo "  bootstrap/preseed.cfg.in." >&2
+          exit 1
+        fi
+      '';
 
   runbook =
     pkgs.runCommand "calango-bootstrap-runbook"
