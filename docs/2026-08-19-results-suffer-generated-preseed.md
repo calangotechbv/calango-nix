@@ -79,6 +79,10 @@ All six predictions written before the run held. Full text in
 | 9 | **`./bin/slack-latest` cannot work where Stage C invokes it** | product, fixed |
 | 10 | Gate C's four lines joined with `&&` read as a failed gate | method |
 | 11 | a redirected step makes a prompt invisible *and* unanswerable | harness |
+| 12 | **Stage C stalled forever on `code`'s debconf question** | product, fixed |
+| 13 | **Stage D's `activate` was the one nix line not wrapped in `sg`** | product, fixed |
+| 14 | the driver typed `echo …` into GRUB, where `e` opens the entry editor | harness |
+| 15 | a wrapper ending in `echo` reported success for a failed pass | harness |
 
 Finding 1, in full, because it fails in a way that reads as a hung boot:
 
@@ -209,11 +213,92 @@ output stayed buffered at zero bytes; and **apt runs maintainer scripts under a
 pty**, so redirecting apt's output does not make them non-interactive in the
 first place. Recovered from `/var/log/apt/term.log`, which persists.
 
+## The third run — the loop, and one uninterrupted green pass
+
+Findings 8 and 9 were fixed but not *retested* by the second rehearsal, and a
+document with a stall in it is not a document that works. So the stages were run
+again in a loop: drive, fix what fails, re-run — then **one final pass on a
+freshly installed machine, against the pushed document, with no fixes applied
+mid-run**. A sequence assembled out of fixes is not evidence that the sequence
+works, which is why the two are kept apart.
+
+```
+Stage 0 OK: 2 preseed fetches logged        21:55:58 -> 21:58:25
+PASS  05-gate-a    PASS  10-stage-b    PASS  20-gate-b
+PASS  30-stage-c   PASS  40-gate-c     PASS  50-stage-d
+---- 6 passed, 0 failed ----                finished 22:11:52
+```
+
+Sixteen minutes, one command (`final-pass.sh`), the clone landing `749aee4`, and
+Stage D taking the **wrapped** `sg nix-users -c "$p/activate"` path. Stage C
+raised no dialog: `* code/add-microsoft-repo: false` took, and neither
+`Package configuration` nor `Configuring code` appears anywhere in its log.
+
+### The two product defects the loop found
+
+**Finding 12.** Stage C stalled indefinitely on `code`'s debconf question, which
+finding 8 had documented rather than removed. Stage C now preseeds the answer
+before installing:
+
+```sh
+echo 'code code/add-microsoft-repo boolean false' | sudo debconf-set-selections
+```
+
+`false` is right because `calango-bootstrap-microsoft.sources` already provides
+that repository with an inline key. Reading `code.postinst` afterwards showed the
+fix is better than "auto-answering": `RET` is fetched by `db_get` at the top of
+the script, so `false` short-circuits `WRITE_SOURCE` **before** the `db_input
+high` call is reached. The prompt is never raised at all.
+
+**Finding 13.** `"$p/activate"` was the only nix-touching command in the whole
+document not wrapped in `sg nix-users -c` — and its failure is **silent**.
+`activate:233` is `run --silence nix-store --realise …`, the script's first real
+action, and `run --silence` is `"$@" > /dev/null 2>&1`; under `set -eu` the whole
+activation aborts with no output. Measured in the VM from a shell with its
+supplementary groups cleared:
+
+```
+error: getting status of '/nix/var/nix/daemon-socket/socket': Permission denied
+```
+
+**Why three rehearsals sailed past it:** on the Stage 0 path the preseed's
+`late_command` adds `nix-users` during the install, so the reader's first login
+already has the group. The failure belongs to the Stage A path, where `usermod
+-aG` runs while the reader is already logged in and Stage D's "log out"
+instruction comes *after* the activation. Every rehearsal took the good path. A
+document-wide sweep now finds no other unwrapped line.
+
+### The two harness defects, which are the more instructive pair
+
+**Finding 14.** `final-pass.sh` drove the console the instant the socket
+appeared, while **GRUB** still owned it — and the driver's probe began `echo`,
+whose first character is GRUB's "edit this entry" key. A whole final pass sat in
+the bootloader; the traceback showed `grub.cfg` being echoed back. Every earlier
+run escaped by accident, because a few unrelated tool calls had given GRUB time
+to time out. The driver now sends **nothing** until it has seen a prompt, and a
+bare newline is the only thing it will send blind: it boots in GRUB, reprints at
+a getty, prints a prompt in a shell.
+
+**Finding 15.** That failed run was reported to the controller as **exit code
+0**, because the wrapper ended `./final-pass.sh > log 2>&1; echo "exit=$?"` and
+the compound command's status was the `echo`'s. It was caught by reading the log
+instead of the status — the same species as every check-that-cannot-fail in this
+project's history, in the reporting layer rather than in a guard.
+
+### The tooling
+
+It lives in `~/vm/runbook-loop/` and dies with that directory.
+`test/README-vm-harness.md` is the note saying it belongs in the repository, what
+the move must not lose, and what has to be generalised first. It has been
+written from scratch twice; the note exists so there is no third time.
+
 ## What is not verified
 
-**Gate D's last two lines**, which need a graphical login. Everything up to and
-including Stage D's first `activate` is verified on a machine built from the
-merged tree.
+**Gate D's last two lines**, which need a graphical login: they read `loginctl`
+and Hyprland's own `/proc/<pid>/environ`. Everything from Stage 0 through Stage D
+is verified by the uninterrupted pass above. **Whether the desktop looks right
+was never something this harness could answer** — that is one person and one
+window, and it is the step this document stops at.
 
 `fresh-editor` was installed from a file served by the host rather than fetched
 upstream — the one declared deviation in this run, and out of scope by decision.
