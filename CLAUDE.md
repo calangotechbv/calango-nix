@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Eighteen specs are done and written up in
+standalone Home Manager. Nineteen specs are done and written up in
 `docs/*results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -26,9 +26,11 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` runs **five** checks. Count them rather than quoting this
-line — the number was stale at three the moment `bar-title-slot` landed, and
-the bare-Debian bootstrap branch moved it again by adding `host-config-files`:
+`nix flake check` runs **six** checks. Count them rather than quoting this
+line — the number was stale at three the moment `bar-title-slot` landed, the
+bare-Debian bootstrap branch moved it to five by adding `host-config-files`,
+and the generated-preseed branch moved it again by adding
+`preseed-package-list`:
 
 ```sh
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -38,19 +40,20 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 looser version started lying.** `nix flake check` validates *every* flake
 output, not only `checks`, so it emits a `checking derivation` line for
 `packages.x86_64-linux.calangoDeb` and `packages.x86_64-linux.calangoBootstrap`
-as well. Measured after the bootstrap work landed a second `packages` output:
+as well. Measured on the generated-preseed branch, with both packages and all
+six checks in the tree:
 
 ```sh
-… | grep -c '^checking derivation'          # 7   <- includes both packages
-… | grep -c '^checking derivation checks\.'  # 5   <- the checks
-… | grep -o 'running [0-9]* flake checks'   # running 5 flake checks
+… | grep -c '^checking derivation'          # 8   <- includes both packages
+… | grep -c '^checking derivation checks\.'  # 6   <- the checks
+… | grep -o 'running [0-9]* flake checks'   # running 6 flake checks
 ```
 
 The looser pattern disagreed with nix's own summary line and nothing warned
 about it. Prefer the summary if you only want the number; use the `checks\.`
 form when you want to see which ones ran.
 
-`bar-title-slot` is unlike the other four: it *runs* this flake's QML under
+`bar-title-slot` is unlike the other five: it *runs* this flake's QML under
 the pinned Qt with the offscreen platform, rather than inspecting a built
 tree. So the shell tree is now covered by a build-time guard as well, and a
 change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
@@ -58,8 +61,8 @@ change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
 Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
 `home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
 `home/apps.nix`, `quickshell/bar/TitleSlot.qml`, `bootstrap/greetd-config.toml`,
-`bootstrap/runbook.md.in`, `bootstrap/keys/`, or the `required` list in
-`flake.nix`. The first of those is
+`bootstrap/runbook.md.in`, `bootstrap/preseed.cfg.in`, `bootstrap/keys/`, or
+the `required` list in `flake.nix`. The first of those is
 deliberately stated as *syntax* rather than as a list of modules: an earlier
 version of this passage named `home/portals.nix` and `home/uwsm.nix`, and
 `grep -l 'source =' home/*.nix` returns **ten** modules, so the named pair
@@ -68,7 +71,7 @@ for the property; do not trust a list of names, including this sentence's.
 
 Further build-time guards ride in `home.packages` rather than in `checks`, so
 they run on every generation build — strictly more often than
-`nix flake check` is invoked — and none of them appears in that count of five.
+`nix flake check` is invoked — and none of them appears in that count of six.
 Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
@@ -130,11 +133,23 @@ packages (so `Depends` and `Conflicts` never contradict each other), and no
 `keep` or `ban` value is an empty reason string (the entries ship in the
 package's own extended description, so an unexplained one would be silent).
 `home/bootstrap.nix` is the third binding, added by the bare-Debian bootstrap
-work, and its four assertions are unrelated to either: two vacuity anchors
-(`greetdConfig` non-empty, `groups` non-empty), one anchor requiring at least
-one shipped `wayland-sessions/` entry to exist at all (with none, the real
-guard below it would compare nothing against nothing and pass having asserted
-nothing), and the real guard -- every `calango.deb.files` entry under
+work, and it now carries **six** assertions, not four: this passage was
+accurate the day it was written, and two more landed since without it being
+updated -- a consistency check that predates this branch, and a sixth added
+by this branch's own preseed work. Count the property, not the word: `/usr/bin/grep -c
+'^      assertion =' home/bootstrap.nix` reads 6, where a bare `grep -c
+'assertion'` over the same file reads 10, because that also matches three
+comments and the `config.assertions = [` binding itself. The six, unrelated
+to `deb.nix`'s or syncthing's: one consistency check (a name in
+`aptSourcesTransient` must also be a key of `aptSources`, so a typo cannot
+leave a colliding apt source file in place), three vacuity anchors
+(`greetdConfig` non-empty, `groups` non-empty, `packages.base` non-empty --
+the last one this branch's own, since an empty package list renders a
+`pkgsel/include` line with no names and the install succeeds having installed
+nothing), one anchor requiring at least one shipped `wayland-sessions/` entry
+to exist at all (with none, the real guard below it would compare nothing
+against nothing and pass having asserted nothing), and the real guard --
+every `calango.deb.files` entry under
 `wayland-sessions/` sits in a directory `bootstrap/greetd-config.toml`'s own
 `--sessions` line actually names, parsed out of that string rather than
 declared a second time. That is narrower than "every `wayland-sessions/`
@@ -151,6 +166,38 @@ it directly.
 ---
 
 ## Tools that answer a different question than the one asked
+
+**`pkgsel/include` fails the install on an unavailable package; it does not
+warn.** Measured on a Debian 13.6 netinst with one bogus name added to a real
+twelve-package list:
+
+    [!!] Select and install software
+         Installation step failed
+         The failing step is: Select and install software
+
+The installer halts at that dialog rather than producing a machine missing a
+package. That is why the generated preseed carries no gate of its own for the
+package list — and why `calango.bootstrap.packages.base` needs a vacuity anchor
+instead: an EMPTY list renders a `pkgsel/include` line with no names, which
+installs successfully and fails nothing.
+
+**A long preseed on the kernel command line panics the kernel, and the panic
+names the argument.** The kernel hands unrecognised `key=value` cmdline
+arguments to init as environment variables and caps how many it will take.
+Measured in spec 19's rehearsal, standing in for a human with 30 preseed answers
+on the boot line:
+
+```
+Kernel panic - not syncing: Too many boot env vars at `apt-setup/cdrom/set-first=false'
+```
+
+The install never started and the serial log stopped at 11543 bytes, which reads
+exactly like a boot that hung. Nothing warns as the list grows. The answer is an
+**initrd preseed** -- append a cpio holding `/preseed.cfg` to `initrd.gz`; d-i
+loads it before it asks anything, then still fetches `url=` and applies that
+too, so a generated file can be tested verbatim with the scaffolding held
+separately. `.#calangoBootstrap`'s own boot line carries two arguments and is
+nowhere near the cap.
 
 **Package versions.** `nixpkgs#<pkg>` reads the flake *registry*
 (nixpkgs-unstable), not this flake's pinned input. They differ:
@@ -1909,6 +1956,22 @@ the wrong thing, spec 10's looked in the wrong place, and spec 11's found the
 right string in the wrong role. All three passed. All three were caught by
 mutation or by a reviewer, never by the check itself — which is the argument for
 mutating every guard rather than only the ones that look risky.
+
+**A stage can be "rehearsed end to end" and still contain a command nobody
+ran.** Spec 18 recorded its Stage B as rehearsed; spec 19's rehearsal ran the
+actual line and it cannot work -- the repository is not anonymously readable, so
+`git clone https://…` prompts for a credential the runbook never mentioned:
+
+```sh
+GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/calangotechbv/calango-nix.git HEAD
+# fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+Spec 18 missed it because its VM got the tree off the 9p share -- its own Stage B
+log shows `git init` output, not a clone. The harness deviation that made the
+rehearsal convenient is exactly what the rehearsal was meant to test. When a
+result says a stage passed, ask which commands actually executed; a deviation
+recorded honestly in a README is still a command not run.
 
 The deeper pattern is not laziness. In every one of these cases a real command
 was run and real output was read; the error was in the *conclusion drawn

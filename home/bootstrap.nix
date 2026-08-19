@@ -142,6 +142,7 @@ let
       '') cfg.aptSources
     )}
     cp ${runbook} "$out/RUNBOOK.md"
+    cp ${preseed} "$out/preseed.cfg"
   '';
 
   # Substitution happens in NIX, not in the builder's shell, and that is
@@ -158,19 +159,23 @@ let
   #
   # This gives up ONE property substituteInPlace --replace-fail provided --
   # that the token exists -- because replaceStrings silently does nothing for an
-  # absent token. requireToken restores it, and it throws at evaluation rather
+  # absent token. requireTokenIn restores it, and it throws at evaluation rather
   # than at build.
   #
   # home/hyprland.nix and home/gtk.nix use substituteInPlace, so this is a
   # second idiom in the tree. It is here because their substituted values are
   # store paths and hostnames, which cannot contain an apostrophe, and these
   # are English sentences, which routinely do.
-  requireToken =
-    tok: body:
+  # Takes the FILE as well as the token, because there are two templates now and
+  # a message naming the wrong one is worse than no message. The single-file
+  # version hardcoded bootstrap/runbook.md.in in its throw, so a missing preseed
+  # token would have been reported against the runbook.
+  requireTokenIn =
+    file: tok: body:
     if lib.hasInfix tok body then
       body
     else
-      throw "runbook token ${tok} is not in bootstrap/runbook.md.in";
+      throw "token ${tok} is not in ${file}";
 
   # A table row per entry, so the reason travels with the name. mapAttrsToList
   # gives them in Nix's sorted-key order, which is stable across builds.
@@ -192,10 +197,29 @@ let
   );
   corpRepoNames = lib.subtractLists corpFileOnlyNames (builtins.attrNames cfg.packages.corp);
 
+  # ONE binding, read by both templates' substitutions attrsets below, under
+  # two different token names (@basePackagesOneLine@ in the runbook,
+  # @basePackages@ in the preseed). The two templates still need their own
+  # tokens -- one substitutions set per template is what requireTokenIn checks
+  # against, and merging the sets would make each template demand tokens the
+  # other has no use for -- but the VALUE itself was written out twice before
+  # this, which is the mirror image of the trap this file's own comments
+  # elsewhere warn against: not two values sharing one name, but one value
+  # spelled out under two names, with nothing to stop the two from drifting
+  # apart if only one call site were ever edited.
+  basePackagesLine = lib.concatStringsSep " " (builtins.attrNames cfg.packages.base);
+
+  # Both templates say "the twelve packages" in prose, and neither should spell
+  # the number. Four other counts here are already tokens (@groupsCount@,
+  # @aptSourceCount@, @corpPackagesCount@, @corpRepoPackagesCount@); a
+  # hand-written thirteenth entry would leave a literal "twelve" behind in a
+  # GENERATED file, which is the exact shape this project's own instructions
+  # open by warning about.
+  basePackagesCount = toString (builtins.length (builtins.attrNames cfg.packages.base));
+
   substitutions = {
-    "@basePackagesOneLine@" = lib.concatStringsSep " " (
-      builtins.attrNames cfg.packages.base
-    );
+    "@basePackagesOneLine@" = basePackagesLine;
+    "@basePackagesCount@" = basePackagesCount;
     "@basePackagesTable@" =
       "| package | why |\n|---|---|\n" + reasonTable cfg.packages.base;
     "@corpPackagesTable@" =
@@ -225,6 +249,11 @@ let
     "@aptSourceCount@" = toString (
       builtins.length (builtins.attrNames cfg.aptSources)
     );
+    # Stage 0 names the account the installer will end up with, rather than
+    # leaving it as an abstract "the account name" -- it is generated from
+    # home.username, not something the reader types at a prompt, and this is
+    # the value every later stage's <user> placeholder means.
+    "@username@" = config.home.username;
   };
 
   # attrNames and attrValues return the same sorted order, so the two lists
@@ -233,10 +262,77 @@ let
     builtins.replaceStrings (builtins.attrNames substitutions)
       (builtins.attrValues substitutions)
       (
-        lib.foldl' (body: tok: requireToken tok body)
+        lib.foldl' (body: tok: requireTokenIn "bootstrap/runbook.md.in" tok body)
           (builtins.readFile ./../bootstrap/runbook.md.in)
           (builtins.attrNames substitutions)
       );
+
+  # A SECOND substitutions attrset, deliberately not merged with the runbook's.
+  # requireTokenIn asserts every token of a set appears in its template, so a
+  # merged set would demand the runbook carry @username@ and the preseed carry
+  # @corpPackagesTable@ -- and each would then have to grow a token it has no
+  # use for.
+  preseedSubstitutions = {
+    "@username@" = config.home.username;
+    "@basePackages@" = basePackagesLine;
+    "@basePackagesCount@" = basePackagesCount;
+    # sudo is appended to the declared groups rather than added to the option:
+    # calango.bootstrap.groups is what the DESKTOP needs, and the drift check
+    # reports on it. sudo is what Stage C needs, which is a different question.
+    # NOT named @groupsComma@: the runbook's own substitutions attrset already
+    # has that token, holding cfg.groups WITHOUT sudo, and its template uses it.
+    # Two different values must not share one token name -- a reader seeing it in
+    # either template could not tell which they get, and moving a line between
+    # templates would silently change behaviour.
+    "@groupsWithSudo@" = lib.concatStringsSep "," (cfg.groups ++ [ "sudo" ]);
+  };
+
+  preseedText =
+    builtins.replaceStrings (builtins.attrNames preseedSubstitutions)
+      (builtins.attrValues preseedSubstitutions)
+      (
+        lib.foldl' (body: tok: requireTokenIn "bootstrap/preseed.cfg.in" tok body)
+          (builtins.readFile ./../bootstrap/preseed.cfg.in)
+          (builtins.attrNames preseedSubstitutions)
+      );
+
+  preseed =
+    pkgs.runCommand "calango-bootstrap-preseed"
+      { src = pkgs.writeText "preseed-substituted.cfg" preseedText; }
+      ''
+        cp "$src" "$out"
+
+        # The same token guard the runbook carries. A CONDITION, not a bare
+        # command: a builder runs with errexit and a grep matching nothing exits
+        # 1, which here is the PASSING case.
+        if grep -n '@[a-zA-Z]*@' "$out" >&2; then
+          echo "" >&2
+          echo "An unsubstituted token survived in the preseed." >&2
+          echo "  Either add it to home/bootstrap.nix's" >&2
+          echo "  preseedSubstitutions attrset, or remove it from" >&2
+          echo "  bootstrap/preseed.cfg.in." >&2
+          exit 1
+        fi
+
+        # Guards the spec's "important half": no partitioning, locale, mirror,
+        # timezone or root password. That refusal is the one property here
+        # that CANNOT diverge on its own -- nothing generates those lines, so
+        # nothing can regenerate them wrong -- which is exactly why it had no
+        # guard until now: only a line added BY HAND to preseed.cfg.in could
+        # break it, and this catches that. A CONDITION again, for the same
+        # errexit reason as the token guard above: no match is the PASSING
+        # case, so the check belongs in the `if`, not in a `grep -c` capture.
+        if grep -nE 'partman|mirror/|time/zone|passwd/root|debian-installer/locale|grub-installer' "$out" >&2; then
+          echo "" >&2
+          echo "The rendered preseed drives disk, locale, mirror, timezone or" >&2
+          echo "  the root password. bootstrap/preseed.cfg.in's own header" >&2
+          echo "  refuses this on purpose -- these are decisions about a" >&2
+          echo "  physical disk, and a recipe generated by this flake would" >&2
+          echo "  either not match this project's encryption convention or" >&2
+          echo "  apply it unattended to hardware. Remove the offending line." >&2
+          exit 1
+        fi
+      '';
 
   runbook =
     pkgs.runCommand "calango-bootstrap-runbook"
@@ -495,6 +591,20 @@ in
         would not be in the list. Either add the directory to the command=
         line in bootstrap/greetd-config.toml, or ship the entry into a
         directory already named there.
+      '';
+    }
+    {
+      # Without this, an empty packages.base renders `d-i pkgsel/include string`
+      # with nothing after it. The preseed would install a bare Debian, the
+      # install would succeed, and Stage A's absence would make the omission
+      # silent -- which is the one failure mode the loud pkgsel behaviour does
+      # NOT protect against, because there is no name for it to fail on.
+      assertion = cfg.packages.base != { };
+      message = ''
+        calango.bootstrap.packages.base is empty, so the generated preseed's
+        pkgsel/include line would name no packages and the runbook's Stage A
+        would install none. The install would still succeed, which is what
+        makes this worth an assertion rather than a gate.
       '';
     }
   ];

@@ -48,10 +48,12 @@ way this section's old install command and `/etc/greetd/config.toml` could.
 
 The full bootstrap this project now provides -- packages, groups, apt
 sources, the greetd configuration, and every gate -- is generated into
-`RUNBOOK.md` by `nix build .#calangoBootstrap` (`home/bootstrap.nix` and
-`bootstrap/runbook.md.in`). The account and session recipes in this file
-predate that and are kept only as a record of Task 6, not as instructions to
-run.
+`RUNBOOK.md` and a Debian `preseed.cfg` by `nix build .#calangoBootstrap`
+(`home/bootstrap.nix`, `bootstrap/runbook.md.in` and
+`bootstrap/preseed.cfg.in`). The preseed drives the installer itself, ahead of
+`RUNBOOK.md`'s Stage A, through the same declarations. The account and
+session recipes in this file predate both and are kept only as a record of
+Task 6, not as instructions to run.
 
 The shipped entry's `Exec` line still carries the two things that are not
 decoration, both paid for in Task 6:
