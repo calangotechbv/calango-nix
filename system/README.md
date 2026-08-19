@@ -1,7 +1,22 @@
 # The root-owned footprint
 
-This project puts **one** file outside `$HOME`. Everything else is Home
-Manager, under the user account.
+This was already stale before the bare-Debian bootstrap work -- `calango-desktop`
+ships a ufw profile and `/etc/default/slack` beside the session entry -- and is
+more so now that a greetd conffile is declared as well. Counted rather than
+guessed, from `home/deb.nix`'s two manifest options together:
+
+```sh
+sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.calango.deb.files' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
+# 2 -- etc/default/slack, usr/share/wayland-sessions/hyprland-nix.desktop
+sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.calango.deb.ufwProfiles' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
+# 1 -- the calango ufw profile
+```
+
+So `calango-desktop`'s own `.deb` manifest ships **3** files outside `$HOME`,
+plus one conffile it hands to greetd's own package to install by hand --
+`/etc/greetd/config.toml`, declared in `home/bootstrap.nix` and not part of
+either option above. Everything else is Home Manager, under the user
+account.
 
 ## The test account
 
@@ -9,28 +24,37 @@ Used by the migration only. Delete it once `isutton` has moved across.
 
 ```sh
 sudo adduser --gecos "calango-nix test account" nixtest
-sudo usermod -aG video,input,render,nix-users nixtest
+sudo usermod -aG video,input,nix-users nixtest
 ```
 
-`video` and `render` open the DRM device, `input` the keyboard and pointer,
-`nix-users` the Nix daemon.
+`video` opens the DRM device, `input` the keyboard and pointer, `nix-users`
+the Nix daemon. `render` is deliberately absent: `id` on the working account
+shows it is not held, so the desktop demonstrably does not need it.
 
 Undo: `sudo deluser --remove-home nixtest`
 
 ## The session entry
 
-```sh
-sudo install -Dm644 system/hyprland-nix.desktop \
-  /usr/local/share/wayland-sessions/hyprland-nix.desktop
-```
+Hand-installed into `/usr/local/share/wayland-sessions/` for the whole life of
+this flake, until spec 16 confirmed a login through a package-shipped copy and
+deleted this one. It now ships as
+`usr/share/wayland-sessions/hyprland-nix.desktop` inside `calango-desktop`'s
+own `.deb` -- `home/session.nix`'s `calango.deb.files` entry, and `dpkg -S`
+names `calango-desktop` as the owner. `/usr/local/share/wayland-sessions/` is
+empty. `home/bootstrap.nix` asserts at build time that
+`bootstrap/greetd-config.toml`'s own `--sessions` line still names the
+directory this entry lands in, so the two can no longer silently disagree the
+way this section's old install command and `/etc/greetd/config.toml` could.
 
-`/etc/greetd/config.toml` needs no edit: it already runs
-`tuigreet --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions`.
+The full bootstrap this project now provides -- packages, groups, apt
+sources, the greetd configuration, and every gate -- is generated into
+`RUNBOOK.md` by `nix build .#calangoBootstrap` (`home/bootstrap.nix` and
+`bootstrap/runbook.md.in`). The account and session recipes in this file
+predate that and are kept only as a record of Task 6, not as instructions to
+run.
 
-Undo: `sudo rm /usr/local/share/wayland-sessions/hyprland-nix.desktop`
-
-Two things in that `Exec` line are not decoration, and both were paid for in
-Task 6:
+The shipped entry's `Exec` line still carries the two things that are not
+decoration, both paid for in Task 6:
 
 - It sets `XDG_DATA_DIRS` itself. Nothing else does — Debian's `nix-bin`
   ships no `/etc/profile.d/nix.sh`, and Home Manager's `hm-session-vars.sh`

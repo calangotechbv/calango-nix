@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Seventeen specs are done and written up in
+standalone Home Manager. Eighteen specs are done and written up in
 `docs/*results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -26,8 +26,9 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` runs **four** checks. Count them rather than quoting this
-line — the number was stale at three the moment `bar-title-slot` landed:
+`nix flake check` runs **five** checks. Count them rather than quoting this
+line — the number was stale at three the moment `bar-title-slot` landed, and
+the bare-Debian bootstrap branch moved it again by adding `host-config-files`:
 
 ```sh
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -36,27 +37,28 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 **The `checks\.` part of that pattern is load-bearing, and was added after the
 looser version started lying.** `nix flake check` validates *every* flake
 output, not only `checks`, so it emits a `checking derivation` line for
-`packages.x86_64-linux.calangoDeb` as well. Measured the moment the glue-deb
-work landed a `packages` output:
+`packages.x86_64-linux.calangoDeb` and `packages.x86_64-linux.calangoBootstrap`
+as well. Measured after the bootstrap work landed a second `packages` output:
 
 ```sh
-… | grep -c '^checking derivation'          # 5   <- includes the package
-… | grep -c '^checking derivation checks\.'  # 4   <- the checks
-… | grep -o 'running [0-9]* flake checks'   # running 4 flake checks
+… | grep -c '^checking derivation'          # 7   <- includes both packages
+… | grep -c '^checking derivation checks\.'  # 5   <- the checks
+… | grep -o 'running [0-9]* flake checks'   # running 5 flake checks
 ```
 
 The looser pattern disagreed with nix's own summary line and nothing warned
 about it. Prefer the summary if you only want the number; use the `checks\.`
 form when you want to see which ones ran.
 
-`bar-title-slot` is unlike the other three: it *runs* this flake's QML under
+`bar-title-slot` is unlike the other four: it *runs* this flake's QML under
 the pinned Qt with the offscreen platform, rather than inspecting a built
 tree. So the shell tree is now covered by a build-time guard as well, and a
 change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
 
 Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
 `home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
-`home/apps.nix`, `quickshell/bar/TitleSlot.qml`, or the `required` list in
+`home/apps.nix`, `quickshell/bar/TitleSlot.qml`, `bootstrap/greetd-config.toml`,
+`bootstrap/runbook.md.in`, `bootstrap/keys/`, or the `required` list in
 `flake.nix`. The first of those is
 deliberately stated as *syntax* rather than as a list of modules: an earlier
 version of this passage named `home/portals.nix` and `home/uwsm.nix`, and
@@ -66,7 +68,7 @@ for the property; do not trust a list of names, including this sentence's.
 
 Further build-time guards ride in `home.packages` rather than in `checks`, so
 they run on every generation build — strictly more often than
-`nix flake check` is invoked — and none of them appears in that count of four.
+`nix flake check` is invoked — and none of them appears in that count of five.
 Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
@@ -95,6 +97,20 @@ failing the build if one turns up — the property `home/session.nix`'s own
 comment names directly, since a root-owned file naming the store breaks
 unrecoverably once that path is garbage-collected.
 
+`home/bootstrap.nix`'s `bootstrapDir` is the sixth, added by the bare-Debian
+bootstrap work, and it is the **second** guard in this flake to ride as an
+*input of an exposed package*, not merely as a `home.packages` sibling — the
+shape spec 16's defect 10 established, when `noStorePaths` above was found to
+protect only the activation path while `nix build .#calangoDeb` remained free
+to write a `.deb` naming the store. `bootstrapDir` takes its own
+`noStorePathsInEtc` as an input, so `nix build .#calangoBootstrap` cannot
+produce the rendered root-owned tree without that guard passing, and
+`bootstrapDir` itself is also the `home.packages` entry — one derivation
+serving both roles, where `home/deb.nix` needed a second `runCommand` sibling
+to cover the one `debPackage` does not reach. `noStorePathsInEtc` is scoped to
+`etc/` deliberately: `RUNBOOK.md` is not root-owned and must name the built
+store path to be useful.
+
 `home/syncthing.nix` adds the first guard in this flake that is not a
 derivation: two entries in Home Manager's `assertions`, evaluated at build
 time. An earlier version of this passage said it *had* to be, which is not
@@ -106,13 +122,31 @@ outside the generation, in `no-dangling-home-files` and in
 `gui-desktop-ids`. `assertions` wins on frequency, not on
 possibility: it runs on every generation build, where a check runs only under
 `nix flake check`. Enumerate assertions with
-`grep -n 'assertions' home/*.nix`, which returns 6 -- two bindings and four
+`grep -n 'assertions' home/*.nix`, which returns 8 -- three bindings and five
 prose, so read the lines rather than the count. `home/deb.nix` is the second
 binding, and its three assertions are unrelated to syncthing's: `calango.deb.keep`
 is non-empty (the vacuity anchor), `keep` and `ban` name disjoint sets of
 packages (so `Depends` and `Conflicts` never contradict each other), and no
 `keep` or `ban` value is an empty reason string (the entries ship in the
 package's own extended description, so an unexplained one would be silent).
+`home/bootstrap.nix` is the third binding, added by the bare-Debian bootstrap
+work, and its four assertions are unrelated to either: two vacuity anchors
+(`greetdConfig` non-empty, `groups` non-empty), one anchor requiring at least
+one shipped `wayland-sessions/` entry to exist at all (with none, the real
+guard below it would compare nothing against nothing and pass having asserted
+nothing), and the real guard -- every `calango.deb.files` entry under
+`wayland-sessions/` sits in a directory `bootstrap/greetd-config.toml`'s own
+`--sessions` line actually names, parsed out of that string rather than
+declared a second time. That is narrower than "every `wayland-sessions/`
+entry this flake ships": `home/session.nix`'s `hyprland-nixgl-session` also
+ships one, through `home.packages` rather than `calango.deb.files`, landing in
+`~/.nix-profile/share/wayland-sessions` -- a directory greetd's own
+`--sessions` line does not search and this guard does not read. That is
+deliberate, not a gap: `home/session.nix`'s own comment on
+`hyprland-nixgl-session` says uwsm resolves it by desktop entry, not greetd --
+it is `uwsm start ... hyprland-nixgl.desktop`, invoked from inside the
+`calango.deb.files` entry greetd does offer, so greetd is never meant to see
+it directly.
 
 ---
 
@@ -422,7 +456,61 @@ deciding what protects it.
 
 **`pgrep` on a Nix binary.** Nix wraps binaries, so the process name is
 `.fumon-wrapped` or `.Hyprland-wrapp` (truncated at 15 chars). `pgrep -x fumon`
-matches nothing in both the working and the broken state.
+matches nothing in both the working and the broken state. Confirmed live in
+spec 18's rehearsal, where `pgrep -x .Hyprland-wrapp` returned the compositor's
+pid and `pgrep -x Hyprland` returned nothing.
+
+**And the 15-character limit is `comm`'s, not Nix's, so `pgrep -x` fails on any
+long name.** `qemu-system-x86_64` is 18 characters and `pgrep -x
+qemu-system-x86_64` matches nothing, printing a warning that is easy to scroll
+past. Use the truncated form, `pgrep -x qemu-system-x86`, or `ps -eo comm`.
+
+**`pgrep -f` and `pkill -f` match the searching process's OWN command line.** A
+wait loop written `until ! pgrep -f 'qemu-system-x86_64.*disk.qcow2'; do sleep;
+done` never exits, because the shell running it has that string in its own
+`/proc/self/cmdline`. Worse, `pkill -f 'qemu-system-x86_64 -enable-kvm'` kills
+the shell that issued it — exit 144, and every command after it in the script
+silently never runs. Both were met in spec 18's rehearsal, and both are the same
+species as a guard that greps a file and matches its own prose. Match on the
+process name (`ps -eo comm | grep -cx <15-char name>`), which cannot self-match.
+
+**`nc -z` against a qemu user-mode forward is not a readiness check.** slirp
+accepts on the host side whether or not anything listens in the guest, so
+`nc -z 127.0.0.1 2222` succeeds while ssh reports
+`Connection timed out during banner exchange`. Probe the service, not the port.
+
+**`git restore`'s source, and `git checkout`'s.** `git restore --worktree
+<path>` restores from the **index**. Adding `--staged` changes the source to
+**HEAD**, so it discards every uncommitted change on that path rather than
+only the mutation this project's method requires you to revert. Measured on a
+scratch repository — committed v1, staged good v2, mutated to v3:
+
+```
+git restore --staged --worktree f.txt   → v1-committed         (the good work is gone)
+git restore --worktree f.txt            → v2-GOOD-uncommitted  (correct)
+```
+
+Two consequences: a file new to the current work is **deleted**, because HEAD
+has no such path — that destroyed a 232-line generated template on this
+branch; and uncommitted work in progress is destroyed, which destroyed an
+activation hook here and then read as the hook never having run. `git
+checkout <path>` is not the alternative: on a staged file it restores from the
+index, mutation included, and prints `Updated 0 paths from the index` while
+changing nothing. The rule: stage the good content, mutate, `git restore
+--worktree`, then **re-read the file** and confirm a count. Commit a task's
+real work before its mutation tests, so every revert is recoverable.
+
+**`dpkg -V` exits 0 whether or not it finds anything.** Measured on this
+machine:
+
+```
+dpkg -V greetd            → exit 0, and prints ??5?????? c /etc/greetd/config.toml
+dpkg -V calango-desktop   → exit 0, and prints nothing
+```
+
+So `if ! dpkg -V pkg; then` can never fire — the same shape as a check that
+cannot fail. Test the captured **output**, which is what `home/bootstrap.nix`'s
+drift hook does with `[ -n "$bad" ]`.
 
 ---
 
@@ -604,6 +692,24 @@ non-empty members (six `.wants` directories, every entry resolving), so the empt
 reported. Cosmetic, since an empty directory dangles nothing, but don't read
 either loop's silence as "no residue of any kind" — only as "no dangling
 *symlinks*".
+
+**A user unit that talks to a system service needs a CONDITION, not an
+`After`.** `home/services.nix`'s `bt-agent` named `bluetooth.service` in `After`
+for the whole life of this flake. That is a *system* unit and `bt-agent` is a
+*user* unit, so the ordering was never enforceable -- and naming it made the user
+manager carry a phantom `bluetooth.service not-found` entry that reads like a
+broken dependency. Nothing stopped the agent running where there was no
+`bluetoothd` either: on a machine with no Bluetooth adapter it restarted for
+ever, measured at 81 and climbing in spec 18's rehearsal VM, logging
+`bt-agent: bluez service is not found` each time. `Restart = "on-failure"` with
+`RestartSec = 2` spaces the retries wide enough to escape systemd's default
+start limit, so the loop never trips one.
+
+The gate is the condition Debian's own `bluetooth.service` uses on itself,
+`ConditionPathIsDirectory=/sys/class/bluetooth`, which skips the unit with an
+explanatory log line instead of looping. **suffer has an adapter, which is
+exactly why this was invisible here for eighteen specs** -- the class of bug only
+a second machine can show you.
 
 **Removing a package does not kill its running process.** Absence is only
 measurable after the session ends — check after the reboot, not before.
@@ -955,6 +1061,28 @@ quickshell owns `org.kde.StatusNotifierWatcher` and
 `org.kde.StatusNotifierHost-*` on the session bus. Check with
 `busctl --user list | /usr/bin/grep StatusNotifier` before assuming some other
 component is the host.
+
+**Two apt sources for one repository with different `Signed-By` values is an
+ERROR, and apt then reads NO sources at all.** Not a duplicate warning — the
+whole source list is refused:
+
+```
+   != /usr/share/keyrings/google-chrome.gpg
+E: The list of sources could not be read.
+```
+
+Measured in spec 18's rehearsal on a bare Debian 13.6. It matters because a
+vendor package writes its own source file from its `postinst` naming a keyring,
+while `home/bootstrap.nix` ships a bootstrap copy carrying an inline key, so the
+two collide the moment the vendor package installs. Every later apt command in
+that stage failed with exit 100.
+
+**And only two of the four vendors do it.** `google-chrome-stable` and
+`1password` write their own file; `code` and `endpoint-verification` ship none
+and write none, so deleting *their* bootstrap source leaves the package
+installed with no candidate version at all — the same position `slack-desktop`
+and `fresh-editor` are in. `calango.bootstrap.aptSourcesTransient` is the list
+of the two that must go, with an assertion tying each name to a real source.
 
 **`ufw` already has the integration point, so a `postinst` calling
 `ufw reload` is the wrong answer.**
@@ -1404,6 +1532,28 @@ for deliberate testing.
   never by scrubbing the session. Do not mount `/nix/store` into the sandbox
   either: a host mesa against the runtime's own glibc is worse than the
   fallback.
+
+  **The rule is broader than the sandbox, and spec 18 found that out. ANY
+  Debian-linked GL application launched from this session can break, with
+  `/nix/store` fully visible to it.** Debian's qemu, started from the session to
+  open a VM window:
+
+  ```
+  qemu: GtkGLArea console lacks DMABUF support.
+  epoxy_get_proc_address: Assertion `0 && "Couldn't find current GLX or EGL
+  context."' failed.  Aborted (core dumped)
+  ```
+
+  Nothing is sandboxed there. `__EGL_VENDOR_LIBRARY_FILENAMES` tells libglvnd to
+  use *only* Nix's mesa vendor JSON and `LD_LIBRARY_PATH` puts Nix's mesa first,
+  so Debian's GTK loads a Nix `libEGL` into a Debian process. The entry above
+  explains the flatpak case by the missing store path, which is true there and is
+  not the general mechanism. Same fix, spelled for a plain command:
+
+  ```sh
+  env -u LD_LIBRARY_PATH -u LIBGL_DRIVERS_PATH -u GBM_BACKENDS_PATH \
+      -u LIBVA_DRIVERS_PATH -u __EGL_VENDOR_LIBRARY_FILENAMES qemu-system-x86_64 …
+  ```
 
   **This flake never owned those overrides, deliberately.**
   `~/.local/share/flatpak/overrides/` held seven files on 2026-08-17, and

@@ -75,10 +75,15 @@ let
   # Prepended, not appended. The original reason was that apt's Hyprland,
   # hyprctl and hyprlock sat in /usr/bin and an appended path would let them
   # win. That premise expired with spec 5: none of those three exists any
-  # more, and /usr/share/wayland-sessions is not even a directory. Prepending
-  # stays because the guarantee is what matters -- this list is derived from
-  # the config and is meant to be the answer, not a suggestion ranked below
-  # whatever a future apt package happens to install.
+  # more. (An earlier version of this comment also said
+  # /usr/share/wayland-sessions was not even a directory -- true when
+  # written, false since the bare-Debian bootstrap work: the directory
+  # exists again and `calango-desktop` owns `hyprland-nix.desktop` inside it,
+  # per `dpkg -S`. That is our own entry, not a revival of apt's Hyprland, so
+  # it does not reopen this argument.) Prepending stays because the
+  # guarantee is what matters -- this list is derived from the config and is
+  # meant to be the answer, not a suggestion ranked below whatever a future
+  # apt package happens to install.
   #
   # No QS_CONFIG_PATH here any more, and its absence is deliberate.
   #
@@ -152,12 +157,19 @@ in
   # /usr/share, not /usr/local/share: Debian policy forbids a package writing
   # to /usr/local, and /etc/greetd/config.toml passes
   # --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions,
-  # so greetd searches both. /usr/share/wayland-sessions does not currently
-  # exist.
+  # so greetd searches both. /usr/share/wayland-sessions is where this entry
+  # lands and /usr/local/share/wayland-sessions is empty as of spec 16, when
+  # the hand-installed copy was deleted after a confirmed login.
   #
-  # This does NOT remove the existing /usr/local copy. Until someone does,
-  # tuigreet shows two identical entries -- cosmetic and visible, against the
-  # alternative of a login path that depends on an untested file.
+  # bootstrap/greetd-config.toml's command= line must name the directory this
+  # path sits in, and home/bootstrap.nix asserts exactly that at build time.
+  #
+  # The order mattered: ship this entry, confirm a login through it, THEN
+  # delete the old one -- never delete first, since this is the one artifact
+  # here that can leave a machine with no way to reach a desktop. While both
+  # copies existed, tuigreet showed two identical entries, accepted as
+  # cosmetic against the alternative of betting the login path on a file
+  # nobody had logged in through yet.
   #
   # It names no /nix/store path, deliberately and verifiably: it reaches Nix
   # through $HOME/.nix-profile. home/deb.nix's noStorePaths guard fails the

@@ -1,3 +1,13 @@
+-- NOT A TARGET OF THIS FLAKE. epiphany runs Fedora Linux 44 (Workstation
+-- Edition), so it has no apt, no dpkg and no use for calango-desktop. Spec 18
+-- named it as the worked example for a Debian 13 bootstrap before that was
+-- checked; see docs/superpowers/specs/2026-08-19-bare-debian-bootstrap-design.md.
+--
+-- The file stays because the two-display layout below is a real measurement
+-- that is expensive to recover, and because hyprland.lua's hosts/ mechanism
+-- came from this machine. Do not copy it as a template for a new Debian host;
+-- copy hosts/suffer.lua.
+
 -- epiphany: the desktop. Two displays, side by side.
 --
 -- Loaded by hyprland.lua when /etc/hostname matches this file's name. Nothing
