@@ -159,9 +159,12 @@ in
   # bootstrap/greetd-config.toml's command= line must name the directory this
   # path sits in, and home/bootstrap.nix asserts exactly that at build time.
   #
-  # This does NOT remove the existing /usr/local copy. Until someone does,
-  # tuigreet shows two identical entries -- cosmetic and visible, against the
-  # alternative of a login path that depends on an untested file.
+  # The order mattered: ship this entry, confirm a login through it, THEN
+  # delete the old one -- never delete first, since this is the one artifact
+  # here that can leave a machine with no way to reach a desktop. While both
+  # copies existed, tuigreet showed two identical entries, accepted as
+  # cosmetic against the alternative of betting the login path on a file
+  # nobody had logged in through yet.
   #
   # It names no /nix/store path, deliberately and verifiably: it reaches Nix
   # through $HOME/.nix-profile. home/deb.nix's noStorePaths guard fails the
