@@ -159,7 +159,7 @@ let
   #
   # This gives up ONE property substituteInPlace --replace-fail provided --
   # that the token exists -- because replaceStrings silently does nothing for an
-  # absent token. requireToken restores it, and it throws at evaluation rather
+  # absent token. requireTokenIn restores it, and it throws at evaluation rather
   # than at build.
   #
   # home/hyprland.nix and home/gtk.nix use substituteInPlace, so this is a
@@ -547,6 +547,20 @@ in
         would not be in the list. Either add the directory to the command=
         line in bootstrap/greetd-config.toml, or ship the entry into a
         directory already named there.
+      '';
+    }
+    {
+      # Without this, an empty packages.base renders `d-i pkgsel/include string`
+      # with nothing after it. The preseed would install a bare Debian, the
+      # install would succeed, and Stage A's absence would make the omission
+      # silent -- which is the one failure mode the loud pkgsel behaviour does
+      # NOT protect against, because there is no name for it to fail on.
+      assertion = cfg.packages.base != { };
+      message = ''
+        calango.bootstrap.packages.base is empty, so the generated preseed's
+        pkgsel/include line would name no packages and the runbook's Stage A
+        would install none. The install would still succeed, which is what
+        makes this worth an assertion rather than a gate.
       '';
     }
   ];

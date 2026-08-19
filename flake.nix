@@ -533,6 +533,47 @@
             fi
             touch "$out"
           '';
+
+        # The rendered preseed's pkgsel/include line must name exactly the
+        # packages.base keys.
+        #
+        # Both sides come from one option, so they cannot diverge on their own.
+        # The guard's real job is a hand-edit of bootstrap/preseed.cfg.in -- the
+        # moment someone types a package name into the template instead of the
+        # module, the file stops being generated and starts being a copy that
+        # drifts.
+        preseed-package-list =
+          let
+            declared = builtins.attrNames
+              suffer.config.calango.bootstrap.packages.base;
+          in
+          pkgs.runCommand "preseed-package-list" { } ''
+            f=${suffer.config.calango.bootstrapDir}/preseed.cfg
+
+            # The vacuity anchor. Without it, a preseed that had lost the line
+            # entirely would compare an empty list against an empty list.
+            if ! grep -q '^d-i pkgsel/include string ' "$f"; then
+              echo "The preseed has no pkgsel/include line at all." >&2
+              echo "  This check would then compare nothing with nothing." >&2
+              exit 1
+            fi
+
+            sed -n 's|^d-i pkgsel/include string ||p' "$f" | tr ' ' '\n' \
+              | grep -v '^$' | sort > rendered
+            printf '%s\n' ${lib.escapeShellArgs declared} | sort > declared
+
+            if ! diff -u declared rendered; then
+              echo "" >&2
+              echo "The preseed's pkgsel/include line does not match" >&2
+              echo "  calango.bootstrap.packages.base. Left is the option," >&2
+              echo "  right is the rendered file. Do not fix this by editing" >&2
+              echo "  bootstrap/preseed.cfg.in -- the line is generated, and a" >&2
+              echo "  name typed into the template is a copy that will drift." >&2
+              exit 1
+            fi
+            echo "ok  $(wc -l < declared) package(s) agree"
+            touch "$out"
+          '';
       };
     };
 }
