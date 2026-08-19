@@ -73,10 +73,20 @@ popularity-contest popularity-contest/participate boolean false
 # empty password -- and that branch is where spec 18's rehearsal found two
 # missing packages.
 #
-# in-target runs inside the installed system, after pkgsel, so nix-users is
-# EXPECTED to exist by then: it is created by nix-setup-systemd's postinst,
-# which pkgsel has already run. That ordering is reasoned, not measured --
-# nobody has traced late_command's execution against the postinst here -- so
-# treat it as unproven. Gate A is what would catch a disagreement, and it
-# stays in the runbook for exactly that reason.
+# in-target runs inside the installed system, after pkgsel, so nix-users exists
+# by then: it is created by nix-setup-systemd's postinst, which pkgsel has
+# already run. That was reasoned rather than traced until spec 19's rehearsal
+# traced it, in the installer's own /var/log/installer/syslog, 19 seconds apart:
+#
+#   20:00:04 groupadd[30572]: new group: name=nix-users, GID=989
+#   20:00:24 preseed: running preseed command preseed/late_command: in-target
+#            usermod -aG nix-users,video,input,sudo isutton
+#   20:00:24 usermod[5560]: add 'isutton' to group 'nix-users'
+#
+# Note usermod -aG is all-or-nothing: had the group been missing, the account
+# would hold NONE of these, not all but one, so Stage C could not run sudo at
+# all. Gate A is what catches that, and it stays in the runbook for that reason
+# -- but read its group count with care. user-setup adds video to the first
+# account by itself (one usermod per group, pids 5439..5487 in that same log),
+# so only input, nix-users and sudo are this line's work.
 d-i preseed/late_command string in-target usermod -aG @groupsWithSudo@ @username@

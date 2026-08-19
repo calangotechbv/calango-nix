@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Eighteen specs are done and written up in
+standalone Home Manager. Nineteen specs are done and written up in
 `docs/*results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -180,6 +180,24 @@ package. That is why the generated preseed carries no gate of its own for the
 package list — and why `calango.bootstrap.packages.base` needs a vacuity anchor
 instead: an EMPTY list renders a `pkgsel/include` line with no names, which
 installs successfully and fails nothing.
+
+**A long preseed on the kernel command line panics the kernel, and the panic
+names the argument.** The kernel hands unrecognised `key=value` cmdline
+arguments to init as environment variables and caps how many it will take.
+Measured in spec 19's rehearsal, standing in for a human with 30 preseed answers
+on the boot line:
+
+```
+Kernel panic - not syncing: Too many boot env vars at `apt-setup/cdrom/set-first=false'
+```
+
+The install never started and the serial log stopped at 11543 bytes, which reads
+exactly like a boot that hung. Nothing warns as the list grows. The answer is an
+**initrd preseed** -- append a cpio holding `/preseed.cfg` to `initrd.gz`; d-i
+loads it before it asks anything, then still fetches `url=` and applies that
+too, so a generated file can be tested verbatim with the scaffolding held
+separately. `.#calangoBootstrap`'s own boot line carries two arguments and is
+nowhere near the cap.
 
 **Package versions.** `nixpkgs#<pkg>` reads the flake *registry*
 (nixpkgs-unstable), not this flake's pinned input. They differ:
@@ -1938,6 +1956,22 @@ the wrong thing, spec 10's looked in the wrong place, and spec 11's found the
 right string in the wrong role. All three passed. All three were caught by
 mutation or by a reviewer, never by the check itself — which is the argument for
 mutating every guard rather than only the ones that look risky.
+
+**A stage can be "rehearsed end to end" and still contain a command nobody
+ran.** Spec 18 recorded its Stage B as rehearsed; spec 19's rehearsal ran the
+actual line and it cannot work -- the repository is not anonymously readable, so
+`git clone https://…` prompts for a credential the runbook never mentioned:
+
+```sh
+GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/calangotechbv/calango-nix.git HEAD
+# fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+Spec 18 missed it because its VM got the tree off the 9p share -- its own Stage B
+log shows `git init` output, not a clone. The harness deviation that made the
+rehearsal convenient is exactly what the rehearsal was meant to test. When a
+result says a stage passed, ask which commands actually executed; a deviation
+recorded honestly in a README is still a command not run.
 
 The deeper pattern is not laziness. In every one of these cases a real command
 was run and real output was read; the error was in the *conclusion drawn
