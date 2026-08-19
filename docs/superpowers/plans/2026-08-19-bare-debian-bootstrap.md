@@ -60,38 +60,42 @@ this section.
   fails with `path … does not exist` — which reads like a typo in the path
   rather than like a staging problem. Found by Task 1's implementer on its
   first build. This binds Tasks 2, 3 and 5, each of which creates files.
-- **Revert a mutation with `git restore --worktree <path>`, and never `git add`
-  between mutating and reverting.** This entry has now been wrong twice, so it
-  states the three measured cases rather than a rule of thumb. `git restore
-  --worktree` restores the working tree **from the index**, which is the last
-  content you staged — correct for a file this task created and for a file that
-  already existed, provided the good version is what got staged.
+- **Revert a mutation with `git restore --worktree <path>`. Never add `--staged`,
+  and never use `git checkout`.** This entry was written three times as a list of
+  cases before anyone looked up the mechanism, so it now states the mechanism and
+  the cases follow from it.
+
+  **`git restore`'s `--source` decides everything, and `--staged` silently changes
+  it.** With `--worktree` alone the source is the **index** — your last `git add`.
+  Add `--staged` and the source becomes **HEAD**, so the command discards every
+  uncommitted change on that path, not only your mutation. Measured:
 
   ```sh
-  # (1) tracked file, mutation NOT staged
-  git checkout f.txt            # works, but see (2) -- prefer git restore --worktree
-
-  # (2) tracked file, mutation IS staged: git checkout restores from the INDEX,
-  #     which still holds the mutation, and reports success
-  printf 'MUTATED\n' > f.txt && git add f.txt
-  git checkout f.txt            # "Updated 0 paths from the index"
-  cat f.txt                     # MUTATED   <- silent no-op
-  git restore --staged --worktree f.txt   # recovers it
-
-  # (3) file NEW in this task, staged good, then mutated: --staged restores the
-  #     index from HEAD, where the path does not exist, so the file is DELETED
-  git restore --staged --worktree new.txt ; ls new.txt   # No such file
-  git restore --worktree new.txt                          # GOOD -- correct
+  # committed v1; staged good v2; mutated to v3 in the worktree
+  git restore --staged --worktree f.txt   # v1-committed        <- good work GONE
+  git restore --worktree f.txt            # v2-GOOD-uncommitted <- correct
   ```
 
-  Case 3 destroyed `bootstrap/runbook.md.in` in Task 3 and cost a hand-recreation
-  of a 232-line file. Case 2 is why `git checkout` is not the answer either.
+  Every trap this plan hit is that one fact:
+
+  | situation | `--staged --worktree` does | why |
+  |---|---|---|
+  | file new in this task | **deletes it** | HEAD has no such path |
+  | good work staged, not yet committed | **destroys the good work** | HEAD holds the older version |
+  | mutation staged over good work | recovers the committed version only | HEAD again |
+
+  `git checkout <path>` is not the answer either: on a staged file it restores
+  from the index, which still holds the mutation, and reports
+  `Updated 0 paths from the index` while changing nothing.
+
+  Case 1 destroyed `bootstrap/runbook.md.in` in Task 3 and cost a hand-recreation
+  of 232 lines. Case 2 destroyed the whole activation hook in Task 4, which then
+  read as the hook never having run.
 
   So: **stage the good content, mutate, `git restore --worktree`, then re-read the
-  file and confirm the count the step gives.** Do not stage a mutation — for a
-  file new in this task, nothing recovers it and you must rewrite it from the
-  brief. A revert that reports success can still have changed nothing, or have
-  deleted the file.
+  file and confirm the count the step gives.** Commit a task's real work before
+  running its mutation tests where you can — a committed baseline makes every
+  revert recoverable. Never `git add` between mutating and reverting.
 - **Tasks 2 and 3 add keys to option paths Task 1 already opened, and that is
   legal.** Nix merges distinct leaves under a shared prefix, so
   `options.calango.bootstrap = { greetdConfig = …; }` beside
@@ -469,7 +473,7 @@ guard.** Read the message before accepting it.
 Revert:
 
 ```sh
-git restore --staged --worktree home/session.nix
+git restore --worktree home/session.nix
 /usr/bin/grep -c 'calango.deb.files."usr/share/wayland-sessions/' home/session.nix   # 1
 ```
 
@@ -892,7 +896,7 @@ Expected: **both** fail, with the message about a file under `etc/` naming the
 Nix store. Revert:
 
 ```sh
-git restore --staged --worktree bootstrap/greetd-config.toml
+git restore --worktree bootstrap/greetd-config.toml
 diff <(/usr/bin/grep -E '^(command|user) =' /etc/greetd/config.toml) \
      <(/usr/bin/grep -E '^(command|user) =' bootstrap/greetd-config.toml)
 ```
@@ -1547,7 +1551,7 @@ id -nG | tr ' ' '\n' | /usr/bin/grep -cx nosuchgroup     # 0, the user does not 
 sed -i 's|groups = \[ "nix-users" "video" "input" \];|groups = [ "nix-users" "video" "input" "nosuchgroup" ];|' home/bootstrap.nix
 /usr/bin/grep -c 'nosuchgroup' home/bootstrap.nix        # 1
 sg nix-users -c 'home-manager switch --flake .#isutton@suffer' 2>&1 | /usr/bin/grep 'bootstrap:'
-git restore --staged --worktree home/bootstrap.nix
+git restore --worktree home/bootstrap.nix
 ```
 
 Expected: `bootstrap: not in group nosuchgroup.` and the `usermod` command,
@@ -1561,7 +1565,7 @@ the group mutation, which is the cheapest of the three:
 ```sh
 sed -i 's|"input" \];|"input" "nosuchgroup" ];|' home/bootstrap.nix
 sg nix-users -c 'home-manager switch --flake .#isutton@suffer' >/dev/null 2>&1; echo "exit=$?"
-git restore --staged --worktree home/bootstrap.nix
+git restore --worktree home/bootstrap.nix
 ```
 
 Expected: `exit=0`. A hook that reports and then aborts the switch is not the
@@ -1734,7 +1738,7 @@ sg nix-users -c 'nix build --no-link .#checks.x86_64-linux.host-config-files' 2>
 sed -i 's|"isutton@suffer" = suffer;|# "isutton@suffer" = suffer;|' flake.nix
 /usr/bin/grep -c '# "isutton@suffer" = suffer;' flake.nix    # 1
 sg nix-users -c 'nix build --no-link .#checks.x86_64-linux.host-config-files' 2>&1 | tail -6
-git restore --staged --worktree flake.nix
+git restore --worktree flake.nix
 ```
 
 Expected: the build fails saying `hostConfigs is empty`. Note this also breaks
