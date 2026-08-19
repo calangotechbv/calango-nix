@@ -173,7 +173,14 @@
         "isutton@suffer" = suffer;
       };
 
-      packages.${system}.calangoDeb = suffer.config.calango.debPackage;
+      # Both attrs share the ${system} key. Nix's merge checker only compares
+      # statically-known attribute names, so two separate
+      # `packages.${system}.x = ...;` bindings collide as "already defined"
+      # rather than merging -- combined into one binding instead.
+      packages.${system} = {
+        calangoDeb = suffer.config.calango.debPackage;
+        calangoBootstrap = suffer.config.calango.bootstrapDir;
+      };
 
       # Every xdg.configFile/xdg.dataFile ".source" in home/portals.nix,
       # home/audio.nix and home/uwsm.nix is a bare string pointing into a

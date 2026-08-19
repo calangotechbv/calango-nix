@@ -63,6 +63,79 @@ let
   );
 
   missingSessionDirs = lib.subtractLists sessionsArg sessionDirs;
+
+  greetdFile = pkgs.writeText "greetd-config.toml" cfg.greetdConfig;
+
+  # deb822 continuation: every line of the armored block gets one leading
+  # space, and an empty line becomes " .". Documented in `man 5 sources.list`,
+  # which is the authority used here -- no apt version floor is claimed,
+  # because none was measured. apt on suffer is 3.0.3.
+  indentKey =
+    key:
+    lib.concatMapStrings (l: (if l == "" then " ." else " " + l) + "\n") (
+      lib.splitString "\n" (lib.removeSuffix "\n" key)
+    );
+
+  keyFile = name: builtins.readFile (./../bootstrap/keys + "/${name}.asc");
+
+  stanza =
+    {
+      uris,
+      suites,
+      key,
+      components ? "main",
+      architectures ? "amd64",
+    }:
+    ''
+      Types: deb
+      URIs: ${uris}
+      Suites: ${suites}
+      Components: ${components}
+      Architectures: ${architectures}
+      Signed-By:
+    ''
+    + indentKey (keyFile key);
+
+  # A root-owned file must never name the Nix store: if the path is collected
+  # the file points at nothing, and unlike everything else here that failure is
+  # not recoverable from a running desktop. home/deb.nix's noStorePaths guards
+  # the .deb manifest for the same reason.
+  #
+  # Scoped to etc/ deliberately. RUNBOOK.md is not root-owned and must name the
+  # built directory to be useful; Task 3 has it use a shell variable anyway.
+  #
+  # The needle is built by concatenation, as home/deb.nix's is, because written
+  # plainly this builder's own source contains it and the guard fails forever.
+  noStorePathsInEtc =
+    pkgs.runCommand "calango-bootstrap-no-store-paths"
+      {
+        inherit bootstrapTree;
+        needle = "/nix" + "/store";
+      }
+      ''
+        # A condition, not a bare command: a builder runs with errexit and a
+        # grep matching nothing exits 1, which here is the PASSING case.
+        if grep -rn -F -- "$needle" "$bootstrapTree/etc" >&2; then
+          echo "" >&2
+          echo "A file under etc/ names the Nix store." >&2
+          echo "  These files are installed with root and outlive any" >&2
+          echo "  generation. When the store path is collected the file" >&2
+          echo "  points at nothing, and for /etc/greetd/config.toml that" >&2
+          echo "  means no login." >&2
+          exit 1
+        fi
+        touch "$out"
+      '';
+
+  bootstrapTree = pkgs.runCommand "calango-bootstrap-tree" { } ''
+    mkdir -p "$out/etc/greetd" "$out/etc/apt/sources.list.d"
+    cp ${greetdFile} "$out/etc/greetd/config.toml"
+    ${lib.concatStrings (
+      lib.mapAttrsToList (n: v: ''
+        cp ${pkgs.writeText "apt-source-${n}" v} "$out/etc/apt/sources.list.d/${n}"
+      '') cfg.aptSources
+    )}
+  '';
 in
 {
   options.calango.bootstrap = {
@@ -75,6 +148,17 @@ in
       default = [ ];
       description = "Unix groups the desktop account must hold.";
     };
+    aptSources = lib.mkOption {
+      type = lib.types.attrsOf lib.types.lines;
+      default = { };
+      description = "File name under /etc/apt/sources.list.d -> deb822 content.";
+    };
+  };
+
+  options.calango.bootstrapDir = lib.mkOption {
+    type = lib.types.package;
+    readOnly = true;
+    description = "The rendered root-owned tree. flake.nix exposes it.";
   };
 
   config.calango.bootstrap = {
@@ -87,7 +171,50 @@ in
     # unnecessary: `id` on the working account shows video, input and nix-users
     # and no render.
     groups = [ "nix-users" "video" "input" ];
+
+    # SCAFFOLDING, not state. Named calango-bootstrap-* so they are unambiguous
+    # to delete once the vendor packages own their own copies -- the same trick
+    # home/syncthing.nix used to sidestep a conffile handover.
+    #
+    # Four repositories, not five: 1password and 1password-cli share one. This
+    # was miscounted twice during design before it was derived.
+    aptSources = {
+      "calango-bootstrap-google-chrome.sources" = stanza {
+        uris = "https://dl.google.com/linux/chrome-stable/deb/";
+        suites = "stable";
+        key = "google-chrome";
+      };
+      "calango-bootstrap-microsoft.sources" = stanza {
+        uris = "https://packages.microsoft.com/repos/code";
+        suites = "stable";
+        key = "microsoft";
+      };
+      "calango-bootstrap-1password.sources" = stanza {
+        uris = "https://downloads.1password.com/linux/debian/amd64";
+        suites = "stable";
+        key = "1password";
+      };
+      # The only live source still in the one-line format
+      # (endpoint-verification.list), and the only key under /etc/apt/keyrings
+      # rather than /usr/share/keyrings. Both are normalised here.
+      "calango-bootstrap-google-cloud.sources" = stanza {
+        uris = "https://packages.cloud.google.com/apt";
+        suites = "endpoint-verification";
+        key = "google-cloud";
+      };
+    };
   };
+
+  # The guard rides as an INPUT of the exposed directory, not merely as a
+  # sibling in home.packages. `nix build .#calangoBootstrap` never evaluates
+  # home.packages -- spec 16 shipped exactly that mistake with the .deb's own
+  # store-path guard, which protected the activation path and left the
+  # installable artifact unguarded.
+  config.calango.bootstrapDir = pkgs.runCommand "calango-bootstrap"
+    { inherit bootstrapTree noStorePathsInEtc; } ''
+      cp -r "$bootstrapTree" "$out"
+      chmod -R u+w "$out"
+    '';
 
   config.assertions = [
     {
@@ -144,7 +271,7 @@ in
     }
   ];
 
-  # No home.packages entry in this task, deliberately -- see the NOTE at the top
-  # of the let block. Task 2 adds `config.home.packages = [ bootstrapDir ]`, a
-  # directory, which buildEnv accepts.
+  # Rides in home.packages as well, so the guard runs on every generation
+  # build and not only under `nix build .#calangoBootstrap`.
+  config.home.packages = [ config.calango.bootstrapDir ];
 }
