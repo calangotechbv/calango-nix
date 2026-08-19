@@ -187,22 +187,30 @@ live in 1Password's agent — which Stage C installs, *after* this clone has
 already had to happen. There is no order in which the `git@` remote works here.
 Switch the remote to ssh later if you want to push from this machine.
 
-**This repository is not anonymously readable, so have a credential ready
-before you run the clone.** Measured from a machine that had just finished
-Stage 0, and again from suffer:
+The clone needs **no credential**, because the repository is public. Check that
+rather than assume it, because it has not always been: spec 19's rehearsal ran
+this line on a freshly-installed machine while the repository was still private
+and got
 
-```sh
-GIT_TERMINAL_PROMPT=0 git ls-remote @repoUrl@ HEAD
-# fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
 ```
 
-That is what a private repository looks like to an unauthenticated client, and
-it does not change the paragraph above — it sharpens it. A **token** can be
-typed at the prompt `git` puts up, on a machine with nothing installed on it
-yet; an ssh key cannot be conjured the same way, because the key this project
-uses lives in an agent Stage C has not installed. So https is still the only
-transport with a working order, and the credential is a personal access token
-with read access, entered when `git clone` asks.
+which is what a private repository looks like to an unauthenticated client. It
+was made public immediately afterwards. The one-line check, with the credential
+helper disabled so a cached login on your own machine cannot answer for a bare
+one:
+
+```sh
+GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote @repoUrl@ HEAD
+```
+
+A hash means the clone below will work on a machine with nothing on it. A
+prompt or a `could not read Username` means visibility changed back, and then
+you need a read-scoped **token**, typed at git's own prompt — which is also why
+the paragraph above is about ordering rather than preference: a token can be
+typed on a bare machine, and the ssh key this project uses cannot be conjured
+before Stage C installs the agent holding it.
 
 **The remote also has to be current.** A clone of a branch that predates this
 document produces a tree with no `home/bootstrap.nix` in it, and therefore no
