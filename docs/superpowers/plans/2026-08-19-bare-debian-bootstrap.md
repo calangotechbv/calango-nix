@@ -60,29 +60,38 @@ this section.
   fails with `path … does not exist` — which reads like a typo in the path
   rather than like a staging problem. Found by Task 1's implementer on its
   first build. This binds Tasks 2, 3 and 5, each of which creates files.
-- **Revert a mutation with `git restore --staged --worktree <path>`, never with
-  `git checkout <path>`.** The constraint above makes this one load-bearing:
-  once a file is staged, `git checkout` restores it from the **index**, which
-  still holds the mutation, and reports success while changing nothing.
-  Measured on a scratch repository:
+- **Revert a mutation with `git restore --worktree <path>`, and never `git add`
+  between mutating and reverting.** This entry has now been wrong twice, so it
+  states the three measured cases rather than a rule of thumb. `git restore
+  --worktree` restores the working tree **from the index**, which is the last
+  content you staged — correct for a file this task created and for a file that
+  already existed, provided the good version is what got staged.
 
   ```sh
+  # (1) tracked file, mutation NOT staged
+  git checkout f.txt            # works, but see (2) -- prefer git restore --worktree
+
+  # (2) tracked file, mutation IS staged: git checkout restores from the INDEX,
+  #     which still holds the mutation, and reports success
   printf 'MUTATED\n' > f.txt && git add f.txt
-  git checkout f.txt                      # "Updated 0 paths from the index"
-  cat f.txt                               # MUTATED   <- revert silently no-op
-  git restore --staged --worktree f.txt
-  cat f.txt                               # original
+  git checkout f.txt            # "Updated 0 paths from the index"
+  cat f.txt                     # MUTATED   <- silent no-op
+  git restore --staged --worktree f.txt   # recovers it
+
+  # (3) file NEW in this task, staged good, then mutated: --staged restores the
+  #     index from HEAD, where the path does not exist, so the file is DELETED
+  git restore --staged --worktree new.txt ; ls new.txt   # No such file
+  git restore --worktree new.txt                          # GOOD -- correct
   ```
 
-  This is a silent-corruption path, not a cosmetic one: the failed revert
-  leaves the mutation in the tree, the next build measures the mutated tree,
-  and the mutation can reach the commit. Task 2's implementer hit it and
-  recovered by re-reading the file's contents rather than trusting the command.
-  **After every revert in this plan, re-read the file and confirm the count the
-  step gives.** Every revert step below already spells
-  `git restore --staged --worktree`; the point of this entry is that the
-  confirmation matters even so, because a revert that reports success can still
-  have changed nothing.
+  Case 3 destroyed `bootstrap/runbook.md.in` in Task 3 and cost a hand-recreation
+  of a 232-line file. Case 2 is why `git checkout` is not the answer either.
+
+  So: **stage the good content, mutate, `git restore --worktree`, then re-read the
+  file and confirm the count the step gives.** Do not stage a mutation — for a
+  file new in this task, nothing recovers it and you must rewrite it from the
+  brief. A revert that reports success can still have changed nothing, or have
+  deleted the file.
 - **Tasks 2 and 3 add keys to option paths Task 1 already opened, and that is
   legal.** Nix merges distinct leaves under a shared prefix, so
   `options.calango.bootstrap = { greetdConfig = …; }` beside
@@ -474,13 +483,13 @@ printf '' > /tmp/empty-greetd.toml
 sed -i 's|builtins.readFile ./../bootstrap/greetd-config.toml|""|' home/bootstrap.nix
 /usr/bin/grep -c 'greetdConfig = "";' home/bootstrap.nix          # 1
 sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | tail -8
-git restore --staged --worktree home/bootstrap.nix
+git restore --worktree home/bootstrap.nix
 
 # groups
 sed -i 's|groups = \[ "nix-users" "video" "input" \];|groups = [ ];|' home/bootstrap.nix
 /usr/bin/grep -c 'groups = \[ \];' home/bootstrap.nix             # 1
 sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | tail -8
-git restore --staged --worktree home/bootstrap.nix
+git restore --worktree home/bootstrap.nix
 ```
 
 Expected: each build fails with that assertion's own message.
@@ -1356,7 +1365,7 @@ that nobody has read is a command nobody can run.
 sed -i 's|@groupsCount@|@groupsCount@ @nosuchtoken@|' bootstrap/runbook.md.in
 /usr/bin/grep -c '@nosuchtoken@' bootstrap/runbook.md.in     # 1
 sg nix-users -c 'nix build --no-link .#calangoBootstrap' 2>&1 | tail -6
-git restore --staged --worktree bootstrap/runbook.md.in
+git restore --worktree bootstrap/runbook.md.in
 /usr/bin/grep -c '@nosuchtoken@' bootstrap/runbook.md.in     # 0
 ```
 
@@ -1373,7 +1382,7 @@ value.
 sed -i 's|@groupsCount@||' bootstrap/runbook.md.in
 /usr/bin/grep -c '@groupsCount@' bootstrap/runbook.md.in     # 0
 sg nix-users -c 'nix build --no-link .#calangoBootstrap' 2>&1 | tail -6
-git restore --staged --worktree bootstrap/runbook.md.in
+git restore --worktree bootstrap/runbook.md.in
 /usr/bin/grep -c '@groupsCount@' bootstrap/runbook.md.in     # 1
 ```
 
