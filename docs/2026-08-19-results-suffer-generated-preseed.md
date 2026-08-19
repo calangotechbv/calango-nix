@@ -1,8 +1,11 @@
 # Spec 19 — a generated Debian preseed: results
 
-Branch `generated-preseed`, 13 commits. Four tasks, one whole-branch review, one
-fix wave, one scoped re-review, one controller fix, and one qemu rehearsal that
-found the branch's only defect in a live machine.
+Branch `generated-preseed`, merged to `main` at `135d4d0`, and three commits
+after it that this document's own second rehearsal produced. Four tasks, one
+whole-branch review, one fix wave, one scoped re-review, one controller fix, and
+**two** qemu rehearsals — the first proving Stage 0, the second running the
+whole runbook and finding three defects in it. Count the commits rather than
+quoting a number here: `git log --oneline b356777..HEAD | wc -l`.
 
 Nothing here was applied to suffer. The artifact is a file that drives an
 installer on hardware that does not exist yet, so its verification is a VM.
@@ -71,7 +74,11 @@ All six predictions written before the run held. Full text in
 | 4 | `late_command`'s ordering is now **measured**, not reasoned | product, resolved |
 | 5 | one of Gate A's three counted groups is added by the installer anyway | product, accepted |
 | 6 | **Stage B's clone cannot work as written, and had never been run** | product, fixed |
-| 7 | `origin/main` is 33 commits behind and cannot serve this runbook | owner's call |
+| 7 | `origin/main` is 33 commits behind and cannot serve this runbook | owner's call, done |
+| 8 | **`code`'s postinst asks a debconf question**, against "dpkg asks nothing" | product, fixed |
+| 9 | **`./bin/slack-latest` cannot work where Stage C invokes it** | product, fixed |
+| 10 | Gate C's four lines joined with `&&` read as a failed gate | method |
+| 11 | a redirected step makes a prompt invisible *and* unanswerable | harness |
 
 Finding 1, in full, because it fails in a way that reads as a hung boot:
 
@@ -133,13 +140,85 @@ initial branch" — so that tree came off the 9p share rather than the network.
 The clone line had never been executed in a rehearsal. A stage can be "rehearsed
 end to end" and still contain a command nobody has run.
 
+## The second rehearsal — the whole runbook, no 9p share, no ssh
+
+Findings 6 and 7 were cleared by fixing them: the repository was made public and
+`main` was pushed, so `origin/main` carries `bootstrap/` and `home/bootstrap.nix`.
+A second machine was installed from the merged tree and driven through every
+stage over the serial console — **no 9p share and no ssh**, because the share is
+exactly the deviation that hid finding 6 for a whole spec.
+
+| stage | result |
+|---|---|
+| Stage 0 | clean install, **145 s**, no failed step, no dialog |
+| Gate A | `active`, `3`, `1`, 12 of 12 `ii`, `nix-users:x:989:isutton`, 0 failed units |
+| Stage B | **the clone ran for the first time in this project's history** — anonymous https, landing `135d4d0` with `bootstrap/` and `home/bootstrap.nix` present |
+| Gate B | `running 6 flake checks`; `.#calangoBootstrap` = `vr09fy4d…`, **the same store path suffer builds**; `all 4 source(s) verified` |
+| Stage C | five corp packages from their real repositories, Slack 4.51.180 from its own feed, the metapackage as `0.0+dirty20260819201602` |
+| Gate C | `ii calango-desktop`, `0`, `present`, `greetd-ok` |
+| Stage D | first `activate` clean; `uwsm-present`, **0 failed user units**, `home-manager` off `PATH` and `26.05-pre` by full path |
+| Gate D | **not run** — its last two lines read `loginctl` and Hyprland's own `/proc/<pid>/environ`, so they need a human at tuigreet |
+
+Four of the document's own claims were confirmed on a machine that had nothing
+on it that morning, which is worth as much as the defects:
+
+- **the `Signed-By` collision is real and the deletion is the cure.** Before it,
+  `apt update` gave `!= /usr/share/keyrings/google-chrome.gpg` and
+  `Error: The list of sources could not be read.`; after it, seven sources
+  fetched and all five packages `ii`. `code` and `endpoint-verification` kept
+  their candidate versions, which is why their bootstrap files must stay.
+- **the ufw trigger needs no maintainer script.** `Processing triggers for ufw`
+  fired on install and `/etc/ufw/applications.d/calango` landed. `dpkg -L
+  calango-desktop` is exactly four files.
+- **nothing prompted about `/etc/default/slack`**, and
+  `find /etc -name '*.dpkg-*' -o -name '*.ucf-*'` finds nothing afterwards.
+- **`home-manager` really is off `PATH` after the first activate**, exactly as
+  Stage D says.
+
+### The three defects it found
+
+**Finding 8.** `code`'s postinst asks `code/add-microsoft-repo` at `db_input
+high`, against the runbook's "On a bare machine dpkg asks **nothing** during any
+of this". Either answer is safe — `has_existing_repo_source` sees
+`calango-bootstrap-microsoft.sources` and suppresses the source write, so only
+`/usr/share/keyrings/microsoft.gpg` differs — but the stage stops until someone
+answers. That check runs *after* the question, so having the file cannot
+suppress the prompt.
+
+**Finding 9.** Stage C said to run `./bin/slack-latest`. In the clone that file
+is a template with 6 unsubstituted tokens and exits 1; the substituted copy
+appears in `~/.nix-profile/bin` only after Stage D. Measured at exactly that
+point: `slack-latest is NOT on PATH`. This is an ordering contradiction rather
+than a typo — `slack-desktop` is a hard `Depends` of `calango-desktop`, so Slack
+must be installed before the metapackage, which is before Stage D. Stage C now
+queries Slack's feed directly.
+
+**Finding 10.** Gate C's four lines, joined with `&&`, abort at line 2:
+`apt-get -s autoremove | grep -c '^Remv '` prints `0` and **exits 1**. That read
+as a failed gate. The runbook prints them separately for this reason and now
+says so out loud. The trap is documented in `CLAUDE.md`; the harness introduced
+it anyway.
+
+**Finding 11 is the harness's, and it cost the most time.** Each step's output
+went to a file inside the guest so 115200 baud would not be the bottleneck —
+which made finding 8's dialog both invisible and unanswerable. The VM sat at 3%
+CPU with a silent console for ten minutes. Three compounding errors of the same
+kind: the logs went to `/tmp`, which is cleared on boot, so rebooting to
+investigate destroyed them; the driver ran without `python3 -u`, so its own
+output stayed buffered at zero bytes; and **apt runs maintainer scripts under a
+pty**, so redirecting apt's output does not make them non-interactive in the
+first place. Recovered from `/var/log/apt/term.log`, which persists.
+
 ## What is not verified
 
-Stages B to E were not re-run. They are unchanged by this branch, they were
-rehearsed for spec 18 from a machine in the state Gate A now certifies, and
-running them here would need the credential of finding 6 or the 9p deviation
-that hid it. Getting past Stage B on a real new machine needs a push (finding 7)
-and a token.
+**Gate D's last two lines**, which need a graphical login. Everything up to and
+including Stage D's first `activate` is verified on a machine built from the
+merged tree.
+
+`fresh-editor` was installed from a file served by the host rather than fetched
+upstream — the one declared deviation in this run, and out of scope by decision.
+It has since left `home/deb.nix`'s `keep` and
+`calango.bootstrap.packages.corp` entirely, taking the keep set 22 → 21.
 
 ## Reproducing it
 
@@ -150,4 +229,6 @@ and a token.
 ```
 
 `~/vm/spec19-rehearsal/README.md` says which files are the product and which are
-scaffolding; `FINDINGS.md` there is the long form of the table above.
+scaffolding; `FINDINGS.md` there is the long form of findings 1-7. The full run
+is `~/vm/spec19-full/`, whose `drive.py` carries findings 10 and 11 as comments
+on the lines that fix them.
