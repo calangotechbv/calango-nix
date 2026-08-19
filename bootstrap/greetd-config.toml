@@ -1,0 +1,75 @@
+# The declared content of /etc/greetd/config.toml, owned by home/bootstrap.nix.
+#
+# NOT a file anything symlinks. greetd's own package owns this path as a
+# conffile, so a Nix symlink cannot go here and no second package may ship it
+# without Replaces: greetd. It is installed by hand:
+#
+#   B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
+#   sudo install -Dm644 "$B/etc/greetd/config.toml" /etc/greetd/config.toml
+#
+# home/bootstrap.nix compares the live file against this one at every switch and
+# prints that command on a difference. Running it is yours.
+#
+# Why greetd at all. It ships its own /etc/pam.d/greetd carrying four keyring
+# lines that /etc/pam.d/login does not:
+#
+#   -auth    optional  pam_gnome_keyring.so
+#   -auth    optional  pam_kwallet5.so
+#   -session optional  pam_gnome_keyring.so auto_start
+#   -session optional  pam_kwallet5.so auto_start
+#
+# So the login keyring is unlocked by the password you type, with no edit to a
+# dpkg conffile. That single fact is the whole argument.
+
+[terminal]
+# Debian's default, and deliberately not changed. greetd.service hardcodes
+# After=getty@tty7.service and Conflicts=getty@tty7.service, and greetd.5 says
+# the conflict must match the VT: "you must ensure that there are no other users
+# of that VT". Moving the greeter to VT1 would mean owning a systemd drop-in for
+# a system unit, which this repo does not do.
+#
+# Keeping VT7 also leaves tty1 free for a getty. That getty is the rescue
+# console for this file specifically: a wrong command= line below leaves no way
+# to reach a desktop, and tty1 is how you get back in to fix it.
+vt = 7
+
+[default_session]
+# --sessions names two directories, and only the first is this flake's.
+# /usr/share/wayland-sessions is where calango-desktop ships
+# hyprland-nix.desktop, declared by home/session.nix's
+# calango.deb.files entry. /usr/local/share/wayland-sessions is where the
+# predecessor project put a hand-installed entry; it is empty on suffer as of
+# spec 16 and absent on a new machine.
+#
+# home/bootstrap.nix asserts at build time that every wayland-session entry the
+# .deb ships sits in a directory this line names. Without that assertion a
+# machine boots to a working greeter that cannot offer its own session.
+#
+# A missing directory is harmless, and that is measured rather than assumed:
+# tuigreet 0.9.1 was run under a pty against a stub greetd socket with
+# `strace -e openat`. It opened /usr/share/wayland-sessions, read the .desktop
+# entries there, hit ENOENT on /usr/local/share/wayland-sessions, and went on to
+# draw its interface.
+#
+# --remember and --remember-user-session make the common case password-only.
+# --time is a clock. --asterisks gives feedback while typing a password.
+#
+# State goes to /var/cache/tuigreet, created by /usr/lib/tmpfiles.d/tuigreet.conf
+# from Debian's package, with the right owner. Nothing here needs to make it.
+command = "tuigreet --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions --remember --remember-user-session --time --asterisks"
+
+# The account greetd's package creates. greetd refuses to start on a user that
+# does not exist, so this must name the local one, and on Debian it is _greetd
+# with the underscore.
+#
+# It needs the video group only for a graphical greeter. tuigreet draws on the
+# VT and does not.
+user = "_greetd"
+
+# One inherited condition, recorded so nobody reads it as new. This path is
+# greetd's own conffile and this project keeps it modified, so every future
+# `apt upgrade` of greetd raises a conffile prompt on it. That is already true
+# on suffer -- `dpkg -V greetd` reads `??5?????? c /etc/greetd/config.toml`
+# today -- and moving the content into this flake neither causes it nor cures
+# it. Keep the local version at the prompt, then re-run a switch: the drift
+# hook is what tells you whether the answer took.

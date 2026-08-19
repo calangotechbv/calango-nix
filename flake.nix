@@ -148,6 +148,7 @@
           ./home/syncthing.nix
           ./home/deb.nix
           ./home/slack.nix
+          ./home/bootstrap.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";
