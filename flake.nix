@@ -147,6 +147,7 @@
           ./home/uwsm.nix
           ./home/syncthing.nix
           ./home/deb.nix
+          ./home/slack.nix
           {
             home.username = username;
             home.homeDirectory = "/home/${username}";

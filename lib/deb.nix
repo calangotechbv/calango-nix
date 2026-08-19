@@ -70,15 +70,28 @@ in
          Kept:
         ${reasonLines manifest.keep}
          .
-         Refused, because the Nix side owns them now:
+         Refused, each for the reason beside it:
         ${reasonLines manifest.ban}
       '';
 
-      # Only /etc entries may be conffiles, per Debian policy. The ufw profiles
-      # are the only /etc payload this package has.
+      # Only /etc entries may be conffiles, per Debian policy -- and EVERY /etc
+      # entry must be one, or dpkg replaces a locally edited file on upgrade
+      # without asking. So this is derived from the payload by PATH SYNTAX, not
+      # from a list of names.
+      #
+      # The comment here used to read "the ufw profiles are the only /etc
+      # payload this package has". That was true when it was written and false
+      # the moment home/slack.nix shipped etc/default/slack -- a file whose
+      # whole purpose is to hold two values dpkg must not clobber, since
+      # restoring their defaults re-arms Slack's cron job. Nothing would have
+      # warned: the package builds, installs and works, and the loss shows up
+      # only at the next upgrade. Enumerate by syntax, never by a remembered
+      # list of names.
+      etcPayload = lib.filter (lib.hasPrefix "etc/") (builtins.attrNames manifest.files);
       conffiles =
         lib.concatMapStrings (n: "/etc/ufw/applications.d/${n}\n")
-          (builtins.attrNames manifest.ufwProfiles);
+          (builtins.attrNames manifest.ufwProfiles)
+        + lib.concatMapStrings (p: "/${p}\n") etcPayload;
     in
     pkgs.runCommand "calango-desktop-${version}"
       {
@@ -100,6 +113,8 @@ in
 
         ${lib.optionalString (manifest.ufwProfiles != { }) ''
           mkdir -p pkg/etc/ufw/applications.d
+        ''}
+        ${lib.optionalString (conffiles != "") ''
           cp "$conffilesPath" pkg/DEBIAN/conffiles
         ''}
         ${lib.concatStrings (lib.mapAttrsToList (n: body: ''
@@ -110,6 +125,72 @@ in
           mkdir -p "pkg/$(dirname ${path})"
           cp ${pkgs.writeText "debfile-${baseNameOf path}" body} "pkg/${path}"
         '') manifest.files)}
+
+        # Every /etc path in the assembled tree must be listed in
+        # DEBIAN/conffiles. The list is derived by path syntax above, so this
+        # can only disagree with it when the EMISSION is wrong -- a files entry
+        # written to a path its key does not name, a conffiles copy skipped by a
+        # stale optionalString. That is precisely the bug this task fixed, and
+        # a derived value cannot catch it: asserting the derivation against
+        # itself is vacuous. So this reads the tree.
+        #
+        # This checks only etcpaths ⊆ conffiles. The reverse -- every
+        # conffiles entry names a real path in the package -- needs no check
+        # here: dpkg-deb itself refuses to build a package whose conffiles
+        # list names an absent path ("conffile '/etc/absent' does not appear
+        # in package", exit 2), and that happens a few lines below when this
+        # builder actually calls it.
+        #
+        # It lives in the builder rather than in `guards`, and that is forced:
+        # guards are INPUTS to this derivation, so a guard cannot inspect the
+        # artifact it gates. Being the same derivation, it also runs on both
+        # `nix build .#calangoDeb` and the activation build -- which is spec
+        # 16's defect 10, a guard proven able to fail against a target the
+        # installable artifact never touched.
+        #
+        # Conditions and files, never counts in command substitutions: this
+        # builder runs with -e and pipefail, so `n="$(grep -c …)"` aborts on
+        # grep's exit status before any message can print. And `done < file`
+        # keeps the loop in THIS shell -- `cmd | while read` would put `exit 1`
+        # in a subshell.
+        if [ -d pkg/etc ]; then
+          ( cd pkg && find etc -type f ) | sed 's,^,/,' | LC_ALL=C sort > etcpaths
+        else
+          : > etcpaths
+        fi
+
+        # The vacuity anchor. Without it a manifest that lost its ufw profile
+        # and its /etc files builds green while this whole check requires
+        # nothing of anything. This builder is not generic -- it already
+        # hardcodes /etc/ufw/applications.d -- so coupling it to "this package
+        # has /etc payload" costs nothing and is deliberate.
+        if [ ! -s etcpaths ]; then
+          echo "calango-desktop has no /etc payload at all." >&2
+          echo "  The ufw profiles and system files this flake declares are" >&2
+          echo "  absent, so nothing in the built package can be a conffile." >&2
+          exit 1
+        fi
+
+        if [ ! -f pkg/DEBIAN/conffiles ]; then
+          echo "calango-desktop ships /etc files and no DEBIAN/conffiles:" >&2
+          sed 's/^/  /' etcpaths >&2
+          exit 1
+        fi
+
+        : > notconffiles
+        while read -r p; do
+          grep -qxF "$p" pkg/DEBIAN/conffiles || echo "$p" >> notconffiles
+        done < etcpaths
+
+        if [ -s notconffiles ]; then
+          echo "calango-desktop ships /etc files that are not conffiles:" >&2
+          sed 's/^/  /' notconffiles >&2
+          echo "DEBIAN/conffiles holds:" >&2
+          sed 's/^/  /' pkg/DEBIAN/conffiles >&2
+          exit 1
+        fi
+
+        rm -f etcpaths notconffiles
 
         # Reproducibility. Nix's stdenv sets SOURCE_DATE_EPOCH to 315532800
         # (1980-01-01 UTC), so every file gets that timestamp instead of its
