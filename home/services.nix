@@ -66,12 +66,31 @@ in
 {
   config.home.packages = [ nmSecretAgent ];
 
+  # A machine with no Bluetooth adapter must not restart this for ever, and
+  # before spec 18's rehearsal it did: measured in a VM, restart counter 44 and
+  # climbing, each attempt logging
+  #
+  #   bt-agent: bluez service is not found
+  #   Did you forget to run bluetoothd?
+  #
+  # Debian's bluetooth.service gates itself with the identical condition, so with
+  # no adapter bluetoothd never starts and there is nothing for the agent to talk
+  # to. `Restart = "on-failure"` with `RestartSec = 2` spaces the retries wide
+  # enough to escape systemd's default start limit, so nothing ever stops it.
+  # suffer has an adapter, which is exactly why this went unseen until a machine
+  # without one ran the flake.
+  #
+  # `bluetooth.service` is NOT in `After` any more. It is a SYSTEM unit and this
+  # is a user unit, so the ordering was never enforceable -- and naming it made
+  # the user manager carry a phantom `bluetooth.service not-found` entry, which
+  # reads like a broken dependency and is not one.
   config.systemd.user.services.bt-agent = {
     Unit = {
       Description = "Bluetooth pairing agent";
       Documentation = "man:bt-agent(1)";
       PartOf = [ "graphical-session.target" ];
-      After = [ "graphical-session.target" "bluetooth.service" ];
+      After = [ "graphical-session.target" ];
+      ConditionPathIsDirectory = "/sys/class/bluetooth";
     };
     Service = {
       Type = "simple";
