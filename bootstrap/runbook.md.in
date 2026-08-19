@@ -187,6 +187,31 @@ live in 1Password's agent — which Stage C installs, *after* this clone has
 already had to happen. There is no order in which the `git@` remote works here.
 Switch the remote to ssh later if you want to push from this machine.
 
+**This repository is not anonymously readable, so have a credential ready
+before you run the clone.** Measured from a machine that had just finished
+Stage 0, and again from suffer:
+
+```sh
+GIT_TERMINAL_PROMPT=0 git ls-remote @repoUrl@ HEAD
+# fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+That is what a private repository looks like to an unauthenticated client, and
+it does not change the paragraph above — it sharpens it. A **token** can be
+typed at the prompt `git` puts up, on a machine with nothing installed on it
+yet; an ssh key cannot be conjured the same way, because the key this project
+uses lives in an agent Stage C has not installed. So https is still the only
+transport with a working order, and the credential is a personal access token
+with read access, entered when `git clone` asks.
+
+**The remote also has to be current.** A clone of a branch that predates this
+document produces a tree with no `home/bootstrap.nix` in it, and therefore no
+`.#calangoBootstrap` — so nothing later can render the runbook you are
+reading.
+Gate B is where that shows up rather than here: `nix build .#calangoBootstrap`
+fails outright on such a tree, which is the failure you want, at the earliest
+point it can happen.
+
 ```sh
 mkdir -p ~/.config/nix
 printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
