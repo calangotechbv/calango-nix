@@ -211,6 +211,16 @@ let
     "@groupsComma@" = lib.concatStringsSep "," cfg.groups;
     "@groupsGrepArgs@" = lib.concatStringsSep " " (map (g: "-e ${g}") cfg.groups);
     "@groupsCount@" = toString (builtins.length cfg.groups);
+    "@aptTransientFiles@" = lib.concatStringsSep " " (
+      builtins.attrNames cfg.aptSourcesTransient
+    );
+    "@aptTransientTable@" =
+      "| file | why it must go |\n|---|---|\n" + reasonTable cfg.aptSourcesTransient;
+    "@aptDurableFiles@" = lib.concatStringsSep " " (
+      lib.subtractLists (builtins.attrNames cfg.aptSourcesTransient) (
+        builtins.attrNames cfg.aptSources
+      )
+    );
     "@aptSourceCount@" = toString (
       builtins.length (builtins.attrNames cfg.aptSources)
     );
@@ -264,6 +274,14 @@ in
       default = { };
       description = "File name under /etc/apt/sources.list.d -> deb822 content.";
     };
+    # Which of the aptSources a vendor package replaces with its own file, and so
+    # must be deleted once that package is installed. Measured in the spec 18
+    # rehearsal on a bare Debian 13.6: only two of the four behave that way.
+    aptSourcesTransient = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      description = "Source file name -> why its vendor replaces it. Deleted during Stage C.";
+    };
     packages = {
       base = lib.mkOption {
         type = lib.types.attrsOf lib.types.str;
@@ -301,6 +319,16 @@ in
     #
     # Four repositories, not five: 1password and 1password-cli share one. This
     # was miscounted twice during design before it was derived.
+    # The collision is an apt ERROR, so these two must go the moment their own
+    # package is installed. The other two must STAY: nothing else ever provides
+    # them, and deleting them leaves code and endpoint-verification installed
+    # with no candidate version at all -- measured on the rehearsal machine,
+    # where apt-cache policy reported no source for either afterwards.
+    aptSourcesTransient = {
+      "calango-bootstrap-google-chrome.sources" = "google-chrome-stable's postinst writes its own google-chrome.sources naming a keyring under /usr/share/keyrings, which collides with this file's inline key and makes apt refuse to read any source at all.";
+      "calango-bootstrap-1password.sources" = "1password's postinst writes its own 1password.sources, colliding in exactly the same way.";
+    };
+
     aptSources = {
       "calango-bootstrap-google-chrome.sources" = stanza {
         uris = "https://dl.google.com/linux/chrome-stable/deb/";
@@ -387,6 +415,23 @@ in
     '';
 
   config.assertions = [
+    {
+      # A transient name matching no source file is a typo that would leave the
+      # colliding file in place and break Stage C at its next apt command.
+      assertion =
+        lib.subtractLists (builtins.attrNames cfg.aptSources)
+          (builtins.attrNames cfg.aptSourcesTransient) == [ ];
+      message = ''
+        calango.bootstrap.aptSourcesTransient names a file that aptSources
+        does not define:
+
+          transient : ${lib.concatStringsSep " " (builtins.attrNames cfg.aptSourcesTransient)}
+          sources   : ${lib.concatStringsSep " " (builtins.attrNames cfg.aptSources)}
+
+        The runbook derives its deletion command from that list, so a name
+        matching nothing leaves a colliding source in place.
+      '';
+    }
     {
       # Vacuity anchor. An empty declaration makes the file check below compare
       # the live file against nothing and report agreement.
