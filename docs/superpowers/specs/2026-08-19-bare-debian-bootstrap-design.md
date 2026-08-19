@@ -93,7 +93,21 @@ its `postinst`.
 
 So the flake must not declare them as permanent files. They exist so that one
 `apt install` can succeed. Afterwards each vendor package owns its own copy,
-and the flake's copy becomes a duplicate source apt warns about.
+and the flake's copy collides with it. **That collision is an apt ERROR, not a
+warning, and this spec said "warns about" until the rehearsal measured it.** Two
+`Signed-By` values for one repository -- an inline key in the scaffolding file, a
+keyring path in the vendor's -- makes apt refuse to read the source list at all:
+
+```
+   != /usr/share/keyrings/google-chrome.gpg
+E: The list of sources could not be read.
+```
+
+Measured on a bare Debian 13.6 machine: Chrome and 1Password each write their own
+file from `postinst` (Microsoft and Google Cloud did not), and the next two
+`apt install` commands returned exit 100. So the scaffolding must be deleted
+immediately after the corp packages are installed, before any further apt
+command -- not at the end of the stage.
 
 Consequence: the scaffolding files are named `calango-bootstrap-<vendor>.sources`,
 the runbook says to delete them once the vendor packages are installed, and the

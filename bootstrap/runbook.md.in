@@ -169,6 +169,32 @@ repositories:
 sudo apt install @corpRepoPackagesOneLine@
 ```
 
+**Now delete the scaffolding, before any other apt command.** This is not
+tidying and it is not optional. Two of the four vendor packages -- Chrome and
+1Password -- write their own source file from their `postinst`, naming a keyring
+under `/usr/share/keyrings` where the scaffolding file carries an inline key. apt
+treats one repository reached through two different `Signed-By` values as an
+**error**, not as a duplicate warning, and it then refuses to read the source
+list at all:
+
+```
+  -----END PGP PUBLIC KEY BLOCK-----
+   != /usr/share/keyrings/google-chrome.gpg
+E: The list of sources could not be read.
+```
+
+Measured on a bare Debian 13.6 machine: with the scaffolding left in place, the
+next two `apt install` commands each returned exit 100 and nothing further in
+this stage could run.
+
+```sh
+sudo rm -f /etc/apt/sources.list.d/calango-bootstrap-*.sources
+sudo apt update
+```
+
+The distinct `calango-bootstrap-` prefix is what makes that one command safe --
+the vendors name their own files after themselves, so those are left alone.
+
 **Then the @corpFileOnlyCount@ that come from no repository at all.** Fetch
 each `.deb` and install it from the file:
 
@@ -210,13 +236,6 @@ dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop   # ii calan
 apt-get -s autoremove | grep -c '^Remv '                              # 0
 test -f /usr/share/wayland-sessions/hyprland-nix.desktop && echo present
 cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml" && echo greetd-ok
-```
-
-Now delete the scaffolding, so apt stops reporting a duplicate source:
-
-```sh
-sudo rm -f /etc/apt/sources.list.d/calango-bootstrap-*.sources
-sudo apt update
 ```
 
 ---
