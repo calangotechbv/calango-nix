@@ -8,22 +8,22 @@ Specs and plans live in `docs/superpowers/`.
 
 ## Bootstrap
 
-Nix comes from Debian, because `nix-daemon` is a root service:
+The whole sequence from a bare Debian 13 install is generated, so it cannot
+disagree with the flake:
 
 ```sh
-sudo apt install nix-bin nix-setup-systemd
+sudo apt install nix-bin nix-setup-systemd git
 sudo usermod -aG nix-users "$USER"      # takes effect on next login
 mkdir -p ~/.config/nix
 printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
+B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
+less "$B/RUNBOOK.md"
 ```
 
-Check it:
-
-```sh
-nix --version                            # 2.26.3 or later
-systemctl is-active nix-daemon.service   # active
-nix flake --help >/dev/null && echo ok   # needs the group change; see below
-```
+Those five commands are Stage A's minimum — enough to build the runbook, which
+then names every remaining package, group, repository and gate.
+`home/bootstrap.nix` is where the content is declared, and it warns at every
+switch when live `/etc` has drifted from it.
 
 Check the **service**, not the socket. Debian ships both, but
 `nix-daemon.service` is `WantedBy=multi-user.target`, so it starts on its own

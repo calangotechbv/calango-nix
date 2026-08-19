@@ -26,8 +26,9 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` runs **four** checks. Count them rather than quoting this
-line — the number was stale at three the moment `bar-title-slot` landed:
+`nix flake check` runs **five** checks. Count them rather than quoting this
+line — the number was stale at three the moment `bar-title-slot` landed, and
+the bare-Debian bootstrap branch moved it again by adding `host-config-files`:
 
 ```sh
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -36,27 +37,28 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 **The `checks\.` part of that pattern is load-bearing, and was added after the
 looser version started lying.** `nix flake check` validates *every* flake
 output, not only `checks`, so it emits a `checking derivation` line for
-`packages.x86_64-linux.calangoDeb` as well. Measured the moment the glue-deb
-work landed a `packages` output:
+`packages.x86_64-linux.calangoDeb` and `packages.x86_64-linux.calangoBootstrap`
+as well. Measured after the bootstrap work landed a second `packages` output:
 
 ```sh
-… | grep -c '^checking derivation'          # 5   <- includes the package
-… | grep -c '^checking derivation checks\.'  # 4   <- the checks
-… | grep -o 'running [0-9]* flake checks'   # running 4 flake checks
+… | grep -c '^checking derivation'          # 7   <- includes both packages
+… | grep -c '^checking derivation checks\.'  # 5   <- the checks
+… | grep -o 'running [0-9]* flake checks'   # running 5 flake checks
 ```
 
 The looser pattern disagreed with nix's own summary line and nothing warned
 about it. Prefer the summary if you only want the number; use the `checks\.`
 form when you want to see which ones ran.
 
-`bar-title-slot` is unlike the other three: it *runs* this flake's QML under
+`bar-title-slot` is unlike the other four: it *runs* this flake's QML under
 the pinned Qt with the offscreen platform, rather than inspecting a built
 tree. So the shell tree is now covered by a build-time guard as well, and a
 change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
 
 Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
 `home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
-`home/apps.nix`, `quickshell/bar/TitleSlot.qml`, or the `required` list in
+`home/apps.nix`, `quickshell/bar/TitleSlot.qml`, `bootstrap/greetd-config.toml`,
+`bootstrap/runbook.md.in`, `bootstrap/keys/`, or the `required` list in
 `flake.nix`. The first of those is
 deliberately stated as *syntax* rather than as a list of modules: an earlier
 version of this passage named `home/portals.nix` and `home/uwsm.nix`, and
@@ -66,7 +68,7 @@ for the property; do not trust a list of names, including this sentence's.
 
 Further build-time guards ride in `home.packages` rather than in `checks`, so
 they run on every generation build — strictly more often than
-`nix flake check` is invoked — and none of them appears in that count of four.
+`nix flake check` is invoked — and none of them appears in that count of five.
 Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
@@ -95,6 +97,20 @@ failing the build if one turns up — the property `home/session.nix`'s own
 comment names directly, since a root-owned file naming the store breaks
 unrecoverably once that path is garbage-collected.
 
+`home/bootstrap.nix`'s `bootstrapDir` is the sixth, added by the bare-Debian
+bootstrap work, and it is the **second** guard in this flake to ride as an
+*input of an exposed package*, not merely as a `home.packages` sibling — the
+shape spec 16's defect 10 established, when `noStorePaths` above was found to
+protect only the activation path while `nix build .#calangoDeb` remained free
+to write a `.deb` naming the store. `bootstrapDir` takes its own
+`noStorePathsInEtc` as an input, so `nix build .#calangoBootstrap` cannot
+produce the rendered root-owned tree without that guard passing, and
+`bootstrapDir` itself is also the `home.packages` entry — one derivation
+serving both roles, where `home/deb.nix` needed a second `runCommand` sibling
+to cover the one `debPackage` does not reach. `noStorePathsInEtc` is scoped to
+`etc/` deliberately: `RUNBOOK.md` is not root-owned and must name the built
+store path to be useful.
+
 `home/syncthing.nix` adds the first guard in this flake that is not a
 derivation: two entries in Home Manager's `assertions`, evaluated at build
 time. An earlier version of this passage said it *had* to be, which is not
@@ -106,13 +122,22 @@ outside the generation, in `no-dangling-home-files` and in
 `gui-desktop-ids`. `assertions` wins on frequency, not on
 possibility: it runs on every generation build, where a check runs only under
 `nix flake check`. Enumerate assertions with
-`grep -n 'assertions' home/*.nix`, which returns 6 -- two bindings and four
+`grep -n 'assertions' home/*.nix`, which returns 8 -- three bindings and five
 prose, so read the lines rather than the count. `home/deb.nix` is the second
 binding, and its three assertions are unrelated to syncthing's: `calango.deb.keep`
 is non-empty (the vacuity anchor), `keep` and `ban` name disjoint sets of
 packages (so `Depends` and `Conflicts` never contradict each other), and no
 `keep` or `ban` value is an empty reason string (the entries ship in the
 package's own extended description, so an unexplained one would be silent).
+`home/bootstrap.nix` is the third binding, added by the bare-Debian bootstrap
+work, and its four assertions are unrelated to either: two vacuity anchors
+(`greetdConfig` non-empty, `groups` non-empty), one anchor requiring at least
+one shipped `wayland-sessions/` entry to exist at all (with none, the real
+guard below it would compare nothing against nothing and pass having asserted
+nothing), and the real guard -- every `wayland-sessions/` entry this flake
+ships sits in a directory `bootstrap/greetd-config.toml`'s own `--sessions`
+line actually names, parsed out of that string rather than declared a second
+time.
 
 ---
 
@@ -423,6 +448,39 @@ deciding what protects it.
 **`pgrep` on a Nix binary.** Nix wraps binaries, so the process name is
 `.fumon-wrapped` or `.Hyprland-wrapp` (truncated at 15 chars). `pgrep -x fumon`
 matches nothing in both the working and the broken state.
+
+**`git restore`'s source, and `git checkout`'s.** `git restore --worktree
+<path>` restores from the **index**. Adding `--staged` changes the source to
+**HEAD**, so it discards every uncommitted change on that path rather than
+only the mutation this project's method requires you to revert. Measured on a
+scratch repository — committed v1, staged good v2, mutated to v3:
+
+```
+git restore --staged --worktree f.txt   → v1-committed         (the good work is gone)
+git restore --worktree f.txt            → v2-GOOD-uncommitted  (correct)
+```
+
+Two consequences: a file new to the current work is **deleted**, because HEAD
+has no such path — that destroyed a 232-line generated template on this
+branch; and uncommitted work in progress is destroyed, which destroyed an
+activation hook here and then read as the hook never having run. `git
+checkout <path>` is not the alternative: on a staged file it restores from the
+index, mutation included, and prints `Updated 0 paths from the index` while
+changing nothing. The rule: stage the good content, mutate, `git restore
+--worktree`, then **re-read the file** and confirm a count. Commit a task's
+real work before its mutation tests, so every revert is recoverable.
+
+**`dpkg -V` exits 0 whether or not it finds anything.** Measured on this
+machine:
+
+```
+dpkg -V greetd            → exit 0, and prints ??5?????? c /etc/greetd/config.toml
+dpkg -V calango-desktop   → exit 0, and prints nothing
+```
+
+So `if ! dpkg -V pkg; then` can never fire — the same shape as a check that
+cannot fail. Test the captured **output**, which is what `home/bootstrap.nix`'s
+drift hook does with `[ -n "$bad" ]`.
 
 ---
 

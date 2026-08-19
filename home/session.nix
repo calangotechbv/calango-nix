@@ -152,8 +152,12 @@ in
   # /usr/share, not /usr/local/share: Debian policy forbids a package writing
   # to /usr/local, and /etc/greetd/config.toml passes
   # --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions,
-  # so greetd searches both. /usr/share/wayland-sessions does not currently
-  # exist.
+  # so greetd searches both. /usr/share/wayland-sessions is where this entry
+  # lands and /usr/local/share/wayland-sessions is empty as of spec 16, when
+  # the hand-installed copy was deleted after a confirmed login.
+  #
+  # bootstrap/greetd-config.toml's command= line must name the directory this
+  # path sits in, and home/bootstrap.nix asserts exactly that at build time.
   #
   # This does NOT remove the existing /usr/local copy. Until someone does,
   # tuigreet shows two identical entries -- cosmetic and visible, against the

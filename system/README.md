@@ -9,11 +9,12 @@ Used by the migration only. Delete it once `isutton` has moved across.
 
 ```sh
 sudo adduser --gecos "calango-nix test account" nixtest
-sudo usermod -aG video,input,render,nix-users nixtest
+sudo usermod -aG video,input,nix-users nixtest
 ```
 
-`video` and `render` open the DRM device, `input` the keyboard and pointer,
-`nix-users` the Nix daemon.
+`video` opens the DRM device, `input` the keyboard and pointer, `nix-users`
+the Nix daemon. `render` is deliberately absent: `id` on the working account
+shows it is not held, so the desktop demonstrably does not need it.
 
 Undo: `sudo deluser --remove-home nixtest`
 
