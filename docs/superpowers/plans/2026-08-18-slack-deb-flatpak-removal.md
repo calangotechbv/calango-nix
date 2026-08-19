@@ -552,6 +552,12 @@ in
 }
 ```
 
+> Superseded: see the final review pass; Chrome's copy is a later revision in
+> which `install_key` is unconditional. The comment above, naming
+> `/etc/cron.daily/google-chrome` as "the identical script for a repo that
+> genuinely works", is left as the prescriptive record of what was instructed
+> and must not be reintroduced into `home/slack.nix` or `CLAUDE.md`.
+
 - [ ] **Step 4: Wire it into `flake.nix` and track it**
 
 Add the module after `./home/deb.nix` at `flake.nix:149`:
@@ -915,6 +921,11 @@ At `CLAUDE.md:1084`, replace `and flatpak Slack (com.slack.Slack)` with Slack's 
   genuinely works, which is the control that proves this reading.
 ```
 
+> Superseded: see the final review pass; Chrome's copy is a later revision in
+> which `install_key` is unconditional. The block above is left as the
+> prescriptive record of what was instructed into `CLAUDE.md` and must not be
+> reintroduced verbatim on a re-execution of this plan.
+
 - [ ] **Step 3: `CLAUDE.md` — the flatpak/GL entry becomes historical**
 
 The entry at `CLAUDE.md:1221` ("**That same inheritance breaks flatpak…**") describes a live mechanism that no longer has a subject. **Do not delete it** — the GL inheritance half is load-bearing and the entry is what stops someone scrubbing it. Rewrite its opening and closing so the flatpak part is past tense:
@@ -1012,6 +1023,12 @@ sg nix-users -c 'nix flake check' 2>&1 | /usr/bin/grep -o 'running [0-9]* flake 
 `home/slack.nix` adds one `home.packages` list, so the `grep -n 'home.packages'` enumeration returns one more line than `CLAUDE.md`'s prose describes. `CLAUDE.md` already tells the reader to enumerate rather than trust the number, so no count in it needs editing — but confirm the new module appears, and if any sentence names a specific total, fix it.
 
 - [ ] **Step 10: Commit**
+
+The heredoc below is a verbatim copy of commit `3c157e9`'s message, whose
+counts ("six corrections", "two are findings") predate the seventh
+correction (the `xdg-mime query default` entry, added mid-execution) and no
+longer match line ~42's "Seven corrections". Left verbatim because it matches
+git; do not edit it to agree with the current count.
 
 ```bash
 git add CLAUDE.md README.md home/apps.nix
@@ -1159,7 +1176,7 @@ the first host launch.
    ```
 
    Expect exactly: `calango-desktop` upgraded, `flatpak` and `flatseal`
-   removed, nothing else touched. Then run it for real.
+   removed, nothing else touched.
 
    **Expect a dpkg prompt on `/etc/default/slack`, and answer it `Y`.** That
    path exists on this machine today as an unowned file carrying
@@ -1180,8 +1197,10 @@ the first host launch.
    `repo_reenable_on_distupgrade="true"` — the transaction still matches the
    simulation exactly, but step 6's deletion of `slack-desktop.gpg` stops
    being a deletion, which is the failure this whole mechanism exists to
-   prevent. Answer **`Y`**. Do not add `-y`/`DEBIAN_FRONTEND=noninteractive`
-   to this install: either takes the wrong branch with no prompt at all.
+   prevent. Answer **`Y`**, install the maintainer's version. A non-interactive
+   install (`-y` with `DEBIAN_FRONTEND=noninteractive`, or any `confold`
+   default) takes the wrong branch with no prompt at all — avoid those flags
+   for this step.
 
    Alternative: `sudo rm -f /etc/default/slack` immediately before this step
    makes dpkg install its copy silently. Safe only right now (before step 1;
@@ -1190,6 +1209,8 @@ the first host launch.
    and this one, because once Slack's `.deb` is installed the cron job exists
    and, finding the file absent, recreates it with both knobs `"true"`,
    installs both keys, and writes `slack.list` active.
+
+   Then run it for real.
 
 5. **`apt autoremove`, reading the "no longer required" list at that moment.**
    18 packages as of 2026-08-18. Read the list apt prints then, not this
@@ -1230,8 +1251,34 @@ the first host launch.
 
    `dpkg -V calango-desktop` reporting `??5?????? c /etc/default/slack` here
    means step 4's prompt was answered the wrong way (`N` instead of `Y`).
-   Recover with `sudo rm -f /etc/default/slack && sudo apt install --reinstall
-   calango-desktop`.
+
+   `--reinstall` does not work here and is not the recovery: the package has
+   no repository behind it, so `apt-get -s install --reinstall calango-desktop`
+   reports "it cannot be downloaded", and `apt-cache policy calango-desktop`
+   shows no candidate source — only the installed entry. Even reinstalling
+   the local `.deb` by hand is not obviously sufficient: `man dpkg` documents
+   `--force-confmiss` for exactly the case of a missing registered conffile,
+   which means dpkg does not restore one by default.
+
+   Recover with dpkg's own backup instead. dpkg keeps an unmodified conffile
+   it did not install as `*.dpkg-dist` (`man dpkg`, line ~1094). Check first,
+   then restore it — no download, nothing deleted:
+
+   ```sh
+   ls -l /etc/default/slack.dpkg-dist
+   sudo mv /etc/default/slack.dpkg-dist /etc/default/slack
+   ```
+
+   If `ls` finds nothing, the `mv` fails harmlessly — that is the safe
+   direction, not evidence of a worse problem. In that case, write the file
+   by hand; the content is byte-identical to what the package ships, which is
+   why `dpkg -V` goes quiet afterwards:
+
+   ```sh
+   printf 'repo_add_once="false"\nrepo_reenable_on_distupgrade="false"\n' | sudo tee /etc/default/slack
+   ```
+
+   Either way, re-run `dpkg -V calango-desktop` and confirm no output.
 
 8. **`home-manager switch`**, then confirm the drift hook has gone quiet: no
    `out of date` line, and no `flatpak`/`flatseal` banned-and-installed

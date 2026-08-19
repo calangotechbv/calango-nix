@@ -500,8 +500,34 @@ day has not passed.
 
 `dpkg -V calango-desktop` reporting `??5?????? c /etc/default/slack` here means
 the install-time prompt above was answered the wrong way (`N` instead of `Y`).
-Recover with `sudo rm -f /etc/default/slack && sudo apt install --reinstall
-calango-desktop`.
+
+`--reinstall` does not work here and is not the recovery: the package has no
+repository behind it, so `apt-get -s install --reinstall calango-desktop`
+reports "it cannot be downloaded", and `apt-cache policy calango-desktop`
+shows no candidate source — only the installed entry. Even reinstalling the
+local `.deb` by hand is not obviously sufficient: `man dpkg` documents
+`--force-confmiss` for exactly the case of a missing registered conffile,
+which means dpkg does not restore one by default.
+
+Recover with dpkg's own backup instead. dpkg keeps an unmodified conffile it
+did not install as `*.dpkg-dist` (`man dpkg`, line ~1094). Check first, then
+restore it — no download, nothing deleted:
+
+```sh
+ls -l /etc/default/slack.dpkg-dist
+sudo mv /etc/default/slack.dpkg-dist /etc/default/slack
+```
+
+If `ls` finds nothing, the `mv` fails harmlessly — that is the safe direction,
+not evidence of a worse problem. In that case, write the file by hand; the
+content is byte-identical to what the package ships, which is why `dpkg -V`
+goes quiet afterwards:
+
+```sh
+printf 'repo_add_once="false"\nrepo_reenable_on_distupgrade="false"\n' | sudo tee /etc/default/slack
+```
+
+Either way, re-run `dpkg -V calango-desktop` and confirm no output.
 
 ### Piece 7 — the documents
 

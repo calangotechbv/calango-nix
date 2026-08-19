@@ -1563,7 +1563,7 @@ for deliberate testing.
   `eu.calangotech.KBrowserSelector.desktop` — the stale
   root-owned entry `home/apps.nix`'s `defaultBrowser` hook displaced in
   `[Default Applications]`, still named by both `[Added Associations]` lines,
-  and present nowhere on disk. "At least one" rather than exactly one: the
+  and present nowhere on disk. "At least two" rather than exactly two: the
   count was measured in one shell's `XDG_DATA_DIRS`, not the activation
   script's, and a narrower search path can only report more missing ids. This
   is why `home/apps.nix`'s `mimeappsIds` hook is **non-fatal by requirement
