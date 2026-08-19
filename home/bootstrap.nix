@@ -377,6 +377,7 @@ in
     packages.base = {
       nix-bin = "The Nix client and the daemon binary. Nix comes from apt because nix-daemon is a root service and standalone Home Manager writes only user units.";
       nix-setup-systemd = "Installs and enables nix-daemon.service. Check the SERVICE, not the socket: the service is WantedBy=multi-user.target and binds the socket itself, so nix-daemon.socket reads inactive forever on a working install.";
+      fuse3 = "xdg-desktop-portal's own xdg-document-portal.service mounts its document store through fusermount3. Measured on a bare Debian 13.6: without this package the unit exits status 6 and the bootstrap ends with one failed unit; apt-get install fuse3 and systemctl --user start makes it active. It is installed on suffer for historical reasons, which is exactly how this list came to omit it.";
       git = "To clone this flake. Priority optional, so absent from a bare install.";
       greetd = "The login manager, and it ships /etc/pam.d/greetd carrying four keyring lines that /etc/pam.d/login does not.";
       tuigreet = "The greeter that bootstrap/greetd-config.toml's command= line names.";

@@ -266,6 +266,17 @@ p=$(sg nix-users -c 'nix build --no-link --print-out-paths \
 
 Then log out and select **Hyprland (Nix)** in tuigreet.
 
+**`home-manager` is installed but not yet on your `PATH`, and will not be until
+a graphical session has set it.** This flake manages no shell initialisation, so
+nothing sources `~/.nix-profile/etc/profile.d/hm-session-vars.sh` -- measured on
+a bare machine, where a login shell still reported `home-manager` absent while
+`~/.nix-profile/bin/home-manager --version` answered `26.05-pre`. Until the
+session provides it, name the full path:
+
+```sh
+sg nix-users -c '~/.nix-profile/bin/home-manager switch --flake .#<user>@<host>'
+```
+
 ### Gate D
 
 ```sh
