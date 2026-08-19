@@ -127,6 +127,7 @@
         inherit system;
         overlays = [ nixgl.overlays.default debianPolkit debianPam ];
       };
+      inherit (pkgs) lib;
 
       mkHome = username: hostname: home-manager.lib.homeManagerConfiguration {
         inherit pkgs;
@@ -167,11 +168,16 @@
         ];
       };
       suffer = mkHome "isutton" "suffer";
-    in
-    {
-      homeConfigurations = {
+
+      # The one place naming which hosts exist. homeConfigurations and the
+      # host-config-files check both read it, so a host added to one cannot be
+      # missing from the other.
+      hostConfigs = {
         "isutton@suffer" = suffer;
       };
+    in
+    {
+      homeConfigurations = hostConfigs;
 
       # Both attrs share the ${system} key. Nix's merge checker only compares
       # statically-known attribute names, so two separate
@@ -471,6 +477,62 @@
               [ "$status" = ok ] || exit 1
               touch "$out"
             '';
+
+        # Every host in hostConfigs must have a hypr/hosts/<name>.lua.
+        #
+        # Without one, hyprland.lua's pcall falls back to hostCfg = {}, so
+        # `primary` is nil and EVERY workspace rule in that file becomes a
+        # no-op: the 1-5 and 6-10 split, the VSCode monocle workspace, the
+        # persistent YouTube workspace. The desktop starts and looks correct,
+        # which is exactly why this is a build error.
+        #
+        # foot/hosts/<name>.ini and gtk/hosts/<name>.conf are NOT required, and
+        # that is measured rather than assumed: home/foot.nix:35 writes a
+        # comment line naming the absent file, home/gtk.nix:108 substitutes
+        # /dev/null, and each runs a token guard immediately afterwards so
+        # neither can leave an unsubstituted token. home/hyprland.nix has no
+        # such branch, which is why only the Lua file is checked.
+        host-config-files =
+          let
+            hostNames = lib.unique (
+              map (c: c.config.calango.host) (lib.attrValues hostConfigs)
+            );
+          in
+          pkgs.runCommand "host-config-files" { } ''
+            src=${./hypr/hosts}
+
+            # The vacuity anchor. With no hosts the loop below runs zero times
+            # and this check passes while asserting nothing about anything.
+            n=${toString (builtins.length hostNames)}
+            if [ "$n" -eq 0 ]; then
+              echo "hostConfigs is empty, so this check iterates nothing." >&2
+              echo "  It would pass vacuously rather than really." >&2
+              exit 1
+            fi
+
+            missing=""
+            for h in ${lib.concatStringsSep " " hostNames}; do
+              if [ -f "$src/$h.lua" ]; then
+                echo "ok      $h -> hypr/hosts/$h.lua"
+              else
+                echo "MISSING hypr/hosts/$h.lua" >&2
+                missing="$missing $h"
+              fi
+            done
+
+            if [ -n "$missing" ]; then
+              echo "" >&2
+              echo "Host(s) in hostConfigs with no hypr/hosts/<name>.lua:$missing" >&2
+              echo "  hyprland.lua falls back to an empty host table, which" >&2
+              echo "  leaves primary nil and every workspace rule a no-op." >&2
+              echo "  Copy hypr/hosts/suffer.lua to the new name and edit the" >&2
+              echo "  outputs. Note hypr/hosts/epiphany.lua is a Fedora" >&2
+              echo "  machine this flake cannot target -- do not copy that one" >&2
+              echo "  expecting it to be a worked example." >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
       };
     };
 }

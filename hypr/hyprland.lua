@@ -36,8 +36,13 @@
 -- The host is chosen at build time: home/hyprland.nix substitutes the
 -- machine's name, taken from the flake's mkHome argument, into the path
 -- below. The old runtime hostname lookup, its domain stripping, its pcall
--- and its fail-loud banner are gone -- an unknown host is now an evaluation
--- error, which is the earlier and louder failure.
+-- and its fail-loud banner are gone.
+--
+-- An unknown host is NOT an evaluation error, and an earlier version of this
+-- comment said it was. home/hyprland.nix only substitutes the name; nothing
+-- checks the file exists, so the pcall below is what actually happens. The
+-- loud failure lives in flake.nix's host-config-files check instead, which
+-- fails the build when a host in hostConfigs has no file here.
 local loaded, hostCfg = pcall(dofile, "@hyprSource@/hosts/@host@.lua")
 if not loaded or type(hostCfg) ~= "table" then
     -- No file for this machine: no monitor declarations, which leaves Hyprland
