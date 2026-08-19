@@ -481,8 +481,19 @@ registry, which tracks unstable rather than this flake's pinned
 ```sh
 p=$(sg nix-users -c 'nix build --no-link --print-out-paths \
   .#homeConfigurations."<user>@<host>".activationPackage')
-"$p/activate"
+sg nix-users -c "$p/activate"
 ```
+
+**`activate` needs the wrapper too, and the failure is silent if it is
+missing.** Its first real step realises the new generation with
+`run --silence nix-store --realise …`, which sends both stdout and stderr to
+`/dev/null`; under `activate`'s own `set -eu` and `pipefail` a shell lacking
+`nix-users` aborts right there, before the first `Activating …` line, with no
+message at all. This only matters on the Stage A path: Stage 0's preseed adds
+the group during install, so a Stage 0 reader's first login already has it.
+Stage A instead adds the group with `usermod` while already logged in, and
+this block runs before the "log out" instruction below it, so that shell has
+never been refreshed.
 
 Then log out and select **Hyprland (Nix)** in tuigreet.
 
