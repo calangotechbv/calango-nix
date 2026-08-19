@@ -75,10 +75,15 @@ let
   # Prepended, not appended. The original reason was that apt's Hyprland,
   # hyprctl and hyprlock sat in /usr/bin and an appended path would let them
   # win. That premise expired with spec 5: none of those three exists any
-  # more, and /usr/share/wayland-sessions is not even a directory. Prepending
-  # stays because the guarantee is what matters -- this list is derived from
-  # the config and is meant to be the answer, not a suggestion ranked below
-  # whatever a future apt package happens to install.
+  # more. (An earlier version of this comment also said
+  # /usr/share/wayland-sessions was not even a directory -- true when
+  # written, false since the bare-Debian bootstrap work: the directory
+  # exists again and `calango-desktop` owns `hyprland-nix.desktop` inside it,
+  # per `dpkg -S`. That is our own entry, not a revival of apt's Hyprland, so
+  # it does not reopen this argument.) Prepending stays because the
+  # guarantee is what matters -- this list is derived from the config and is
+  # meant to be the answer, not a suggestion ranked below whatever a future
+  # apt package happens to install.
   #
   # No QS_CONFIG_PATH here any more, and its absence is deliberate.
   #

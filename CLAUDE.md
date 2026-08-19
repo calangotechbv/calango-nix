@@ -134,10 +134,19 @@ work, and its four assertions are unrelated to either: two vacuity anchors
 (`greetdConfig` non-empty, `groups` non-empty), one anchor requiring at least
 one shipped `wayland-sessions/` entry to exist at all (with none, the real
 guard below it would compare nothing against nothing and pass having asserted
-nothing), and the real guard -- every `wayland-sessions/` entry this flake
-ships sits in a directory `bootstrap/greetd-config.toml`'s own `--sessions`
-line actually names, parsed out of that string rather than declared a second
-time.
+nothing), and the real guard -- every `calango.deb.files` entry under
+`wayland-sessions/` sits in a directory `bootstrap/greetd-config.toml`'s own
+`--sessions` line actually names, parsed out of that string rather than
+declared a second time. That is narrower than "every `wayland-sessions/`
+entry this flake ships": `home/session.nix`'s `hyprland-nixgl-session` also
+ships one, through `home.packages` rather than `calango.deb.files`, landing in
+`~/.nix-profile/share/wayland-sessions` -- a directory greetd's own
+`--sessions` line does not search and this guard does not read. That is
+deliberate, not a gap: `home/session.nix`'s own comment on
+`hyprland-nixgl-session` says uwsm resolves it by desktop entry, not greetd --
+it is `uwsm start ... hyprland-nixgl.desktop`, invoked from inside the
+`calango.deb.files` entry greetd does offer, so greetd is never meant to see
+it directly.
 
 ---
 
