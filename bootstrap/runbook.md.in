@@ -97,11 +97,12 @@ unavailable package name fails the install loudly rather than shipping a machine
 missing one, measured: `The failing step is: Select and install software`.
 
 **What it does not save you.** `d-i pkgsel/upgrade select none` is set
-deliberately, so the installed base packages are whatever version the netinst
-image shipped rather than whatever point release exists by install day — a
-machine installed by hand instead may already be ahead of that. If you want
-parity with a hand-installed machine, run `sudo apt upgrade` once Stage A's
-gate is green.
+deliberately, so everything the installer selected — tasksel's standard set as
+well as this flake's @basePackagesCount@ packages — stays at whatever version
+the netinst image shipped, rather than whatever point release exists by install
+day. A
+machine installed by hand may already be ahead of that. If you want parity,
+run `sudo apt upgrade` once Gate A is green.
 
 Stop the `http.server` when the install finishes. It is unauthenticated, and it
 has nothing more to serve.
@@ -127,10 +128,10 @@ given an **empty** password. A machine installed with a real root password
 leaves the first user out of `sudo` -- and `sudo` is `Priority: optional`, so a
 machine nobody has run Stage A on yet may not have the *binary* installed
 either, regardless of what `calango.bootstrap.packages.base` declares. That
-option is one of the twelve packages this stage installs; it is not yet true
-of a machine that has not been through this stage. `sudo apt install ...` on
-such a machine fails before it does anything, with `sudo` reported as an
-unknown command.
+option is one of the @basePackagesCount@ packages this stage installs; it is
+not yet true of a machine that has not been through this stage.
+`sudo apt install ...` on such a machine fails before it does anything, with
+`sudo` reported as an unknown command.
 
 On that kind of machine, become root directly instead of through `sudo`:
 

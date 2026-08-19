@@ -47,17 +47,21 @@ d-i pkgsel/include string @basePackages@
 tasksel tasksel/first multiselect standard
 
 # "none" is debian-installer's non-default: left unset it defaults to
-# safe-upgrade, pulling in whatever point-release fixes exist for the base
-# packages at install time. This file chooses "none" deliberately rather than
-# leaving the question to the installer's own default, for the same reason
-# Stage 0 answers disk, locale, mirror and timezone by hand instead of
-# preseeding them -- an unattended upgrade during install is a behaviour this
-# flake should choose on purpose, not one it should apply silently. The
-# consequence is real: a Stage-0 machine ends its install with base packages
-# at the netinst image's versions, where a hand-installed Stage A machine may
-# already be ahead by whatever point release landed since that image was
-# built. RUNBOOK.md's Stage 0 tells the reader to run `sudo apt upgrade`
-# afterwards if they want parity with a hand-installed machine.
+# safe-upgrade, pulling in whatever point-release fixes exist at install time.
+# This file chooses "none" deliberately rather than leaving the question to the
+# installer's own default, for the same reason Stage 0 answers disk, locale,
+# mirror and timezone by hand instead of preseeding them -- an unattended
+# upgrade during install is a behaviour this flake should choose on purpose,
+# not one it should apply silently.
+#
+# The consequence is real, and it is wider than this file's own package list:
+# pkgsel/upgrade governs everything the installer selected, tasksel's standard
+# set included, not just the @basePackagesCount@ names on the pkgsel/include
+# line above. So a Stage-0 machine ends its install with all of that at the
+# netinst image's versions, where a hand-installed Stage A machine may already
+# be ahead by whatever point release landed since the image was built.
+# RUNBOOK.md's Stage 0 tells the reader to run `sudo apt upgrade` afterwards if
+# they want parity.
 d-i pkgsel/upgrade select none
 popularity-contest popularity-contest/participate boolean false
 

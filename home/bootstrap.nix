@@ -209,8 +209,17 @@ let
   # apart if only one call site were ever edited.
   basePackagesLine = lib.concatStringsSep " " (builtins.attrNames cfg.packages.base);
 
+  # Both templates say "the twelve packages" in prose, and neither should spell
+  # the number. Four other counts here are already tokens (@groupsCount@,
+  # @aptSourceCount@, @corpPackagesCount@, @corpRepoPackagesCount@); a
+  # hand-written thirteenth entry would leave a literal "twelve" behind in a
+  # GENERATED file, which is the exact shape this project's own instructions
+  # open by warning about.
+  basePackagesCount = toString (builtins.length (builtins.attrNames cfg.packages.base));
+
   substitutions = {
     "@basePackagesOneLine@" = basePackagesLine;
+    "@basePackagesCount@" = basePackagesCount;
     "@basePackagesTable@" =
       "| package | why |\n|---|---|\n" + reasonTable cfg.packages.base;
     "@corpPackagesTable@" =
@@ -266,6 +275,7 @@ let
   preseedSubstitutions = {
     "@username@" = config.home.username;
     "@basePackages@" = basePackagesLine;
+    "@basePackagesCount@" = basePackagesCount;
     # sudo is appended to the declared groups rather than added to the option:
     # calango.bootstrap.groups is what the DESKTOP needs, and the drift check
     # reports on it. sudo is what Stage C needs, which is a different question.
