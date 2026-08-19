@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Seventeen specs are done and written up in
+standalone Home Manager. Eighteen specs are done and written up in
 `docs/*results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -456,7 +456,28 @@ deciding what protects it.
 
 **`pgrep` on a Nix binary.** Nix wraps binaries, so the process name is
 `.fumon-wrapped` or `.Hyprland-wrapp` (truncated at 15 chars). `pgrep -x fumon`
-matches nothing in both the working and the broken state.
+matches nothing in both the working and the broken state. Confirmed live in
+spec 18's rehearsal, where `pgrep -x .Hyprland-wrapp` returned the compositor's
+pid and `pgrep -x Hyprland` returned nothing.
+
+**And the 15-character limit is `comm`'s, not Nix's, so `pgrep -x` fails on any
+long name.** `qemu-system-x86_64` is 18 characters and `pgrep -x
+qemu-system-x86_64` matches nothing, printing a warning that is easy to scroll
+past. Use the truncated form, `pgrep -x qemu-system-x86`, or `ps -eo comm`.
+
+**`pgrep -f` and `pkill -f` match the searching process's OWN command line.** A
+wait loop written `until ! pgrep -f 'qemu-system-x86_64.*disk.qcow2'; do sleep;
+done` never exits, because the shell running it has that string in its own
+`/proc/self/cmdline`. Worse, `pkill -f 'qemu-system-x86_64 -enable-kvm'` kills
+the shell that issued it — exit 144, and every command after it in the script
+silently never runs. Both were met in spec 18's rehearsal, and both are the same
+species as a guard that greps a file and matches its own prose. Match on the
+process name (`ps -eo comm | grep -cx <15-char name>`), which cannot self-match.
+
+**`nc -z` against a qemu user-mode forward is not a readiness check.** slirp
+accepts on the host side whether or not anything listens in the guest, so
+`nc -z 127.0.0.1 2222` succeeds while ssh reports
+`Connection timed out during banner exchange`. Probe the service, not the port.
 
 **`git restore`'s source, and `git checkout`'s.** `git restore --worktree
 <path>` restores from the **index**. Adding `--staged` changes the source to
@@ -1022,6 +1043,28 @@ quickshell owns `org.kde.StatusNotifierWatcher` and
 `org.kde.StatusNotifierHost-*` on the session bus. Check with
 `busctl --user list | /usr/bin/grep StatusNotifier` before assuming some other
 component is the host.
+
+**Two apt sources for one repository with different `Signed-By` values is an
+ERROR, and apt then reads NO sources at all.** Not a duplicate warning — the
+whole source list is refused:
+
+```
+   != /usr/share/keyrings/google-chrome.gpg
+E: The list of sources could not be read.
+```
+
+Measured in spec 18's rehearsal on a bare Debian 13.6. It matters because a
+vendor package writes its own source file from its `postinst` naming a keyring,
+while `home/bootstrap.nix` ships a bootstrap copy carrying an inline key, so the
+two collide the moment the vendor package installs. Every later apt command in
+that stage failed with exit 100.
+
+**And only two of the four vendors do it.** `google-chrome-stable` and
+`1password` write their own file; `code` and `endpoint-verification` ship none
+and write none, so deleting *their* bootstrap source leaves the package
+installed with no candidate version at all — the same position `slack-desktop`
+and `fresh-editor` are in. `calango.bootstrap.aptSourcesTransient` is the list
+of the two that must go, with an assertion tying each name to a real source.
 
 **`ufw` already has the integration point, so a `postinst` calling
 `ufw reload` is the wrong answer.**
