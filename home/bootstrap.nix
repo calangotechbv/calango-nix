@@ -422,4 +422,70 @@ in
   # Rides in home.packages as well, so the guard runs on every generation
   # build and not only under `nix build .#calangoBootstrap`.
   config.home.packages = [ config.calango.bootstrapDir ];
+
+  # Report where live /etc disagrees with the declaration. Non-fatal.
+  #
+  # TWO SUBJECTS WERE DESIGNED AND CUT FOR BEING VACUOUS, and naming them here
+  # is the point of this comment. `home-manager switch` builds and THEN
+  # activates, so by the time this runs the build has already needed the Nix
+  # daemon and needed flakes enabled -- or there would be no generation to
+  # activate. A hook testing `systemctl is-active nix-daemon.service`, or
+  # grepping ~/.config/nix/nix.conf for flakes, reports a property its own
+  # existence guaranteed. Do not add them back.
+  #
+  # A third was cut for being owned elsewhere: home/apt-hygiene.nix already
+  # warns on the autoremove census at every switch.
+  #
+  # Non-fatal by REQUIREMENT, not convenience, for the reason
+  # home/apps.nix's mimeappsIds gives: this is the machine's state, not this
+  # flake's, and a switch must never abort because /etc has drifted. A wrong
+  # DECLARATION is a build error, and the assertions above cover that.
+  #
+  # Child `sh -c`, so neither errexit nor pipefail is inherited -- SHELLOPTS is
+  # not exported by activate. That is what makes `cmp` returning 1 safe. Every
+  # binary is named from the store rather than found on PATH.
+  config.home.activation.bootstrapDrift =
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${pkgs.bash}/bin/sh -c '
+        B=${config.calango.bootstrapDir}
+        G=${pkgs.gnugrep}/bin/grep
+
+        # ABSENT and DIFFERENT are separate cases on purpose. A single cmp
+        # reports both identically, and they are not the same situation -- one
+        # is a machine mid-bootstrap, the other is a machine that has drifted.
+        # Same trap as a `find -L … || true` that swallows ENOENT as readily
+        # as no-match.
+        if [ ! -e /etc/greetd/config.toml ]; then
+          echo "bootstrap: /etc/greetd/config.toml is ABSENT." >&2
+          echo "  sudo install -Dm644 $B/etc/greetd/config.toml /etc/greetd/config.toml" >&2
+        elif ! ${pkgs.diffutils}/bin/cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml"; then
+          echo "bootstrap: /etc/greetd/config.toml DIFFERS from the declaration." >&2
+          echo "  sudo install -Dm644 $B/etc/greetd/config.toml /etc/greetd/config.toml" >&2
+          echo "  Read the diff first -- this file decides whether you can log in:" >&2
+          echo "  diff /etc/greetd/config.toml $B/etc/greetd/config.toml" >&2
+        fi
+
+        # grep -qx, matched as a WHOLE line. A substring search is the trap
+        # that let /bin match four of six PATH entries in spec 11; nothing in
+        # this group list collides today, and that is not the reason to rely
+        # on it.
+        have=$(${pkgs.coreutils}/bin/id -nG | ${pkgs.coreutils}/bin/tr " " "\n")
+        for g in ${lib.concatStringsSep " " cfg.groups}; do
+          if ! echo "$have" | "$G" -qx "$g"; then
+            echo "bootstrap: not in group $g." >&2
+            echo "  sudo usermod -aG $g ${config.home.username}   # next login" >&2
+          fi
+        done
+
+        # dpkg already checksums every file the metapackage ships, which covers
+        # the greetd session entry and /etc/default/slack for one command.
+        if [ -x /usr/bin/dpkg ]; then
+          bad=$(/usr/bin/dpkg -V calango-desktop 2>/dev/null || true)
+          if [ -n "$bad" ]; then
+            echo "bootstrap: calango-desktop ships files that have been edited:" >&2
+            echo "$bad" | ${pkgs.gnused}/bin/sed "s/^/  /" >&2
+          fi
+        fi
+      ' || true
+    '';
 }
