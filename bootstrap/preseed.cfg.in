@@ -13,7 +13,13 @@
 #   B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 #   (cd "$B" && python3 -m http.server 8000)
 #
-#   auto=true priority=critical url=http://<this-machine>:8000/preseed.cfg
+#   auto=true url=http://<this-machine>:8000/preseed.cfg
+#
+# No priority=critical: that would suppress every question below critical,
+# answering each from its installer default -- including disk, locale, mirror
+# and timezone, which RUNBOOK.md's Stage 0 tells the reader to answer by hand.
+# auto=true alone still fetches and applies this file. See RUNBOOK.md's Stage 0
+# for the account-question measurement that makes dropping it safe.
 #
 # It is unauthenticated http on a LAN for the minutes an install takes, and it
 # contains no secret. Do not leave it running afterwards.
@@ -39,6 +45,19 @@ d-i pkgsel/include string @basePackages@
 
 # No desktop task. The desktop is Nix's, and tasksel's would install a second one.
 tasksel tasksel/first multiselect standard
+
+# "none" is debian-installer's non-default: left unset it defaults to
+# safe-upgrade, pulling in whatever point-release fixes exist for the base
+# packages at install time. This file chooses "none" deliberately rather than
+# leaving the question to the installer's own default, for the same reason
+# Stage 0 answers disk, locale, mirror and timezone by hand instead of
+# preseeding them -- an unattended upgrade during install is a behaviour this
+# flake should choose on purpose, not one it should apply silently. The
+# consequence is real: a Stage-0 machine ends its install with base packages
+# at the netinst image's versions, where a hand-installed Stage A machine may
+# already be ahead by whatever point release landed since that image was
+# built. RUNBOOK.md's Stage 0 tells the reader to run `sudo apt upgrade`
+# afterwards if they want parity with a hand-installed machine.
 d-i pkgsel/upgrade select none
 popularity-contest popularity-contest/participate boolean false
 
@@ -50,7 +69,10 @@ popularity-contest popularity-contest/participate boolean false
 # empty password -- and that branch is where spec 18's rehearsal found two
 # missing packages.
 #
-# in-target runs inside the installed system, after pkgsel, so nix-users exists:
-# it is created by nix-setup-systemd's postinst, which pkgsel has already run.
-# Gate A is what proves that ordering held, and it stays for exactly that reason.
+# in-target runs inside the installed system, after pkgsel, so nix-users is
+# EXPECTED to exist by then: it is created by nix-setup-systemd's postinst,
+# which pkgsel has already run. That ordering is reasoned, not measured --
+# nobody has traced late_command's execution against the postinst here -- so
+# treat it as unproven. Gate A is what would catch a disagreement, and it
+# stays in the runbook for exactly that reason.
 d-i preseed/late_command string in-target usermod -aG @groupsWithSudo@ @username@
