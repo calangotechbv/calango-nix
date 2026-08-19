@@ -287,10 +287,30 @@ project's history, in the reporting layer rather than in a guard.
 
 ### The tooling
 
-It lives in `~/vm/runbook-loop/` and dies with that directory.
-`test/README-vm-harness.md` is the note saying it belongs in the repository, what
-the move must not lose, and what has to be generalised first. It has been
-written from scratch twice; the note exists so there is no third time.
+It is **`test/vm/` now**, imported the same day it was written, because it had
+already been written from scratch twice and each rewrite paid again for the same
+traps. `test/vm/README.md` carries the method, the declared accommodations and
+the nine things not to undo.
+
+Three things changed in the move, and they are the difference between a script
+that worked once and a tool:
+
+- the account name is not configurable. `vm_username` reads it out of the
+  rendered `preseed.cfg`, which gets it from the flake's `home.username`, so the
+  harness cannot disagree with the account the installer creates.
+- the hostname and the throwaway password are substituted into the initrd
+  preseed from the environment, with two guards that fail the run if the
+  substitution did not take. No step file spells an account or a host any more.
+- the weakness the note flagged is now a guard that fails the build. The step
+  files transcribe the runbook's commands, so each mirrored line carries the
+  runbook's own text above it as a `#= ` comment, and
+  `checks.vm-step-lines-verbatim` asserts all 33 appear verbatim in the rendered
+  `RUNBOOK.md`. `nix flake check` runs **seven** checks now. Both failure
+  branches were proven by mutation — a changed line is named, and stripping every
+  `#= ` line fires the vacuity anchor rather than reporting "0 of 0 verified".
+
+The imported copy was then run end to end from the repository before being
+trusted: `ok 33 step lines`, `Stage 0 OK`, six of six stages, GREEN.
 
 ## The desktop, verified by a person
 
@@ -318,12 +338,12 @@ It has since left `home/deb.nix`'s `keep` and
 ## Reproducing it
 
 ```sh
-~/vm/spec19-rehearsal/install.sh        # Stage 0, headless, serial-logged
-~/vm/spec19-rehearsal/boot-headless.sh
-~/vm/spec19-rehearsal/gate-a.py
+./test/vm/final-pass.sh        # fresh disk, install, boot, every stage
+./test/vm/run-with-display.sh  # then log in and look at it
 ```
 
-`~/vm/spec19-rehearsal/README.md` says which files are the product and which are
-scaffolding; `FINDINGS.md` there is the long form of findings 1-7. The full run
-is `~/vm/spec19-full/`, whose `drive.py` carries findings 10 and 11 as comments
-on the lines that fix them.
+`test/vm/README.md` says which files are the product and which are scaffolding,
+and `test/vm/drive.py` carries findings 10, 11 and 14 as comments on the lines
+that fix them. The two scratch directories these runs used --
+`~/vm/spec19-rehearsal` and `~/vm/spec19-full` -- are superseded and can be
+deleted; the harness rebuilds either from nothing in about twenty minutes.
