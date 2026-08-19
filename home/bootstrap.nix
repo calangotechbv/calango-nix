@@ -211,6 +211,7 @@ let
     "@groupsComma@" = lib.concatStringsSep "," cfg.groups;
     "@groupsGrepArgs@" = lib.concatStringsSep " " (map (g: "-e ${g}") cfg.groups);
     "@groupsCount@" = toString (builtins.length cfg.groups);
+    "@repoUrl@" = cfg.repoUrl;
     "@aptTransientFiles@" = lib.concatStringsSep " " (
       builtins.attrNames cfg.aptSourcesTransient
     );
@@ -269,6 +270,15 @@ in
       default = [ ];
       description = "Unix groups the desktop account must hold.";
     };
+    # The URL Stage B clones. HTTPS, not the ssh remote, and that is an ordering
+    # fact rather than a preference: a bare machine has no ssh key and no agent,
+    # and this project's keys live in 1Password's agent, which Stage C installs
+    # AFTER Stage B has already had to clone. There is no order in which the ssh
+    # remote works for the first clone.
+    repoUrl = lib.mkOption {
+      type = lib.types.str;
+      description = "The repository Stage B clones, over https.";
+    };
     aptSources = lib.mkOption {
       type = lib.types.attrsOf lib.types.lines;
       default = { };
@@ -304,6 +314,8 @@ in
 
   config.calango.bootstrap = {
     greetdConfig = builtins.readFile ./../bootstrap/greetd-config.toml;
+
+    repoUrl = "https://github.com/calangotechbv/calango-nix.git";
 
     # nix-users opens the daemon socket directory, which is 0770 root:nix-users.
     # video opens the DRM device and input the keyboard and pointer.

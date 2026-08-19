@@ -81,10 +81,16 @@ log in again.
 
 ## Stage B — as `<user>`
 
+The clone is over **https**, and that is an ordering fact rather than a
+preference. A bare machine has no ssh key and no agent, and this project's keys
+live in 1Password's agent — which Stage C installs, *after* this clone has
+already had to happen. There is no order in which the `git@` remote works here.
+Switch the remote to ssh later if you want to push from this machine.
+
 ```sh
 mkdir -p ~/.config/nix
 printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
-git clone <this repository> ~/Projects/calango-nix
+git clone @repoUrl@ ~/Projects/calango-nix
 cd ~/Projects/calango-nix
 ```
 
