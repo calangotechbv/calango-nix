@@ -479,6 +479,16 @@ in
 
         # dpkg already checksums every file the metapackage ships, which covers
         # the greetd session entry and /etc/default/slack for one command.
+        #
+        # Tested on OUTPUT, not exit status, because `dpkg -V` exits 0 either
+        # way -- measured directly against this machine:
+        #
+        #   dpkg -V greetd            -> exit 0, and it PRINTS a finding
+        #   dpkg -V calango-desktop   -> exit 0, and prints nothing
+        #
+        # So `if ! /usr/bin/dpkg -V pkg; then` could never fire, which is the
+        # same shape as a check that cannot fail. `[ -n "$bad" ]` on the
+        # captured text is what actually lets this branch report anything.
         if [ -x /usr/bin/dpkg ]; then
           bad=$(/usr/bin/dpkg -V calango-desktop 2>/dev/null || true)
           if [ -n "$bad" ]; then
