@@ -39,7 +39,7 @@
 | `flake.nix` | **modify.** Add `./home/slack.nix` to the module list at lines 144-149. |
 | `home/deb.nix` | **modify.** Drop `flatseal` from `keep`; add `flatpak` and `flatseal` to `ban`; rewrite the `xdg-desktop-portal` ban reason, which currently explains a flatpak `Recommends` that stops existing. |
 | `home/apps.nix` | **modify.** The `signalMimeappsId` comment names `slack.desktop` "where flatpak exports `com.slack.Slack.desktop`" — wrong once the `.deb` ships that id. |
-| `CLAUDE.md` | **modify.** Six corrections, two of them findings rather than rewording. |
+| `CLAUDE.md` | **modify.** Seven corrections, four of them findings rather than rewording (the `xdg-mime query default` entry was added mid-execution). |
 | `README.md` | **modify.** "What apt still owns" lists Signal, which spec 13 made false; add Slack. |
 
 ---
@@ -1161,6 +1161,36 @@ the first host launch.
    Expect exactly: `calango-desktop` upgraded, `flatpak` and `flatseal`
    removed, nothing else touched. Then run it for real.
 
+   **Expect a dpkg prompt on `/etc/default/slack`, and answer it `Y`.** That
+   path exists on this machine today as an unowned file carrying
+   `repo_reenable_on_distupgrade="true"`; `calango-desktop` ships the same
+   path as a conffile with `"false"`. dpkg does not overwrite a conffile whose
+   path already holds a differing file — it prompts, default `N` (keep the
+   current version):
+
+   ```
+   Configuration file '/etc/default/slack'
+    ==> File on system created by you or by a script.
+    ==> File also in package provided by package maintainer.
+    The default action is to keep your current version.
+   *** slack (Y/I/N/O/D/Z) [default=N] ?
+   ```
+
+   Pressing Enter takes the default and silently keeps
+   `repo_reenable_on_distupgrade="true"` — the transaction still matches the
+   simulation exactly, but step 6's deletion of `slack-desktop.gpg` stops
+   being a deletion, which is the failure this whole mechanism exists to
+   prevent. Answer **`Y`**. Do not add `-y`/`DEBIAN_FRONTEND=noninteractive`
+   to this install: either takes the wrong branch with no prompt at all.
+
+   Alternative: `sudo rm -f /etc/default/slack` immediately before this step
+   makes dpkg install its copy silently. Safe only right now (before step 1;
+   confirm with `ls /etc/cron.daily/` — the script does not exist yet) or in
+   the window immediately before this step — **not** unattended between step 1
+   and this one, because once Slack's `.deb` is installed the cron job exists
+   and, finding the file absent, recreates it with both knobs `"true"`,
+   installs both keys, and writes `slack.list` active.
+
 5. **`apt autoremove`, reading the "no longer required" list at that moment.**
    18 packages as of 2026-08-18. Read the list apt prints then, not this
    document's copy of it. For each candidate, union a `/proc` walk (`maps` and
@@ -1197,6 +1227,11 @@ the first host launch.
 
    `dpkg -V` does cover conffiles — verified able to fail, since `dpkg -V` with
    no argument reports `??5?????? c /etc/greetd/config.toml` on this machine.
+
+   `dpkg -V calango-desktop` reporting `??5?????? c /etc/default/slack` here
+   means step 4's prompt was answered the wrong way (`N` instead of `Y`).
+   Recover with `sudo rm -f /etc/default/slack && sudo apt install --reinstall
+   calango-desktop`.
 
 8. **`home-manager switch`**, then confirm the drift hook has gone quiet: no
    `out of date` line, and no `flatpak`/`flatseal` banned-and-installed

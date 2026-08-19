@@ -127,12 +127,31 @@ This is the same species as the `deb-systemd-helper` trap `CLAUDE.md` already
 records: a `rm` that a maintainer's own automation undoes. There the mechanism
 was a postinst; here it is cron.
 
-**Control for that reading:** `/etc/cron.daily/google-chrome` is the same script
-on this machine, with an identical `/etc/default/google-chrome` carrying the
-same two values — and Chrome's repo is genuinely live, so its copy is doing
-legitimate work. Chrome's is out of scope. It is cited only because it confirms
-the semantics above against a working case, and because it is a second instance
-of the unowned-file shape counted below.
+**Chrome's copy is a *later revision* of the same Chromium-derived script, and
+it corroborates nothing about the knobs.** `/etc/cron.daily/google-chrome` is a
+symlink to `/opt/google/chrome/cron/google-chrome`; following it:
+
+```sh
+awk '/^## MAIN/,0' /opt/google/chrome/cron/google-chrome
+# install_key                                          <- UNCONDITIONAL
+# if   [ "$repo_add_once" = "true" ];                 then create_sources_lists
+# elif [ "$repo_reenable_on_distupgrade" = "true" ];  then install_deb822_sources
+# fi
+```
+
+`install_key` runs regardless of either knob, and the function set is only 4 of
+9 names in common with Slack's script (`clean_sources_lists`,
+`create_sources_lists`, `find_apt_sources`, `install_key`) — no
+`install_new_key`, no `update_bad_sources`, no `handle_distro_upgrade`. Under
+Chrome's version, both knobs `"false"` would **not** stop the key being
+installed. Read correctly, Chrome's copy is a warning, not a control: upstream
+has already moved this script in the one direction that breaks the knob
+approach. The knob trace above is scoped to the version actually read —
+`4.50.143`, from the `.deb` in `~/Downloads` — and the `4.51.180` copy has not
+been read. Chrome's is still out of scope for this spec; it is cited only for
+the unowned-file shape counted below. Piece 6's `sudo /etc/cron.daily/slack` is
+the empirical backstop for exactly this gap: it tests the property against
+Slack's own script rather than trusting a reading of a different one.
 
 ### Four unowned files in `/etc` are Slack's, and one of them is the knob
 
@@ -390,6 +409,39 @@ rollback before a host Slack had been proven to work.
    every one of the 21 keeps that is not `flatseal` is untouched. Verify that
    before running it, and do not read a plausible-looking transaction as the
    expected one.
+
+   **Expect a dpkg prompt on `/etc/default/slack`, and answer it `Y`.** That
+   path exists on this machine today as an unowned file carrying
+   `repo_reenable_on_distupgrade="true"`, and `calango-desktop` ships the same
+   path as a conffile with `"false"`. dpkg does not overwrite a conffile path
+   that already holds a differing file on first install — it prompts, default
+   answer `N` (keep the current version):
+
+   ```
+   Configuration file '/etc/default/slack'
+    ==> File on system created by you or by a script.
+    ==> File also in package provided by package maintainer.
+    The default action is to keep your current version.
+   *** slack (Y/I/N/O/D/Z) [default=N] ?
+   ```
+
+   Pressing Enter takes the default and silently keeps
+   `repo_reenable_on_distupgrade="true"` — the package installs, the
+   transaction matches the simulation exactly, and step 5's deletion of
+   `slack-desktop.gpg` stops being a deletion, which is the precise failure
+   this file exists to prevent. Answer **`Y`**, install the maintainer's
+   version. A non-interactive install (`-y` with `DEBIAN_FRONTEND=noninteractive`,
+   or any `confold` default) takes the wrong branch with no prompt at all —
+   avoid those flags for this step.
+
+   The alternative is `sudo rm -f /etc/default/slack` immediately before this
+   step, which makes dpkg install its copy silently instead of prompting. That
+   deletion is safe only while no `/etc/cron.daily/slack` can run — right now
+   (the script does not exist yet; confirm with `ls /etc/cron.daily/`), or in
+   the window immediately before this step. It is **not** safe to delete
+   between step 1 and this step unattended: once Slack's `.deb` is installed
+   the cron job exists, and with the file absent it recreates it with both
+   knobs `"true"`, installs both keys, and writes `slack.list` active.
 4. **`apt autoremove`, reading the "no longer required" list at that moment.**
    18 packages today. Per the standing rule this list is read at the moment of
    removal, not inherited from this document. Each candidate needs the union
@@ -446,9 +498,16 @@ property.
 Checking that nothing has reappeared without running the job tests only that a
 day has not passed.
 
+`dpkg -V calango-desktop` reporting `??5?????? c /etc/default/slack` here means
+the install-time prompt above was answered the wrong way (`N` instead of `Y`).
+Recover with `sudo rm -f /etc/default/slack && sudo apt install --reinstall
+calango-desktop`.
+
 ### Piece 7 — the documents
 
-`CLAUDE.md` takes six corrections, three of which are findings:
+`CLAUDE.md` takes seven corrections, four of which are findings (the
+`xdg-mime query default` entry was added mid-execution, after this spec was
+written — count from what shipped, not from this list):
 
 1. **The standing fact "there is no longer a file outside `$HOME` that no
    package owns" is false**, by 182 files in `/etc` alone. Restate it to the

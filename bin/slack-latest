@@ -83,5 +83,5 @@ else
 fi
 
 printf '\n'
-printf '  curl -fL -o ~/Downloads/%s \\\n      %s\n' "$deb" "$url"
-printf '  sudo apt install ~/Downloads/%s\n' "$deb"
+printf "  curl -fL -o ~/Downloads/'%s' \\\\\n      '%s'\n" "$deb" "$url"
+printf "  sudo apt install ~/Downloads/'%s'\n" "$deb"

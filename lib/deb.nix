@@ -70,7 +70,7 @@ in
          Kept:
         ${reasonLines manifest.keep}
          .
-         Refused, because the Nix side owns them now:
+         Refused, each for the reason beside it:
         ${reasonLines manifest.ban}
       '';
 
@@ -133,6 +133,13 @@ in
         # stale optionalString. That is precisely the bug this task fixed, and
         # a derived value cannot catch it: asserting the derivation against
         # itself is vacuous. So this reads the tree.
+        #
+        # This checks only etcpaths ⊆ conffiles. The reverse -- every
+        # conffiles entry names a real path in the package -- needs no check
+        # here: dpkg-deb itself refuses to build a package whose conffiles
+        # list names an absent path ("conffile '/etc/absent' does not appear
+        # in package", exit 2), and that happens a few lines below when this
+        # builder actually calls it.
         #
         # It lives in the builder rather than in `guards`, and that is forced:
         # guards are INPUTS to this derivation, so a guard cannot inspect the

@@ -1180,8 +1180,40 @@ for deliberate testing.
 
   Same species as the `deb-systemd-helper` trap below: a `rm` that a
   maintainer's own automation undoes. There it was a postinst; here it is cron.
-  `/etc/cron.daily/google-chrome` is the identical script for a repo that
-  genuinely works, which is the control that proves this reading.
+
+  **`/etc/cron.daily/google-chrome` is not a control for this reading — it is a
+  later revision of the same script, and corroborates nothing about the
+  knobs.** It is a symlink to `/opt/google/chrome/cron/google-chrome`; read the
+  target:
+
+  ```sh
+  awk '/^## MAIN/,0' /opt/google/chrome/cron/google-chrome
+  # install_key                                          <- UNCONDITIONAL
+  # if   [ "$repo_add_once" = "true" ];                 then create_sources_lists
+  # elif [ "$repo_reenable_on_distupgrade" = "true" ];  then install_deb822_sources
+  # fi
+  ```
+
+  `install_key` runs before either knob is tested, and only 4 of 9 function
+  names are shared with Slack's script (`clean_sources_lists`,
+  `create_sources_lists`, `find_apt_sources`, `install_key` — no
+  `install_new_key`, `update_bad_sources` or `handle_distro_upgrade`). Under
+  Chrome's version, both knobs `"false"` would **not** stop the key install.
+  Read correctly this is a warning, not a confirmation: upstream has already
+  moved this script in the direction that breaks the knob approach. Chrome's
+  repo genuinely works, so its copy is doing legitimate work and stays out of
+  scope — it just proves nothing about Slack's semantics. The knob trace above
+  is scoped to the version actually read, `4.50.143` from the `.deb` in
+  `~/Downloads`; the `4.51.180` copy has not been read. `sudo
+  /etc/cron.daily/slack` (Piece 6 of spec 17) is the empirical backstop for
+  exactly this gap — it tests the property against Slack's own script rather
+  than trusting a reading of a different one.
+
+  **How the wrong claim got in, since this file opens by warning about exactly
+  this shape:** it was reached from a `readlink` confirming
+  `/etc/cron.daily/google-chrome` exists and points somewhere, which is a real
+  command whose output does not support "identical script" — that conclusion
+  needed the target read, not just resolved.
 - **A previous Home Manager generation is not a recovery path.** It lacks the
   uwsm session units, both portal backends, the portal frontend, the portal
   config and the font baseline. Recovery is fix-forward:
@@ -1204,8 +1236,23 @@ for deliberate testing.
   `ca-certificates.conf`), apt keyrings, admin-created `apparmor.d/local`
   entries, and `/etc/default/google-chrome`, which Chrome's own cron job
   writes. So "unowned" is not "wrong" here, and the 182 is not a defect list.
-  What is worth keeping is the scope discipline: a claim about a filesystem
-  needs a command that walks the filesystem.
+
+  **182 is itself a floor, not the true count, and this entry's own lesson
+  says so.** Run unprivileged, `find /etc` cannot descend into six directories
+  it has no permission to read:
+
+  ```sh
+  find /etc -type d ! -readable
+  # /etc/credstore.encrypted  /etc/credstore  /etc/polkit-1/rules.d
+  # /etc/ssl/private  /etc/libvirt/secrets  /etc/cups/ssl
+  ```
+
+  so the true figure is **≥182**. An entry whose whole point is "a claim about
+  a filesystem needs a command that walks the filesystem" should say that its
+  own command walks all but six of it. What is worth keeping is the scope
+  discipline: a claim about a filesystem needs a command that walks the
+  filesystem, and even that command has a floor unless it is run as a user who
+  can read everything.
 
   The greetd session entry was root-owned, hand-created and unowned for the whole
   life of this flake. As of 2026-08-18 it is
@@ -1511,8 +1558,9 @@ for deliberate testing.
   `Depends: … flatpak …`, so flatpak cannot be removed before flatseal is,
   and flatseal cannot be removed before the rebuilt `.deb` — which drops
   the `Depends` — is installed.
-- **`~/.config/mimeapps.list` has at least one dead association, and it is
-  not this flake's.** `eu.calangotech.KBrowserSelector.desktop` — the stale
+- **`~/.config/mimeapps.list` has at least two dead associations today, and at
+  least one once the `.deb` lands — and neither is this flake's.**
+  `eu.calangotech.KBrowserSelector.desktop` — the stale
   root-owned entry `home/apps.nix`'s `defaultBrowser` hook displaced in
   `[Default Applications]`, still named by both `[Added Associations]` lines,
   and present nowhere on disk. "At least one" rather than exactly one: the

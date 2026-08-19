@@ -81,8 +81,15 @@ in
   #
   # Same species as the deb-systemd-helper trap in CLAUDE.md: a rm that the
   # maintainer's own automation undoes. There the mechanism was a postinst;
-  # here it is cron. /etc/cron.daily/google-chrome is the identical script for
-  # a repo that genuinely works, and is out of scope.
+  # here it is cron. /etc/cron.daily/google-chrome is a LATER REVISION of the
+  # same Chromium-derived script, not a control for this reading: its
+  # install_key runs unconditionally, before either knob is tested, so under
+  # Chrome's version both knobs "false" would not stop the key being
+  # installed. It is out of scope here regardless -- Chrome's repo genuinely
+  # works and its copy is doing legitimate work -- but it corroborates nothing
+  # about Slack's semantics above. The knob trace was read against 4.50.143;
+  # Piece 6 of the spec (sudo /etc/cron.daily/slack) is the empirical backstop
+  # that tests the property directly instead of trusting the reading.
   #
   # lib/deb.nix makes this a conffile because the key begins `etc/`. That is
   # required, not cosmetic: an /etc file with no conffiles entry is replaced by
