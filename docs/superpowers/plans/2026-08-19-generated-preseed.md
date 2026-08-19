@@ -279,17 +279,26 @@ cat "$B/preseed.cfg"
 Confirm by eye, and then by command, that all three generated values landed:
 
 ```sh
-/usr/bin/grep -c '@' "$B/preseed.cfg"                      # 0
+# Count TOKEN-SHAPED @…@, not bare @: the template's own prose says
+# "<user>@<host>", which is a literal @ and must not be read as a stray token.
+/usr/bin/grep -cE '@[a-zA-Z]+@' "$B/preseed.cfg"           # 0
 /usr/bin/grep -o 'd-i passwd/username string .*' "$B/preseed.cfg"
-/usr/bin/grep -o 'd-i pkgsel/include string .*' "$B/preseed.cfg" | tr ' ' '\n' | tail -n +5 | wc -l
+/usr/bin/grep -o 'd-i pkgsel/include string .*' "$B/preseed.cfg" \
+  | sed 's|^d-i pkgsel/include string ||' | tr ' ' '\n' | /usr/bin/grep -c .
 /usr/bin/grep -o 'usermod -aG [^ ]*' "$B/preseed.cfg"
 # and confirm the two token names did not get crossed:
 /usr/bin/grep -c '@groupsComma@' bootstrap/preseed.cfg.in     # 0 -- that one is the runbook's
 /usr/bin/grep -c '@groupsWithSudo@' bootstrap/preseed.cfg.in  # 1
 ```
 
-Expected: `0` stray `@`; the username `isutton`; **12** packages; and
+Expected: `0` token-shaped matches; the username `isutton`; **12** packages; and
 `usermod -aG nix-users,video,input,sudo`.
+
+**Strip the directive before counting the packages, and count non-empty fields.**
+An earlier version of this step piped the whole matched line through
+`tail -n +5`, which drops one package because `d-i pkgsel/include string` is
+three words, not four. It read 11 against a real 12 — a count that looks
+plausible and is wrong, which is the shape this project keeps paying for.
 
 **A generated file nobody has read is a file nobody can run.** If any rendered
 line is wrong, that is a finding about the template, and finding it here is the
@@ -312,12 +321,17 @@ message names `bootstrap/preseed.cfg.in`, not the runbook.
 
 This is the trap Step 2 exists for, so it gets its own mutation.
 
+**`@username@` appears TWICE in the template** — in the `passwd/username` line
+and in the `late_command` line — and `lib.hasInfix` is satisfied by a single
+surviving occurrence. A mutation that removes only one proves nothing, so remove
+both and confirm the count is 0 before building:
+
 ```sh
-sed -i 's|^d-i passwd/username string @username@|d-i passwd/username string generated|' bootstrap/preseed.cfg.in
-/usr/bin/grep -c '@username@' bootstrap/preseed.cfg.in        # 0
+sed -i 's|@username@|GENERATED|g' bootstrap/preseed.cfg.in
+/usr/bin/grep -c '@username@' bootstrap/preseed.cfg.in        # 0 -- BOTH gone
 sg nix-users -c 'nix build --no-link .#calangoBootstrap' 2>&1 | tail -4
 git restore --worktree bootstrap/preseed.cfg.in
-/usr/bin/grep -c '@username@' bootstrap/preseed.cfg.in        # 1
+/usr/bin/grep -c '@username@' bootstrap/preseed.cfg.in        # 2 -- both restored
 ```
 
 Expected: **evaluation** fails with
