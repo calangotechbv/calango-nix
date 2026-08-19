@@ -292,13 +292,23 @@ It lives in `~/vm/runbook-loop/` and dies with that directory.
 the move must not lose, and what has to be generalised first. It has been
 written from scratch twice; the note exists so there is no third time.
 
-## What is not verified
+## The desktop, verified by a person
 
-**Gate D's last two lines**, which need a graphical login: they read `loginctl`
-and Hyprland's own `/proc/<pid>/environ`. Everything from Stage 0 through Stage D
-is verified by the uninterrupted pass above. **Whether the desktop looks right
-was never something this harness could answer** — that is one person and one
-window, and it is the step this document stops at.
+The machine the green pass produced was booted with a display on 2026-08-19 and
+**the desktop came up: greetd offered the session, the login worked, and Hyprland
+is running.** That is the step no harness here could answer, and it closes the
+runbook end to end — Stage 0 through Stage D by measurement, the desktop itself
+by one person and one window.
+
+Not captured, and worth knowing that it was not: Gate D's two exact command
+outputs, `loginctl show-session … -p Type` and the `LIBGL_DRIVERS_PATH` count out
+of the compositor's own `/proc/<pid>/environ`. The desktop rendering *is* strong
+evidence for both — the session is wayland or Hyprland would not have started,
+and a compositor without the nixGL variables aborts rather than draws — but that
+is an inference, not the two numbers. Anyone repeating this should type them in a
+terminal inside the session.
+
+## What is not verified
 
 `fresh-editor` was installed from a file served by the host rather than fetched
 upstream — the one declared deviation in this run, and out of scope by decision.
