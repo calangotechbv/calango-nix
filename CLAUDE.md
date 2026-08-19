@@ -53,6 +53,14 @@ The looser pattern disagreed with nix's own summary line and nothing warned
 about it. Prefer the summary if you only want the number; use the `checks\.`
 form when you want to see which ones ran.
 
+**Before writing a VM harness to test `RUNBOOK.md`, read
+`test/README-vm-harness.md`.** It has been written from scratch twice, and each
+rewrite paid again for the same traps -- typing into GRUB, a redirected step
+hiding a debconf prompt, `/tmp` cleared on reboot taking the evidence with it, a
+wrapper whose `echo` reported success for a failed run. The harness itself is
+still outside the repository; that file says what it is, what it must not lose,
+and what has to be generalised before it lands.
+
 `bar-title-slot` is unlike the other five: it *runs* this flake's QML under
 the pinned Qt with the offscreen platform, rather than inspecting a built
 tree. So the shell tree is now covered by a build-time guard as well, and a
