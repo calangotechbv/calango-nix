@@ -535,8 +535,25 @@ A constraint nobody has watched bite is a constraint nobody can check.
 | session-path agreement | every `calango.deb.files` entry under `wayland-sessions/` sits in a directory `greetdConfig`'s `--sessions` names | `assertions` | moving the entry to a directory not on the list |
 | `groups` non-empty | the vacuity anchor for the group check | `assertions` | forcing the option to `[ ]` |
 | `greetdConfig` non-empty | the vacuity anchor for the file check | `assertions` | forcing the option to `""` |
+| a session entry exists | the vacuity anchor for the guard below it | `assertions` | shipping no `wayland-sessions/` entry at all |
 | per-host hyprland file | every `homeConfigurations` host has a `hypr/hosts/<name>.lua` | `checks` | adding a host with no file |
 | drift check | live `/etc` agrees with the declaration | activation hook | three mutations, above |
+| `noStorePathsInEtc` | no file under `etc/` names the Nix store | an **input** of `bootstrapDir`, and `home.packages` | a store path in `greetd-config.toml`; both build targets must fail |
+| runbook tokens | no `@token@` survives substitution, and none is deleted from the template | inside the runbook builder | adding `@nosuchtoken@`, and deleting `@groupsCount@` |
+
+The last two were added while writing the plan and are recorded here so this
+table stays the authority. `noStorePathsInEtc` matters because these files are
+installed with root and outlive any generation: when the store path is
+collected the file points at nothing, and for `/etc/greetd/config.toml` that
+means no login. It rides as an **input** of `bootstrapDir` rather than only in
+`home.packages`, because `nix build .#calangoBootstrap` never evaluates
+`home.packages` — which is spec 16's defect 10, in a new place.
+
+The token guard is guarded in **both** directions, and only one direction is
+the familiar one. `@[a-zA-Z]*@` catches a token nobody substitutes;
+`--replace-fail` catches a substitution whose token was deleted from the
+template. A guard for only the first passes a runbook that silently lost a
+value.
 
 The first guard is the best one available here, because it relates two
 declarations that already exist in this flake and that nothing has ever
