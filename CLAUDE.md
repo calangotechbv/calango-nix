@@ -1124,12 +1124,49 @@ while `home/bootstrap.nix` ships a bootstrap copy carrying an inline key, so the
 two collide the moment the vendor package installs. Every later apt command in
 that stage failed with exit 100.
 
-**And only two of the four vendors do it.** `google-chrome-stable` and
-`1password` write their own file; `code` and `endpoint-verification` ship none
-and write none, so deleting *their* bootstrap source leaves the package
-installed with no candidate version at all — the same position `slack-desktop`
-and `fresh-editor` are in. `calango.bootstrap.aptSourcesTransient` is the list
-of the two that must go, with an assertion tying each name to a real source.
+**And only two of the four vendors do it — but `code` is a conditional case,
+not a "writes none" case, and this passage said the wrong thing about it for a
+whole spec.** `google-chrome-stable` and `1password` write their own file
+unconditionally. `endpoint-verification` ships none and writes none. `code`
+**does** write `/etc/apt/sources.list.d/vscode.sources` and
+`/usr/share/keyrings/microsoft.gpg` — suffer has both, dated the day `code` was
+installed there — but only when nothing else already maps that repository:
+
+```sh
+sed -n '117,121p' /var/lib/dpkg/info/code.postinst
+# if has_existing_repo_source; then
+#     # Another source list file already maps to this repository.
+#     # Keep key writing behavior, but do not write our own source entry.
+#     WRITE_SOURCE='no'
+# fi
+```
+
+`calango-bootstrap-microsoft.sources` maps it, so on the bootstrap path `code`
+writes no source file and there is no collision — measured on a bare machine,
+where `vscode.sources` does not exist afterwards and `apt update` reads every
+source. The old wording happened to give the right *answer* for the bootstrap
+path by a reason that is false in general, which is worse than being wrong
+outright: it would have justified deleting the microsoft bootstrap source on a
+machine where `code` had been installed first.
+
+That check also runs **after** `code`'s debconf question, so an existing source
+file does not suppress the prompt — see the entry below. Deleting `code`'s or
+`endpoint-verification`'s bootstrap source leaves the package installed with no
+candidate version at all, the same position `slack-desktop` and `fresh-editor`
+are in. `calango.bootstrap.aptSourcesTransient` is the list of the two that
+must go, with an assertion tying each name to a real source.
+
+**A maintainer script can prompt even when you redirected apt into a file,
+because apt runs it under a pty.** `code`'s postinst asks
+`code/add-microsoft-repo` at `db_input high` whenever `[ -t 1 ]` holds, and it
+holds under apt regardless of where apt's own stdout went. Spec 19's rehearsal
+lost ten minutes to a VM sitting at 3% CPU with a silent console for exactly
+this reason: the dialog was drawn into the redirected log, where it could be
+neither seen nor answered. If a harness redirects an apt step, `tee` the
+prompt-shaped lines back to the terminal, or preseed the answer with
+`debconf-set-selections` — and note that piping a password into `sudo -S`
+corrupts `debconf-set-selections`, which reads its own input from stdin
+(`error: parse error on line 1: 'rehearsal'`).
 
 **`ufw` already has the integration point, so a `postinst` calling
 `ufw reload` is the wrong answer.**

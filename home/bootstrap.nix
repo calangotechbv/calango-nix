@@ -507,7 +507,7 @@ in
       "1password" = "https://downloads.1password.com/linux/debian/amd64 -- calango-bootstrap-1password.sources";
       "1password-cli" = "The same repository as 1password. These two share one, which is why there are four repositories and not five.";
       endpoint-verification = "https://packages.cloud.google.com/apt -- calango-bootstrap-google-cloud.sources. Corporate enrolment is a separate, human step.";
-      slack-desktop = "NO repository. apt-cache policy shows one version-table entry, /var/lib/dpkg/status. Fetch the .deb; bin/slack-latest prints the current version and the commands.";
+      slack-desktop = "NO repository. apt-cache policy shows one version-table entry, /var/lib/dpkg/status. Ask Slack's own feed for the version, as the block above does -- bin/slack-latest is a template in the clone and its substituted copy does not exist until Stage D.";
       fresh-editor = "NO repository, same as slack-desktop. Upstream is https://sinelaw.github.io/fresh/. Debian's 0.4.7 outranks nixpkgs' 0.3.6, which is why this one stays on apt.";
     };
   };

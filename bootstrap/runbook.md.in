@@ -347,9 +347,27 @@ are in. Measured: after all four were deleted, `apt-cache policy code` and
 **Then the @corpFileOnlyCount@ that come from no repository at all.** Fetch
 each `.deb` and install it from the file:
 
+**Do not reach for `./bin/slack-latest` here.** The copy in the clone is a
+template: `grep -c '@[a-zA-Z]*@' bin/slack-latest` reads 6, and running it exits
+1. The substituted copy is `~/.nix-profile/bin/slack-latest`, which does not
+exist until Stage D's first `activate` — and Slack has to be installed *before*
+the metapackage, because `slack-desktop` is one of its `Depends`. There is no
+order in which that helper can serve this step; it is for keeping Slack current
+afterwards. Measured on a machine at exactly this point:
+
+```
+slack-latest is NOT on PATH
+ls: cannot access '/home/isutton/.nix-profile/bin/slack-latest': No such file or directory
+```
+
+Ask Slack's feed directly instead. This is the same query the helper makes:
+
 ```sh
-./bin/slack-latest                 # prints the current version and the commands
-sudo apt install ./slack-desktop-<version>-amd64.deb
+V=$(curl -sS 'https://slack.com/api/desktop.latestRelease?arch=x64&variant=deb' \
+    | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+echo "$V"
+curl -fsSLO "https://downloads.slack-edge.com/desktop-releases/linux/x64/$V/slack-desktop-$V-amd64.deb"
+sudo apt install ./slack-desktop-"$V"-amd64.deb
 sudo apt install ./fresh-editor_<version>_amd64.deb
 ```
 
@@ -372,13 +390,55 @@ sudo install -Dm644 "$B/etc/greetd/config.toml" /etc/greetd/config.toml
 sudo systemctl enable greetd.service
 ```
 
-On a bare machine dpkg asks **nothing** during any of this. On suffer
-`/etc/default/slack` already existed unowned, so dpkg raised a conffile prompt
-whose default answer re-armed a dead repository. Slack's `.deb` ships no such
-file — its cron job creates one — so installing `calango-desktop` on the first
-day means there is nothing to prompt about.
+**One thing does ask, and it stops the stage until you answer.** `code`'s
+postinst puts up a debconf question at priority `high`:
+
+```
+Configuring code
+The installer would like to add the Microsoft repository and signing key
+to update VS Code through apt.
+Add Microsoft apt repository for Visual Studio Code?   <Yes>  <No>
+```
+
+**Either answer is safe here**, which is why this is a warning about a stall
+rather than about a wrong choice. `code.postinst` checks whether any existing
+source file already maps that repository, and
+`calango-bootstrap-microsoft.sources` does:
+
+```sh
+if has_existing_repo_source; then
+    # Another source list file already maps to this repository.
+    # Keep key writing behavior, but do not write our own source entry.
+    WRITE_SOURCE='no'
+fi
+```
+
+So no second source file is written either way, and no `Signed-By` collision
+follows — the only difference between Yes and No is whether
+`/usr/share/keyrings/microsoft.gpg` gets created, which nothing here reads.
+Verified on a bare machine: after answering, `/etc/apt/sources.list.d/vscode.sources`
+does not exist and `apt update` reads every source.
+
+Note that check runs *after* the question, so a source file you already have
+cannot suppress the prompt. And **redirecting apt's output does not make the
+prompt go away**: apt runs maintainer scripts under a pty, so the postinst's
+`[ -t 1 ]` is true even when you piped apt into a file. A run that sends this
+stage's output to a log will simply sit there, idle and silent, until something
+answers. Measured: ten minutes of a VM at 3% CPU before anyone noticed.
+
+Apart from that, dpkg asks nothing. On suffer `/etc/default/slack` already
+existed unowned, so dpkg raised a conffile prompt whose default answer re-armed
+a dead repository. Slack's `.deb` ships no such file — its cron job creates one —
+so installing `calango-desktop` on the first day means there is nothing to
+prompt about. Confirmed on a bare machine: after the whole stage,
+`find /etc -name '*.dpkg-*' -o -name '*.ucf-*'` finds nothing.
 
 ### Gate C
+
+**Four separate commands. Do not join them with `&&`** — line 2 prints `0` and
+**exits 1**, because that is what `grep -c` does when it counts nothing, so a
+chained version aborts there and reads as a failed gate. Met while rehearsing
+this very stage.
 
 ```sh
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop   # ii calango-desktop
