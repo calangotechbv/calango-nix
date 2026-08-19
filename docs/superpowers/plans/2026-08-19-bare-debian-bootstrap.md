@@ -55,6 +55,11 @@ this section.
   token guard pattern is `@[a-zA-Z]*@`; `<user>` and `<host>` must not match it.
 - **There is no test framework in this repository.** A "test" here is a build,
   a measurement, or a mutation.
+- **`git add` a newly created file before you build.** Flake evaluation reads
+  the git-tracked tree, not the raw working directory, so an unstaged new file
+  fails with `path … does not exist` — which reads like a typo in the path
+  rather than like a staging problem. Found by Task 1's implementer on its
+  first build. This binds Tasks 2, 3 and 5, each of which creates files.
 - **Tasks 2 and 3 add keys to option paths Task 1 already opened, and that is
   legal.** Nix merges distinct leaves under a shared prefix, so
   `options.calango.bootstrap = { greetdConfig = …; }` beside
