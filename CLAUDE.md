@@ -693,6 +693,24 @@ reported. Cosmetic, since an empty directory dangles nothing, but don't read
 either loop's silence as "no residue of any kind" — only as "no dangling
 *symlinks*".
 
+**A user unit that talks to a system service needs a CONDITION, not an
+`After`.** `home/services.nix`'s `bt-agent` named `bluetooth.service` in `After`
+for the whole life of this flake. That is a *system* unit and `bt-agent` is a
+*user* unit, so the ordering was never enforceable -- and naming it made the user
+manager carry a phantom `bluetooth.service not-found` entry that reads like a
+broken dependency. Nothing stopped the agent running where there was no
+`bluetoothd` either: on a machine with no Bluetooth adapter it restarted for
+ever, measured at 81 and climbing in spec 18's rehearsal VM, logging
+`bt-agent: bluez service is not found` each time. `Restart = "on-failure"` with
+`RestartSec = 2` spaces the retries wide enough to escape systemd's default
+start limit, so the loop never trips one.
+
+The gate is the condition Debian's own `bluetooth.service` uses on itself,
+`ConditionPathIsDirectory=/sys/class/bluetooth`, which skips the unit with an
+explanatory log line instead of looping. **suffer has an adapter, which is
+exactly why this was invisible here for eighteen specs** -- the class of bug only
+a second machine can show you.
+
 **Removing a package does not kill its running process.** Absence is only
 measurable after the session ends — check after the reboot, not before.
 
@@ -1514,6 +1532,28 @@ for deliberate testing.
   never by scrubbing the session. Do not mount `/nix/store` into the sandbox
   either: a host mesa against the runtime's own glibc is worse than the
   fallback.
+
+  **The rule is broader than the sandbox, and spec 18 found that out. ANY
+  Debian-linked GL application launched from this session can break, with
+  `/nix/store` fully visible to it.** Debian's qemu, started from the session to
+  open a VM window:
+
+  ```
+  qemu: GtkGLArea console lacks DMABUF support.
+  epoxy_get_proc_address: Assertion `0 && "Couldn't find current GLX or EGL
+  context."' failed.  Aborted (core dumped)
+  ```
+
+  Nothing is sandboxed there. `__EGL_VENDOR_LIBRARY_FILENAMES` tells libglvnd to
+  use *only* Nix's mesa vendor JSON and `LD_LIBRARY_PATH` puts Nix's mesa first,
+  so Debian's GTK loads a Nix `libEGL` into a Debian process. The entry above
+  explains the flatpak case by the missing store path, which is true there and is
+  not the general mechanism. Same fix, spelled for a plain command:
+
+  ```sh
+  env -u LD_LIBRARY_PATH -u LIBGL_DRIVERS_PATH -u GBM_BACKENDS_PATH \
+      -u LIBVA_DRIVERS_PATH -u __EGL_VENDOR_LIBRARY_FILENAMES qemu-system-x86_64 …
+  ```
 
   **This flake never owned those overrides, deliberately.**
   `~/.local/share/flatpak/overrides/` held seven files on 2026-08-17, and
