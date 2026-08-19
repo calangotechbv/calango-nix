@@ -193,7 +193,7 @@ popularity-contest popularity-contest/participate boolean false
 # in-target runs inside the installed system, after pkgsel, so nix-users exists:
 # it is created by nix-setup-systemd's postinst, which pkgsel has already run.
 # Gate A is what proves that ordering held, and it stays for exactly that reason.
-d-i preseed/late_command string in-target usermod -aG @groupsComma@ @username@
+d-i preseed/late_command string in-target usermod -aG @groupsWithSudo@ @username@
 ```
 
 - [ ] **Step 4: Add the substitutions and the rendered derivation**
@@ -214,7 +214,12 @@ must not silently satisfy the other's presence check.
     # sudo is appended to the declared groups rather than added to the option:
     # calango.bootstrap.groups is what the DESKTOP needs, and the drift check
     # reports on it. sudo is what Stage C needs, which is a different question.
-    "@groupsComma@" = lib.concatStringsSep "," (cfg.groups ++ [ "sudo" ]);
+    # NOT named @groupsComma@: the runbook's own substitutions attrset already
+    # has that token, holding cfg.groups WITHOUT sudo, and its template uses it.
+    # Two different values must not share one token name -- a reader seeing it in
+    # either template could not tell which they get, and moving a line between
+    # templates would silently change behaviour.
+    "@groupsWithSudo@" = lib.concatStringsSep "," (cfg.groups ++ [ "sudo" ]);
   };
 
   preseedText =
@@ -278,6 +283,9 @@ Confirm by eye, and then by command, that all three generated values landed:
 /usr/bin/grep -o 'd-i passwd/username string .*' "$B/preseed.cfg"
 /usr/bin/grep -o 'd-i pkgsel/include string .*' "$B/preseed.cfg" | tr ' ' '\n' | tail -n +5 | wc -l
 /usr/bin/grep -o 'usermod -aG [^ ]*' "$B/preseed.cfg"
+# and confirm the two token names did not get crossed:
+/usr/bin/grep -c '@groupsComma@' bootstrap/preseed.cfg.in     # 0 -- that one is the runbook's
+/usr/bin/grep -c '@groupsWithSudo@' bootstrap/preseed.cfg.in  # 1
 ```
 
 Expected: `0` stray `@`; the username `isutton`; **12** packages; and
