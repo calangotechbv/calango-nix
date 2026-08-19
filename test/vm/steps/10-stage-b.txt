@@ -1,0 +1,32 @@
+#T 120
+
+#= mkdir -p ~/.config/nix
+#= printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
+mkdir -p ~/.config/nix
+printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
+cat ~/.config/nix/nix.conf
+
+#T 300
+
+#= GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote https://github.com/calangotechbv/calango-nix.git HEAD
+GIT_TERMINAL_PROMPT=0 git -c credential.helper= ls-remote https://github.com/calangotechbv/calango-nix.git HEAD
+
+#T 600
+
+#= git clone https://github.com/calangotechbv/calango-nix.git ~/Projects/calango-nix
+git clone https://github.com/calangotechbv/calango-nix.git ~/Projects/calango-nix
+cd ~/Projects/calango-nix && git log --oneline -1
+
+#T 120
+
+#= cp hypr/hosts/suffer.lua hypr/hosts/<host>.lua
+#= cp foot/hosts/suffer.ini foot/hosts/<host>.ini
+#= cp gtk/hosts/suffer.conf gtk/hosts/<host>.conf
+cd ~/Projects/calango-nix && cp hypr/hosts/suffer.lua hypr/hosts/@HOST@.lua && cp foot/hosts/suffer.ini foot/hosts/@HOST@.ini && cp gtk/hosts/suffer.conf gtk/hosts/@HOST@.conf && ls hypr/hosts/@HOST@.lua foot/hosts/@HOST@.ini gtk/hosts/@HOST@.conf
+
+#T 120
+
+# The runbook shows this as a nix snippet to add by hand, not a command, so
+# there is no #= line to match: a sed is the mechanical equivalent of the edit
+# the document asks the reader to make.
+cd ~/Projects/calango-nix && sed -i 's|^      suffer = mkHome "isutton" "suffer";|      suffer = mkHome "isutton" "suffer";\n      @HOST@ = mkHome "@USER@" "@HOST@";|' flake.nix && sed -i 's|^        "isutton@suffer" = suffer;|        "isutton@suffer" = suffer;\n        "@USER@@@HOST@" = @HOST@;|' flake.nix && grep -n '@HOST@' flake.nix

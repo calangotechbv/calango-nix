@@ -574,6 +574,63 @@
             echo "ok  $(wc -l < declared) package(s) agree"
             touch "$out"
           '';
+
+        # test/vm/steps/*.txt transcribe RUNBOOK.md's commands by hand -- each
+        # runbook command they mirror carries the runbook's own text above it
+        # as a `#= ` line (see test/vm/README.md). test/vm/check-steps.sh
+        # already asserts every `#=` line appears verbatim in the rendered
+        # RUNBOOK.md, but it is a script someone has to remember to run: a
+        # runbook edit with no matching step-file edit builds and switches
+        # cleanly and the harness goes on testing the old wording. This is the
+        # same assertion, at build time, so `nix flake check` catches the
+        # drift instead of a person having to.
+        #
+        # ${./test/vm/steps} is a source input the same way ${./hypr/hosts}
+        # is above -- a Nix build cannot read a path it was never given, and
+        # test/vm/steps/*.txt are not referenced by any other flake output.
+        vm-step-lines-verbatim =
+          pkgs.runCommand "vm-step-lines-verbatim" { } ''
+            r=${suffer.config.calango.bootstrapDir}/RUNBOOK.md
+            steps=${./test/vm/steps}
+
+            total=0
+            missing=0
+            fails=""
+            while IFS= read -r line; do
+              total=$((total + 1))
+              # -F: the runbook is full of $, ", * and \n, none of it a
+              # regex here -- same reasoning as check-steps.sh.
+              if ! grep -qF -- "$line" "$r"; then
+                missing=$((missing + 1))
+                fails="$fails
+            MISSING from RUNBOOK.md: $line"
+              fi
+            done < <(sed -n 's/^#= //p' "$steps"/*.txt)
+
+            # The vacuity anchor check-steps.sh itself carries, reproduced
+            # here: with no '#=' lines the loop above runs zero times,
+            # $missing stays 0, and this would pass having asserted nothing --
+            # exactly what "the property holds" looks like for a check with
+            # nothing in it.
+            if [ "$total" -eq 0 ]; then
+              echo "no '#=' lines found under $steps -- this check asserted nothing." >&2
+              exit 1
+            fi
+
+            if [ "$missing" -ne 0 ]; then
+              echo "$missing of $total step line(s) no longer appear verbatim in:" >&2
+              echo "  $r" >&2
+              echo "$fails" >&2
+              echo "" >&2
+              echo "Either RUNBOOK.md changed and test/vm/steps/*.txt must" >&2
+              echo "  follow, or a step was written against a runbook that no" >&2
+              echo "  longer exists." >&2
+              exit 1
+            fi
+
+            echo "ok  $total step line(s) all appear verbatim in RUNBOOK.md"
+            touch "$out"
+          '';
       };
     };
 }

@@ -1,0 +1,19 @@
+#T 300
+
+#= systemctl is-active nix-daemon.service
+systemctl is-active nix-daemon.service
+
+#T 120
+
+#= id -nG <user> | tr ' ' '\n' | grep -cx -e nix-users -e video -e input
+id -nG @USER@ | tr ' ' '\n' | grep -cx -e nix-users -e video -e input
+
+#T 120
+
+#= id -nG <user> | tr ' ' '\n' | grep -cx sudo
+id -nG @USER@ | tr ' ' '\n' | grep -cx sudo
+
+#T 120
+
+# Not a runbook line: the twelve packages Stage 0 or Stage A installed, counted.
+dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' ca-certificates dbus-broker dbus-user-session fuse3 git greetd network-manager nix-bin nix-setup-systemd polkitd sudo tuigreet | awk '$1=="ii"' | wc -l

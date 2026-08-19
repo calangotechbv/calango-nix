@@ -1,0 +1,63 @@
+#T 60
+
+# Declared accommodation: `sudo` becomes a wrapper feeding the account's
+# password, so every step below reads as RUNBOOK.md prints it instead of being
+# rewritten around `sudo -S`. apt gets -y for the same reason.
+#
+# NOTHING here sets DEBIAN_FRONTEND. A debconf prompt has to be able to surface:
+# that is how code's question was found in the first place.
+#
+# The wrapper corrupts anything that reads stdin -- debconf-set-selections took
+# the password as its input once, and reported `parse error on line 1:
+# 'rehearsal'`. Steps that pipe into a command must not use it.
+sudo() { echo "$CALANGO_PW" | command sudo -S -p '' "$@"; }
+sudo true && echo "sudo wrapper works"
+
+#T 900
+
+#= sudo install -Dm644 -t /etc/apt/sources.list.d/ "$B"/etc/apt/sources.list.d/*.sources
+cd ~/Projects/calango-nix && B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap') && sudo install -Dm644 -t /etc/apt/sources.list.d/ "$B"/etc/apt/sources.list.d/*.sources && ls /etc/apt/sources.list.d/
+
+#T 900
+
+#= sudo apt update
+sudo apt update 2>&1 | tail -5
+
+#T 300
+
+#= echo 'code code/add-microsoft-repo boolean false' | sudo debconf-set-selections
+# NOT through the sudo wrapper: debconf-set-selections reads stdin.
+echo 'code code/add-microsoft-repo boolean false' > /tmp/code.seed && echo "$CALANGO_PW" | command sudo -S -p '' debconf-set-selections /tmp/code.seed && debconf-show code 2>/dev/null | head -2
+
+#T 3000
+
+#= sudo apt install 1password 1password-cli code endpoint-verification google-chrome-stable
+sudo apt install -y 1password 1password-cli code endpoint-verification google-chrome-stable 2>&1 | tail -8
+
+#T 300
+
+#= cd /etc/apt/sources.list.d && sudo rm -f calango-bootstrap-1password.sources calango-bootstrap-google-chrome.sources && cd -
+cd /etc/apt/sources.list.d && sudo rm -f calango-bootstrap-1password.sources calango-bootstrap-google-chrome.sources && cd - && ls /etc/apt/sources.list.d/
+
+#T 900
+
+#= sudo apt update
+sudo apt update 2>&1 | tail -5
+
+#T 1500
+
+#= curl -fsSLO "https://downloads.slack-edge.com/desktop-releases/linux/x64/$V/slack-desktop-$V-amd64.deb"
+#= sudo apt install ./slack-desktop-"$V"-amd64.deb
+cd ~/Projects/calango-nix && V=$(curl -sS 'https://slack.com/api/desktop.latestRelease?arch=x64&variant=deb' | sed -n 's/.*"version":"\([^"]*\)".*/\1/p') && echo "slack $V" && curl -fsSLO "https://downloads.slack-edge.com/desktop-releases/linux/x64/$V/slack-desktop-$V-amd64.deb" && sudo apt install -y ./slack-desktop-"$V"-amd64.deb 2>&1 | tail -5
+
+#T 2400
+
+#= D=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoDeb')
+#= sudo apt install "$D"/calango-desktop_*.deb
+cd ~/Projects/calango-nix && D=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoDeb') && echo "D=$D" && sudo apt install -y "$D"/calango-desktop_*.deb 2>&1 | tail -10
+
+#T 300
+
+#= sudo install -Dm644 "$B/etc/greetd/config.toml" /etc/greetd/config.toml
+#= sudo systemctl enable greetd.service
+cd ~/Projects/calango-nix && B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap') && sudo install -Dm644 "$B/etc/greetd/config.toml" /etc/greetd/config.toml && sudo systemctl enable greetd.service 2>&1 | tail -2

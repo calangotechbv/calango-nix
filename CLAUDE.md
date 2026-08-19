@@ -26,11 +26,12 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` runs **six** checks. Count them rather than quoting this
+`nix flake check` runs **seven** checks. Count them rather than quoting this
 line — the number was stale at three the moment `bar-title-slot` landed, the
 bare-Debian bootstrap branch moved it to five by adding `host-config-files`,
-and the generated-preseed branch moved it again by adding
-`preseed-package-list`:
+the generated-preseed branch moved it to six by adding
+`preseed-package-list`, and the VM-harness build-time guard moved it again by
+adding `vm-step-lines-verbatim`:
 
 ```sh
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -40,46 +41,51 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 looser version started lying.** `nix flake check` validates *every* flake
 output, not only `checks`, so it emits a `checking derivation` line for
 `packages.x86_64-linux.calangoDeb` and `packages.x86_64-linux.calangoBootstrap`
-as well. Measured on the generated-preseed branch, with both packages and all
-six checks in the tree:
+as well. Measured with both packages and all seven checks in the tree:
 
 ```sh
-… | grep -c '^checking derivation'          # 8   <- includes both packages
-… | grep -c '^checking derivation checks\.'  # 6   <- the checks
-… | grep -o 'running [0-9]* flake checks'   # running 6 flake checks
+… | grep -c '^checking derivation'          # 9   <- includes both packages
+… | grep -c '^checking derivation checks\.'  # 7   <- the checks
+… | grep -o 'running [0-9]* flake checks'   # running 7 flake checks
 ```
 
 The looser pattern disagreed with nix's own summary line and nothing warned
 about it. Prefer the summary if you only want the number; use the `checks\.`
 form when you want to see which ones ran.
 
-**Before writing a VM harness to test `RUNBOOK.md`, read
-`test/README-vm-harness.md`.** It has been written from scratch twice, and each
-rewrite paid again for the same traps -- typing into GRUB, a redirected step
-hiding a debconf prompt, `/tmp` cleared on reboot taking the evidence with it, a
-wrapper whose `echo` reported success for a failed run. The harness itself is
-still outside the repository; that file says what it is, what it must not lose,
-and what has to be generalised before it lands.
+**The VM harness that drives `RUNBOOK.md` in qemu now lives in the repository,
+at `test/vm/`** — read `test/vm/README.md` first. It had been written from
+scratch twice before landing, and each rewrite paid again for the same traps
+-- typing into GRUB, a redirected step hiding a debconf prompt, `/tmp` cleared
+on reboot taking the evidence with it, a wrapper whose `echo` reported success
+for a failed run; `test/vm/README.md`'s own "Nine things not to undo" is where
+those live now. `test/vm/steps/*.txt` transcribe the runbook's commands by
+hand, each mirrored line carrying the runbook's own text above it as a `#= `
+line, and `test/vm/check-steps.sh` asserts every one appears verbatim in the
+rendered `RUNBOOK.md` -- but that script only runs when someone remembers to.
+`vm-step-lines-verbatim` is the same assertion again, at build time, so a
+runbook edit with no matching step-file edit fails `nix flake check` instead
+of the harness silently going on testing the old wording.
 
-`bar-title-slot` is unlike the other five: it *runs* this flake's QML under
-the pinned Qt with the offscreen platform, rather than inspecting a built
-tree. So the shell tree is now covered by a build-time guard as well, and a
-change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
+`bar-title-slot` is unlike four of the other six: it *runs* this flake's QML
+under the pinned Qt with the offscreen platform, rather than inspecting a
+built tree. So the shell tree is now covered by a build-time guard as well, and
+a change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
 
 Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
 `home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
 `home/apps.nix`, `quickshell/bar/TitleSlot.qml`, `bootstrap/greetd-config.toml`,
-`bootstrap/runbook.md.in`, `bootstrap/preseed.cfg.in`, `bootstrap/keys/`, or
-the `required` list in `flake.nix`. The first of those is
-deliberately stated as *syntax* rather than as a list of modules: an earlier
-version of this passage named `home/portals.nix` and `home/uwsm.nix`, and
-`grep -l 'source =' home/*.nix` returns **ten** modules, so the named pair
+`bootstrap/runbook.md.in`, `bootstrap/preseed.cfg.in`, `bootstrap/keys/`,
+`test/vm/steps/*.txt`, or the `required` list in `flake.nix`. The first of
+those is deliberately stated as *syntax* rather than as a list of modules: an
+earlier version of this passage named `home/portals.nix` and `home/uwsm.nix`,
+and `grep -l 'source =' home/*.nix` returns **ten** modules, so the named pair
 silently excused the other eight — `home/audio.nix:195,231` among them. Grep
 for the property; do not trust a list of names, including this sentence's.
 
 Further build-time guards ride in `home.packages` rather than in `checks`, so
 they run on every generation build — strictly more often than
-`nix flake check` is invoked — and none of them appears in that count of six.
+`nix flake check` is invoked — and none of them appears in that count of seven.
 Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and

@@ -1,0 +1,15 @@
+#T 3300
+
+#= sg nix-users -c 'nix flake check' 2>&1 | grep -o 'running [0-9]* flake checks'
+cd ~/Projects/calango-nix && sg nix-users -c 'nix flake check' 2>&1 | grep -o 'running [0-9]* flake checks'
+
+#T 1800
+
+#= B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
+#= find "$B" -type f | sort
+cd ~/Projects/calango-nix && B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap') && echo "B=$B" && find "$B" -type f | sort
+
+#T 600
+
+#= ./test/apt-sources.sh "$B"
+cd ~/Projects/calango-nix && B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap') && ./test/apt-sources.sh "$B"

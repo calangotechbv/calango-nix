@@ -1,0 +1,14 @@
+#T 3300
+
+# The wrapper on `activate` is the point of this step, not a detail. Unwrapped,
+# a shell without nix-users dies at activate's first daemon call -- and dies
+# SILENTLY, because that call is `run --silence nix-store --realise`, which is
+# `"$@" > /dev/null 2>&1`, under set -eu.
+#= p=$(sg nix-users -c 'nix build --no-link --print-out-paths \
+#= sg nix-users -c "$p/activate"
+cd ~/Projects/calango-nix && p=$(sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."@USER@@@HOST@".activationPackage') && echo "p=$p" && sg nix-users -c "$p/activate" 2>&1 | tail -12
+
+#T 300
+
+#= test -x ~/.nix-profile/bin/uwsm && echo uwsm-present
+test -x ~/.nix-profile/bin/uwsm && echo uwsm-present; systemctl --user --failed --no-legend | wc -l; ~/.nix-profile/bin/home-manager --version

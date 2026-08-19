@@ -1,0 +1,17 @@
+#T 600
+
+# Gate C's four lines, run as FOUR commands separated by `;`. Joining them with
+# && aborts at line 2: `apt-get -s autoremove | grep -c '^Remv '` prints 0 and
+# EXITS 1, because that is what grep -c does when it counts nothing. RUNBOOK.md
+# says so out loud now; this harness is where it was met.
+#= dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop
+#= apt-get -s autoremove | grep -c '^Remv '
+#= test -f /usr/share/wayland-sessions/hyprland-nix.desktop && echo present
+#= cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml" && echo greetd-ok
+cd ~/Projects/calango-nix; B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap' 2>/dev/null); dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop; apt-get -s autoremove | grep -c '^Remv ' ; test -f /usr/share/wayland-sessions/hyprland-nix.desktop && echo present ; cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml" && echo greetd-ok ; true
+
+#T 300
+
+# Not a runbook line. Stage C claims dpkg asks nothing on a bare machine; a
+# prompt would have left one of these behind.
+find /etc -name '*.dpkg-*' -o -name '*.ucf-*' 2>/dev/null | head -5 ; echo "no-conffile-residue-if-blank-above"
