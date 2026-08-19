@@ -430,9 +430,41 @@ Two changes:
 - **The contradictory comment is corrected** to describe the fallback the code
   performs.
 
-`epiphany` is wired into `homeConfigurations` as the worked example. All three
-of its per-host files already exist, so it exercises the guard's passing path
-without inventing hardware.
+**No second host is wired into `homeConfigurations`, and the reason is a
+correction to this spec's own first draft.** That draft named `epiphany` as the
+worked example, on the strength of its three per-host files already existing in
+this repository. `epiphany` runs **Fedora Linux 44 (Workstation Edition)**:
+
+```sh
+cd ~/Projects/calango-desktop
+/usr/bin/grep -rn -i 'epiphany.*Fedora' docs/*.md | head -3
+# 2026-08-06-results-epiphany-qmllint.md:3: host: epiphany | Fedora Linux 44 ...
+# 2026-08-10-results-epiphany.md:3:        Run on epiphany, Fedora Linux 44 ...
+# 2026-08-11-handoff-suffer-install-enable.md:3: from epiphany (Fedora 44) ...
+```
+
+So it cannot be the target of a **Debian 13** bootstrap at all. It has no apt,
+no dpkg and no use for a `.deb`. A generation built for it would carry a
+`calango.deb` manifest that means nothing there, and a runbook printing apt
+commands at a dnf machine.
+
+The guard is therefore proven by **mutation** instead: add a host with no
+`hosts/` file, watch the build fail, remove it. That is this project's normal
+method and it needs no real machine.
+
+Two consequences worth recording rather than fixing:
+
+- **`hypr/hosts/epiphany.lua`, `foot/hosts/epiphany.ini` and
+  `gtk/hosts/epiphany.conf` describe a machine this flake cannot target.**
+  They stay, because they hold a real two-display hardware layout that is
+  expensive to recover and harmless to keep. A comment in
+  `hypr/hosts/epiphany.lua` says so, so the next reader does not repeat this
+  spec's mistake.
+- **This is why `/etc/greetd/config.toml` carries Fedora comments at all.**
+  `calango-desktop` supported both distributions; `user = "_greetd"` against
+  Fedora's `greetd` is the one line the predecessor's `install.sh --check`
+  normalised before comparing. `calango-nix` is Debian-only by its first
+  README line, so `greetdConfig` drops that material deliberately.
 
 ---
 
