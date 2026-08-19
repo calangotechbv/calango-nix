@@ -300,6 +300,16 @@ sudo install -Dm644 -t /etc/apt/sources.list.d/ "$B"/etc/apt/sources.list.d/*.so
 sudo apt update
 ```
 
+**Preseed `code`'s one debconf question before installing it, or this stage
+stalls.** `false` is correct because `calango-bootstrap-microsoft.sources`
+already provides that repository with an inline key, so `code` writing its own
+`vscode.sources` with a `Signed-By` keyring is exactly the collision the next
+section spends a whole page avoiding:
+
+```sh
+echo 'code code/add-microsoft-repo boolean false' | sudo debconf-set-selections
+```
+
 **Then the corp packages that come from those repositories** —
 @corpRepoPackagesCount@ of the @corpPackagesCount@:
 
@@ -394,8 +404,10 @@ sudo install -Dm644 "$B/etc/greetd/config.toml" /etc/greetd/config.toml
 sudo systemctl enable greetd.service
 ```
 
-**One thing does ask, and it stops the stage until you answer.** `code`'s
-postinst puts up a debconf question at priority `high`:
+**The preseed above is why this stage no longer stalls.** `code`'s postinst
+reads `code/add-microsoft-repo` before it decides anything, and a preseeded
+`false` sets `WRITE_SOURCE='no'` right there — before the script ever reaches
+the `db_input high` call that would otherwise put up this question:
 
 ```
 Configuring code
@@ -404,10 +416,9 @@ to update VS Code through apt.
 Add Microsoft apt repository for Visual Studio Code?   <Yes>  <No>
 ```
 
-**Either answer is safe here**, which is why this is a warning about a stall
-rather than about a wrong choice. `code.postinst` checks whether any existing
-source file already maps that repository, and
-`calango-bootstrap-microsoft.sources` does:
+**Skip the preseed line and this is what you get, blocking the install until
+answered.** `code.postinst` also checks whether any existing source file
+already maps that repository, and `calango-bootstrap-microsoft.sources` does:
 
 ```sh
 if has_existing_repo_source; then
@@ -417,18 +428,24 @@ if has_existing_repo_source; then
 fi
 ```
 
-So no second source file is written either way, and no `Signed-By` collision
-follows — the only difference between Yes and No is whether
-`/usr/share/keyrings/microsoft.gpg` gets created, which nothing here reads.
-Verified on a bare machine: after answering, `/etc/apt/sources.list.d/vscode.sources`
-does not exist and `apt update` reads every source.
+That check is why either interactive answer is *also* safe: no second source
+file is written either way, so no `Signed-By` collision follows regardless of
+which button you press. `false` is still the right preseed, not just a safe
+one — it reaches the same no-source-file outcome this check would have
+forced on `Yes` anyway, but without ever showing the prompt, and without
+`/usr/share/keyrings/microsoft.gpg` being written either, a file nothing here
+reads. Verified on a bare machine, preseeded:
+`/etc/apt/sources.list.d/vscode.sources` does not exist and `apt update`
+reads every source.
 
-Note that check runs *after* the question, so a source file you already have
-cannot suppress the prompt. And **redirecting apt's output does not make the
-prompt go away**: apt runs maintainer scripts under a pty, so the postinst's
+That existing-source check only runs *after* the question, though, so on the
+skip-the-preseed path a source file you already have cannot suppress the
+prompt by itself. And **redirecting apt's output does not make the prompt go
+away** either: apt runs maintainer scripts under a pty, so the postinst's
 `[ -t 1 ]` is true even when you piped apt into a file. A run that sends this
-stage's output to a log will simply sit there, idle and silent, until something
-answers. Measured: ten minutes of a VM at 3% CPU before anyone noticed.
+stage's output to a log will simply sit there, idle and silent, until
+something answers. Measured: ten minutes of a VM at 3% CPU before anyone
+noticed.
 
 Apart from that, dpkg asks nothing. On suffer `/etc/default/slack` already
 existed unowned, so dpkg raised a conffile prompt whose default answer re-armed
