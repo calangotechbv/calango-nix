@@ -60,6 +60,29 @@ this section.
   fails with `path … does not exist` — which reads like a typo in the path
   rather than like a staging problem. Found by Task 1's implementer on its
   first build. This binds Tasks 2, 3 and 5, each of which creates files.
+- **Revert a mutation with `git restore --staged --worktree <path>`, never with
+  `git checkout <path>`.** The constraint above makes this one load-bearing:
+  once a file is staged, `git checkout` restores it from the **index**, which
+  still holds the mutation, and reports success while changing nothing.
+  Measured on a scratch repository:
+
+  ```sh
+  printf 'MUTATED\n' > f.txt && git add f.txt
+  git checkout f.txt                      # "Updated 0 paths from the index"
+  cat f.txt                               # MUTATED   <- revert silently no-op
+  git restore --staged --worktree f.txt
+  cat f.txt                               # original
+  ```
+
+  This is a silent-corruption path, not a cosmetic one: the failed revert
+  leaves the mutation in the tree, the next build measures the mutated tree,
+  and the mutation can reach the commit. Task 2's implementer hit it and
+  recovered by re-reading the file's contents rather than trusting the command.
+  **After every revert in this plan, re-read the file and confirm the count the
+  step gives.** Every revert step below already spells
+  `git restore --staged --worktree`; the point of this entry is that the
+  confirmation matters even so, because a revert that reports success can still
+  have changed nothing.
 - **Tasks 2 and 3 add keys to option paths Task 1 already opened, and that is
   legal.** Nix merges distinct leaves under a shared prefix, so
   `options.calango.bootstrap = { greetdConfig = …; }` beside
@@ -75,6 +98,23 @@ this section.
   The error needs the same **leaf** twice, or a non-attrset traversed as a
   path. Spec 16's defect 6 was the second shape. Either style is fine; prefer
   whichever keeps the block readable.
+- **But that merging does NOT extend to a dynamic key, and this constraint said
+  so only after Task 2's implementer found it.** `packages.${system}` and
+  `checks.${system}` use a computed key, and two bindings through one cannot
+  merge:
+
+  ```sh
+  nix eval --expr '{ a.b.c = 1; a.b.d = 2; }'
+  # { a = { b = { c = 1; d = 2; }; }; }            <- static path: merges
+  nix eval --expr 'let s = "x"; in { a.${s}.c = 1; a.${s}.d = 2; }'
+  # error: dynamic attribute 'x' already defined  <- computed key: does not
+  ```
+
+  So an output added beside an existing `packages.${system}.…` or
+  `checks.${system}.…` line must go **inside** that attrset, never as a second
+  top-level binding through the same dynamic key. This constraint was added to
+  stop a wrong generalisation and contained one; the measurement above is the
+  authority, not either sentence.
 
 ---
 
@@ -420,7 +460,7 @@ guard.** Read the message before accepting it.
 Revert:
 
 ```sh
-git checkout home/session.nix
+git restore --staged --worktree home/session.nix
 /usr/bin/grep -c 'calango.deb.files."usr/share/wayland-sessions/' home/session.nix   # 1
 ```
 
@@ -434,13 +474,13 @@ printf '' > /tmp/empty-greetd.toml
 sed -i 's|builtins.readFile ./../bootstrap/greetd-config.toml|""|' home/bootstrap.nix
 /usr/bin/grep -c 'greetdConfig = "";' home/bootstrap.nix          # 1
 sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | tail -8
-git checkout home/bootstrap.nix
+git restore --staged --worktree home/bootstrap.nix
 
 # groups
 sed -i 's|groups = \[ "nix-users" "video" "input" \];|groups = [ ];|' home/bootstrap.nix
 /usr/bin/grep -c 'groups = \[ \];' home/bootstrap.nix             # 1
 sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | tail -8
-git checkout home/bootstrap.nix
+git restore --staged --worktree home/bootstrap.nix
 ```
 
 Expected: each build fails with that assertion's own message.
@@ -704,11 +744,18 @@ Replace Task 1's placeholder `config.home.packages` line with:
 
 - [ ] **Step 4: Expose it from `flake.nix`**
 
-Beside the existing `calangoDeb` line:
+`packages.${system}` is a **dynamic** key, so a second binding through it is
+`error: dynamic attribute 'x86_64-linux' already defined` rather than a merge —
+see the Global Constraints. Replace the existing single line with one attrset:
 
 ```nix
-      packages.${system}.calangoDeb = suffer.config.calango.debPackage;
-      packages.${system}.calangoBootstrap = suffer.config.calango.bootstrapDir;
+      # Two `packages.${system}.x = ...;` bindings collide as "already defined"
+      # rather than merging, because the key is computed -- combined into one
+      # binding instead. A later output goes inside this attrset, not beside it.
+      packages.${system} = {
+        calangoDeb = suffer.config.calango.debPackage;
+        calangoBootstrap = suffer.config.calango.bootstrapDir;
+      };
 ```
 
 - [ ] **Step 5: Build and inspect**
@@ -836,7 +883,7 @@ Expected: **both** fail, with the message about a file under `etc/` naming the
 Nix store. Revert:
 
 ```sh
-git checkout bootstrap/greetd-config.toml
+git restore --staged --worktree bootstrap/greetd-config.toml
 diff <(/usr/bin/grep -E '^(command|user) =' /etc/greetd/config.toml) \
      <(/usr/bin/grep -E '^(command|user) =' bootstrap/greetd-config.toml)
 ```
@@ -1309,7 +1356,7 @@ that nobody has read is a command nobody can run.
 sed -i 's|@groupsCount@|@groupsCount@ @nosuchtoken@|' bootstrap/runbook.md.in
 /usr/bin/grep -c '@nosuchtoken@' bootstrap/runbook.md.in     # 1
 sg nix-users -c 'nix build --no-link .#calangoBootstrap' 2>&1 | tail -6
-git checkout bootstrap/runbook.md.in
+git restore --staged --worktree bootstrap/runbook.md.in
 /usr/bin/grep -c '@nosuchtoken@' bootstrap/runbook.md.in     # 0
 ```
 
@@ -1326,7 +1373,7 @@ value.
 sed -i 's|@groupsCount@||' bootstrap/runbook.md.in
 /usr/bin/grep -c '@groupsCount@' bootstrap/runbook.md.in     # 0
 sg nix-users -c 'nix build --no-link .#calangoBootstrap' 2>&1 | tail -6
-git checkout bootstrap/runbook.md.in
+git restore --staged --worktree bootstrap/runbook.md.in
 /usr/bin/grep -c '@groupsCount@' bootstrap/runbook.md.in     # 1
 ```
 
@@ -1491,7 +1538,7 @@ id -nG | tr ' ' '\n' | /usr/bin/grep -cx nosuchgroup     # 0, the user does not 
 sed -i 's|groups = \[ "nix-users" "video" "input" \];|groups = [ "nix-users" "video" "input" "nosuchgroup" ];|' home/bootstrap.nix
 /usr/bin/grep -c 'nosuchgroup' home/bootstrap.nix        # 1
 sg nix-users -c 'home-manager switch --flake .#isutton@suffer' 2>&1 | /usr/bin/grep 'bootstrap:'
-git checkout home/bootstrap.nix
+git restore --staged --worktree home/bootstrap.nix
 ```
 
 Expected: `bootstrap: not in group nosuchgroup.` and the `usermod` command,
@@ -1505,7 +1552,7 @@ the group mutation, which is the cheapest of the three:
 ```sh
 sed -i 's|"input" \];|"input" "nosuchgroup" ];|' home/bootstrap.nix
 sg nix-users -c 'home-manager switch --flake .#isutton@suffer' >/dev/null 2>&1; echo "exit=$?"
-git checkout home/bootstrap.nix
+git restore --staged --worktree home/bootstrap.nix
 ```
 
 Expected: `exit=0`. A hook that reports and then aborts the switch is not the
@@ -1678,7 +1725,7 @@ sg nix-users -c 'nix build --no-link .#checks.x86_64-linux.host-config-files' 2>
 sed -i 's|"isutton@suffer" = suffer;|# "isutton@suffer" = suffer;|' flake.nix
 /usr/bin/grep -c '# "isutton@suffer" = suffer;' flake.nix    # 1
 sg nix-users -c 'nix build --no-link .#checks.x86_64-linux.host-config-files' 2>&1 | tail -6
-git checkout flake.nix
+git restore --staged --worktree flake.nix
 ```
 
 Expected: the build fails saying `hostConfigs is empty`. Note this also breaks
