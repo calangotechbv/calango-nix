@@ -121,6 +121,60 @@ shell reports it absent. This flake manages no shell initialisation, so nothing
 sources `hm-session-vars.sh`. Stage D now says so and gives the full-path form,
 because a second switch is the very next thing a reader does.
 
+### Finding 6 — `bt-agent` restart-looped for ever on a machine with no adapter
+
+**Found by a human logging in and watching the screen — the one instrument the
+headless run could not use, and it found something on the first try.**
+
+```
+restart counter        81 and climbing
+bt-agent: bluez service is not found
+Did you forget to run bluetoothd?
+/sys/class/bluetooth   does not exist
+systemctl is-active bluetooth   inactive
+```
+
+The VM has no Bluetooth adapter, so Debian's `bluetooth.service` — which gates
+itself on exactly that directory — never starts, so `bluetoothd` is never there.
+`Restart = "on-failure"` with `RestartSec = 2` spaces the retries wide enough to
+escape systemd's default start limit, so nothing ever stopped it. The unit now
+carries the same condition Debian's own uses:
+
+```
+bt-agent.service - Bluetooth pairing agent skipped,
+  unmet condition check ConditionPathIsDirectory=/sys/class/bluetooth
+NRestarts 0, ActiveState inactive, ConditionResult no
+```
+
+And still active on suffer, where the adapter exists — `ConditionResult yes`.
+
+`bluetooth.service` also left `After`: it is a system unit and this is a user
+unit, so the ordering was never enforceable, and naming it made the user manager
+carry a phantom `bluetooth.service not-found` entry that reads like a broken
+dependency. Gone now, verified in the VM.
+
+**This bug had been in the flake for its whole life.** suffer has an adapter,
+so the failure mode did not exist there.
+
+### Finding 7 — the session's nixGL variables break a Debian GL application
+
+Hit while trying to open the VM with a window:
+
+```
+qemu: GtkGLArea console lacks DMABUF support.
+epoxy_get_proc_address: Assertion `0 && "Couldn't find current GLX or EGL context."' failed.
+Aborted (core dumped)
+```
+
+`CLAUDE.md` records this mechanism for **flatpak**, and explains it by the
+sandbox having no `/nix/store`. qemu is not sandboxed and `/nix/store` is fully
+visible to it. It broke anyway, because `__EGL_VENDOR_LIBRARY_FILENAMES` tells
+libglvnd to use *only* Nix's mesa vendor and `LD_LIBRARY_PATH` puts Nix's mesa
+first, so Debian's GTK loads a Nix `libEGL`. The rule is broader than the file
+says: **any Debian GL application launched from this session inherits Nix's GL
+stack and may fail.** The fix is the documented one — `env -u` those five
+variables for that one process, never scrub the session.
+
 ## What the rehearsal confirmed
 
 | claim | measured |
@@ -172,11 +226,14 @@ tray host           : 2 StatusNotifier names on the session bus
 | 17 | **Only two of four vendors replace their source file; deleting the other two strands two packages** | controller | **the rehearsal** |
 | 18 | **`fuse3` missing from `packages.base`** | controller | **the rehearsal** |
 | 19 | **`home-manager` not on `PATH` after the first switch** | controller | **the rehearsal** |
+| 20 | **`bt-agent` restart-looped for ever with no Bluetooth adapter, and its `After` named a system unit a user unit cannot order against** | controller | **a human looking at the screen** |
 
-**Nineteen defects, all mine, none in the `.nix` or shell code as implemented.**
-No reviewer rejected an implementation. What failed, nineteen times, was a claim
-about a mechanism — and five of those claims survived every review and were
-killed by one machine.
+**Twenty defects, all mine. Nineteen were claims about a mechanism; the
+twentieth is the first real code defect on this branch** — `bt-agent`'s missing
+condition, which had been in the flake since it was written. No reviewer
+rejected an implementation. Five defects survived every review and were killed
+by one machine; the twentieth survived the machine too, and was killed by a
+person looking at a screen.
 
 Defects 3 through 6 share one root that took four incidents to find: `git
 restore`'s `--source` defaults to the **index** with `--worktree` alone and to
@@ -199,17 +256,23 @@ a list of cases before anyone looked up the mechanism.
 
 ## Known limitations, accepted
 
-- **No window was ever looked at.** This session has no display. The compositor
-  was judged from `/proc/<pid>/environ`, `/proc/<pid>/maps`, unit state and the
-  journal. `CLAUDE.md` says the instrument for the per-application GL question
-  is one person and one window, and that instrument was not available.
+- **I never looked at a window; the user did, and it immediately paid.** This
+  session has no display, so the compositor was judged from
+  `/proc/<pid>/environ`, `/proc/<pid>/maps`, unit state and the journal. A human
+  then booted the same disk with `-display gtk,gl=on`, logged in at the greeter,
+  and found finding 6 within minutes — a restart loop that every automated
+  check on this branch had passed straight over, because nothing measured
+  `NRestarts` on a unit nobody had thought to name. `CLAUDE.md` says the
+  instrument for GL questions is one person and one window. It is the instrument
+  for more than GL.
 - **The Intel GL path is untested.** The VM proves the nixGL *mechanism* through
   mesa's `virtio_gpu` driver on the virgl path. `iris` and `intel-media-driver`
   are untested by it.
-- **The session's `Type` reads `tty`, not `wayland`**, because the login was
-  driven by greetd's `initial_session` rather than by a human at the greeter.
-  suffer reports `wayland`. Gate D's expectation is unproven for that reason and
-  not because of anything the flake does.
+- **The session's `Type` read `tty`, not `wayland`**, because the headless login
+  was driven by greetd's `initial_session` rather than by a human at the greeter.
+  suffer reports `wayland`. A human did log in at the greeter afterwards, so the
+  login path itself is proven; what stayed unmeasured is only that gate's exact
+  string under a real greeter login.
 - **Four harness deviations, all recorded:** `-y` on apt, `NOPASSWD` sudo for
   the unattended run, greetd `initial_session` autologin, and `ssh-server` in
   the preseed's task list.
