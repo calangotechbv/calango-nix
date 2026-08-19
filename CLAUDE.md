@@ -1527,12 +1527,46 @@ for deliberate testing.
     draw a window* — that is what the user measured, both windows opened bare
     and unwrapped in the live session. Whether either is GPU-accelerated is
     unmeasured**, because Electron falls back to SwiftShader silently and the
-    window looks identical either way. The check needs one of them running:
-    `grep -cE 'swiftshader|libEGL_mesa|iris_dri' /proc/<pid>/maps` over every
-    pid in the tree (the GL stack is in a child process, so the top-level pid
-    gives a misleading zero) — `swiftshader` means software, `iris_dri` means
-    the Intel GPU path. Do not answer a future "it feels sluggish" with "GL was
-    established"; it was not.
+    window looks identical either way. Do not answer a future "it feels
+    sluggish" with "GL was established"; for these two it was not.
+
+    **And the check this entry used to publish could not have answered it.** It
+    read `grep -cE 'swiftshader|libEGL_mesa|iris_dri' /proc/<pid>/maps`, and on
+    this machine's mesa that pattern returns `0` for the hardware path *and*
+    for software — which is exactly what "the property holds" looks like for a
+    negative check. The reason is not that the files are missing. It is that
+    they are aliases —
+
+    ```sh
+    M=$(sg nix-users -c 'nix eval --raw .#homeConfigurations."isutton@suffer".pkgs.mesa')
+    find "$M" -name '*_dri.so' | wc -l     # 61
+    ls -l "$M/lib/dri/iris_dri.so"
+    # …-mesa-26.1.5/lib/dri/iris_dri.so -> libdril_dri.so
+    ```
+
+    — so the loader resolves the link and mmaps the real object, and `maps`
+    names that object, never the alias. Measured against Slack's own
+    `--type=gpu-process` in spec 17:
+
+    ```sh
+    grep -cE 'swiftshader|libEGL_mesa|iris_dri' /proc/<gpu-pid>/maps   # 0
+    grep -c  'libgallium'                       /proc/<gpu-pid>/maps   # 6
+    ```
+
+    So **`libgallium` is the hardware signal and `swiftshader` is the software
+    one**, with `libxcb-dri3` corroborating. The child-process warning stands
+    and is the other half of the instrument: the GL stack lives in a child, so
+    the top-level pid gives a misleading zero whatever you grep for. Walk every
+    pid in the tree.
+
+    What is new about this one is not that a check could not fail — enumerate
+    those from the section at the end of this file rather than trusting a
+    count — but **where it lived**. The others were written in a spec and
+    caught by a reviewer or a mutation. This one was written *here*, and
+    `CLAUDE.md` is what spec 17 copied it from, into a plan, a runbook and a
+    user's terminal, before anyone ran it against a known-good case. A rule
+    being documented is not a rule being followed; an instrument being
+    documented is not an instrument being tested.
 
   One more thing that is not about these two packages specifically: **running a
   newer build of an application once can migrate a config directory the older
@@ -1621,6 +1655,27 @@ for deliberate testing.
   moved 370 → 349 — **21, not 22**, because `libffado2` had already been left
   `auto` by a half-run acceptance test. A count that agrees with your
   expectation for the wrong reason is the shape this file keeps warning about.
+
+  **`apt install ./some.deb` marks the package `manual`, so any keep installed
+  from a file breaks that invariant on arrival.** Spec 17 added `slack-desktop`
+  as a keep and installed it from a downloaded file, which left the set at 21
+  `auto` and 1 `manual`. Harmless in itself — manual is *more* protected, and
+  its only installed reverse dependency is the metapackage — but the property
+  this section asserts is that a `Depends` does the holding and no flag is
+  needed, and one flag makes that untrue of one member. Re-assert it after any
+  such install, and verify by enumeration rather than by the total:
+
+  ```sh
+  sudo apt-mark auto slack-desktop
+  apt-get -s autoremove | grep -c '^Remv '   # must stay 0
+  ```
+
+  And note the total is no help here. It read 349 both before and after spec
+  17's migration while the composition changed — `slack-desktop` arrived
+  `manual`, two installed packages left — and the arithmetic cannot be
+  reconstructed afterwards, because apt prunes `/var/lib/apt/extended_states`
+  on removal, so a removed package's former mark is unrecoverable. Same shape
+  as the 370 → 349 reading above, in the other direction.
 
   **The single point of failure this creates.** Every one of the 22 now hangs
   off `calango-desktop`. If it were ever marked `auto`, or removed, all 22 are
