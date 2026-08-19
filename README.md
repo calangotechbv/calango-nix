@@ -14,14 +14,16 @@ disagree with the flake:
 ```sh
 sudo apt install nix-bin nix-setup-systemd git
 sudo usermod -aG nix-users "$USER"      # takes effect on next login
+git clone git@github.com:calangotechbv/calango-nix.git ~/Projects/calango-nix
+cd ~/Projects/calango-nix
 mkdir -p ~/.config/nix
 printf 'experimental-features = nix-command flakes\n' > ~/.config/nix/nix.conf
 B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 less "$B/RUNBOOK.md"
 ```
 
-Those five commands are Stage A's minimum — enough to build the runbook, which
-then names every remaining package, group, repository and gate.
+That is Stage A's minimum — enough to clone the flake and build the runbook,
+which then names every remaining package, group, repository and gate.
 `home/bootstrap.nix` is where the content is declared, and it warns at every
 switch when live `/etc` has drifted from it.
 
