@@ -49,6 +49,12 @@ this section.
   deletes a file new to this task. Never `git checkout <path>`, which on a staged
   file restores the mutation and reports success. **Re-read the file after every
   revert and confirm the count the step gives.**
+- **`git restore --worktree` restores from the INDEX, so commit or stage your real
+  work BEFORE you mutate anything.** With real edits unstaged, the revert throws
+  them away along with the mutation, silently and with no error — measured on this
+  branch, where Task 2's implementer lost its edits mid-task and caught it only
+  because a grep count disagreed. The rule is one order: finish the work, commit
+  it, then mutate.
 - **`checks.${system}` and `packages.${system}` are DYNAMIC keys.** A second
   binding through one is `error: dynamic attribute … already defined`, not a
   merge. A new check goes INSIDE the existing attrset.
@@ -514,17 +520,27 @@ task adds one, so `CLAUDE.md`'s figure moves and Task 4 updates it.
 
 This is the exact scenario the guard exists for.
 
+**Keep `@basePackages@` somewhere in the file, or this mutation tests the wrong
+guard.** Deleting the token outright makes `requireTokenIn` throw at evaluation
+with `error: token @basePackages@ is not in bootstrap/preseed.cfg.in`, and the
+build never reaches the check you are trying to test. Measured — an earlier
+version of this step did exactly that, while Step 7 below already explained the
+same interaction. Park the token in a trailing comment:
+
 ```sh
-sed -i 's|^d-i pkgsel/include string @basePackages@|d-i pkgsel/include string git greetd|' bootstrap/preseed.cfg.in
+sed -i 's|^d-i pkgsel/include string @basePackages@|d-i pkgsel/include string git greetd  # was @basePackages@|' bootstrap/preseed.cfg.in
 /usr/bin/grep -c 'string git greetd' bootstrap/preseed.cfg.in   # 1
+/usr/bin/grep -c '@basePackages@' bootstrap/preseed.cfg.in      # 1 -- still present, so the
+                                                                #      token guard stays quiet
 sg nix-users -c 'nix build --no-link .#checks.x86_64-linux.preseed-package-list' 2>&1 | tail -12
 git restore --worktree bootstrap/preseed.cfg.in
-/usr/bin/grep -c '@basePackages@' bootstrap/preseed.cfg.in      # 1
+/usr/bin/grep -c 'string git greetd' bootstrap/preseed.cfg.in   # 0
 ```
 
 Expected: the check fails, and the `diff -u` names the ten missing packages.
 Build the single check, not the whole `nix flake check` — another check failing
-first would not have tested this one.
+first would not have tested this one, and neither does a build that dies at
+evaluation before any check runs.
 
 - [ ] **Step 7: Prove the check's own vacuity anchor can fail**
 
