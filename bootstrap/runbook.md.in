@@ -37,6 +37,14 @@ sudo apt install @basePackagesOneLine@
 sudo usermod -aG @groupsComma@ <user>
 ```
 
+Stage C runs `sudo` from `<user>`'s own shell, not from a root login, so
+`<user>` needs the `sudo` group too. Whether it already has it depends on how
+this machine was installed: the Debian installer puts the first user in
+`sudo` only when root was given an **empty** password; a machine installed
+with a real root password leaves the first user out of it, and Stage A itself
+was run from `su -` on such a machine. If `id -nG <user>` does not list
+`sudo`, add it now: `sudo usermod -aG sudo <user>`.
+
 Why each package is there:
 
 @basePackagesTable@
@@ -120,7 +128,16 @@ find "$B" -type f | sort
 
 ---
 
-## Stage C — as root
+## Stage C — as `<user>`, elevating with `sudo`
+
+Each stage has to stand on its own: nothing says the same shell survives from
+Stage B, and a reader who opens a fresh one here has neither `$B` nor the
+repository as a working directory. Re-derive both before anything else:
+
+```sh
+cd ~/Projects/calango-nix
+B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
+```
 
 **Install the repositories first.** These files are scaffolding, not state.
 They exist so that one `apt install` can succeed; each vendor package then
