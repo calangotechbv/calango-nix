@@ -1152,8 +1152,7 @@ machine where `code` had been installed first.
 That check also runs **after** `code`'s debconf question, so an existing source
 file does not suppress the prompt — see the entry below. Deleting `code`'s or
 `endpoint-verification`'s bootstrap source leaves the package installed with no
-candidate version at all, the same position `slack-desktop` and `fresh-editor`
-are in. `calango.bootstrap.aptSourcesTransient` is the list of the two that
+candidate version at all, the same position `slack-desktop` is in. `calango.bootstrap.aptSourcesTransient` is the list of the two that
 must go, with an assertion tying each name to a real source.
 
 **A maintainer script can prompt even when you redirected apt into a file,
@@ -1815,8 +1814,17 @@ for deliberate testing.
   backup does not cover and risks damage if it has not migrated. Treat every
   future GUI migration's *first launch* as the one-way step, not the apt
   removal.
-- **`fresh-editor` stays on apt.** nixpkgs' `fresh-editor` is 0.3.6 against
-  Debian's 0.4.7, so moving it would be a downgrade.
+- **`fresh-editor` is no longer declared anywhere, as of 2026-08-19.** It was
+  in `home/deb.nix`'s `keep` (and so in `calango-desktop`'s `Depends`) and in
+  `calango.bootstrap.packages.corp`; it is in neither now, by decision rather
+  than by measurement. The reason it never moved to Nix still stands and is why
+  it is not in `ban` either: nixpkgs' `fresh-editor` is 0.3.6 against Debian's
+  0.4.7, so a migration would be a downgrade. What changed is that nothing
+  holds it: it stays installed on suffer until some `apt autoremove` proposes
+  it, and `sudo apt-mark manual fresh-editor` is the one command that keeps it
+  regardless. Note upstream is at 0.4.9 as of this date, so the 0.3.6-vs-0.4.7
+  comparison is a reading of two particular days rather than a standing fact —
+  the same caveat the Slack entry carries.
 - **`flatseal` leaves apt with flatpak, in spec 17's plan — pending, not
   done yet.** `home/deb.nix` moves it from `keep` to `ban`: it edits flatpak
   permissions and this project is removing flatpak. As of this writing
@@ -1914,10 +1922,18 @@ for deliberate testing.
   on removal, so a removed package's former mark is unrecoverable. Same shape
   as the 370 → 349 reading above, in the other direction.
 
-  **The single point of failure this creates.** Every one of the 22 now hangs
-  off `calango-desktop`. If it were ever marked `auto`, or removed, all 22 are
-  orphaned in one step — `apt remove calango-desktop` is now a 22-package
+  **The single point of failure this creates.** Every keep now hangs off
+  `calango-desktop`. If it were ever marked `auto`, or removed, all of them are
+  orphaned in one step — `apt remove calango-desktop` is a whole-keep-set
   operation including `bluez`, `google-chrome-stable`, `1password` and `code`.
+  The size is a count, not a number to quote: it read 22 on 2026-08-18 and 21
+  after `fresh-editor` left the set on 2026-08-19, and the authority is the
+  package that gets built, not this sentence —
+
+  ```sh
+  D=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoDeb')
+  /usr/bin/dpkg-deb -f "$D"/*.deb Depends | tr ',' '\n' | wc -l
+  ```
   apt lists them and asks first, so it cannot happen silently, but check
   `apt-mark showmanual calango-desktop` still prints it before trusting any of
   the above.

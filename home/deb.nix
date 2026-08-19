@@ -135,7 +135,6 @@ in
     # clean build once, in preflight.
     "1password-cli" = "Corp set, permanently apt. Pairs with the 1password desktop agent above.";
     endpoint-verification = "Corp set, permanently apt. A managed-device agent; there is no Nix equivalent and there should not be one.";
-    fresh-editor = "nixpkgs has 0.3.6 against Debian's 0.4.7, so moving it would be a downgrade.";
   };
 
   config.calango.deb.ban = {

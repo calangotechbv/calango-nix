@@ -188,10 +188,14 @@ let
   # filter read `p != "slack-desktop" && p != "fresh-editor"` -- a literal
   # list in the one file whose header promises it cannot disagree with the
   # flake, which a third file-only package could silently disprove by landing
-  # in the apt-install line anyway. Both slack-desktop's and fresh-editor's
-  # reasons already begin "NO repository" (they have to, so a reader of
-  # @corpPackagesTable@ knows not to look for one), so that prefix is the
-  # property to filter on instead of the name.
+  # in the apt-install line anyway. A file-only reason begins "NO repository"
+  # (it has to, so a reader of @corpPackagesTable@ knows not to look for one),
+  # so that prefix is the property to filter on instead of the name.
+  #
+  # fresh-editor was the second such package until it left this list. Note the
+  # derived filter needed no edit when it went, which is the whole argument for
+  # it: the literal version would have kept excluding a name that is no longer
+  # here, and nothing would have said so. slack-desktop is the only one now.
   corpFileOnlyNames = lib.filter (n: lib.hasPrefix "NO repository" cfg.packages.corp.${n}) (
     builtins.attrNames cfg.packages.corp
   );
@@ -508,7 +512,6 @@ in
       "1password-cli" = "The same repository as 1password. These two share one, which is why there are four repositories and not five.";
       endpoint-verification = "https://packages.cloud.google.com/apt -- calango-bootstrap-google-cloud.sources. Corporate enrolment is a separate, human step.";
       slack-desktop = "NO repository. apt-cache policy shows one version-table entry, /var/lib/dpkg/status. Ask Slack's own feed for the version, as the block above does -- bin/slack-latest is a template in the clone and its substituted copy does not exist until Stage D.";
-      fresh-editor = "NO repository, same as slack-desktop. Upstream is https://sinelaw.github.io/fresh/. Debian's 0.4.7 outranks nixpkgs' 0.3.6, which is why this one stays on apt.";
     };
   };
 

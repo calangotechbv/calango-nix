@@ -16,11 +16,10 @@ Six constraints, and every one of them has cost somebody something:
    `/nix/var/nix/daemon-socket/` is `0770 root:nix-users`. Until you log in
    again, prefix each command with `sg nix-users -c '…'`.
 3. **The repositories before the corp packages.**
-   @corpRepoPackagesCount@ of @corpPackagesCount@ come from a third-party
-   repository.
+   @corpRepoPackagesCount@ of the @corpPackagesCount@ come from a third-party repository.
 4. **The corp packages before `calango-desktop`.** apt resolves `Depends`
-   before it unpacks anything, and @corpFileOnlyCount@ of @corpPackagesCount@
-   are reachable from no repository at all.
+   before it unpacks anything, and @corpFileOnlyCount@ of the @corpPackagesCount@
+   cannot be reached from any repository at all.
 5. **`calango-desktop` before the first login.** It ships the greetd session
    entry.
 6. **The first `activate` before the first login.** The session entry runs
@@ -301,8 +300,8 @@ sudo install -Dm644 -t /etc/apt/sources.list.d/ "$B"/etc/apt/sources.list.d/*.so
 sudo apt update
 ```
 
-**Then the corp packages.** @corpRepoPackagesCount@ come from those
-repositories:
+**Then the corp packages that come from those repositories** —
+@corpRepoPackagesCount@ of the @corpPackagesCount@:
 
 ```sh
 sudo apt install @corpRepoPackagesOneLine@
@@ -332,20 +331,26 @@ sudo apt update
 
 @aptTransientTable@
 
-**The other files stay, and deleting them would be a mistake.** Nothing else
-ever provides those repositories -- neither package ships a source file, and
-neither writes one -- so removing them leaves the package installed with no
-candidate version at all, the same position `slack-desktop` and `fresh-editor`
-are in. Measured: after all four were deleted, `apt-cache policy code` and
-`apt-cache policy endpoint-verification` each reported no source. Keep:
+**The other files stay, and deleting them would be a mistake.** Removing them
+leaves the package installed with no candidate version at all, the same position
+`slack-desktop` is in. Measured: after all four were deleted, `apt-cache policy
+code` and `apt-cache policy endpoint-verification` each reported no source.
+
+`endpoint-verification` ships no source file and writes none, so nothing else
+will ever provide its repository. `code` is the conditional case: it writes
+`/etc/apt/sources.list.d/vscode.sources` and its own keyring, but only when no
+existing file already maps that repository — and
+`calango-bootstrap-microsoft.sources` maps it, so on this path `code` writes no
+source of its own. Delete that file and `code` would start writing one on its
+next upgrade, with a `Signed-By` keyring rather than an inline key. Keep:
 
 ```
 @aptDurableFiles@
 ```
 
 
-**Then the @corpFileOnlyCount@ that come from no repository at all.** Fetch
-each `.deb` and install it from the file:
+**Then what no repository carries** — @corpFileOnlyCount@ of the
+@corpPackagesCount@. Fetch each `.deb` and install it from the file:
 
 **Do not reach for `./bin/slack-latest` here.** The copy in the clone is a
 template: `grep -c '@[a-zA-Z]*@' bin/slack-latest` reads 6, and running it exits
@@ -368,7 +373,6 @@ V=$(curl -sS 'https://slack.com/api/desktop.latestRelease?arch=x64&variant=deb' 
 echo "$V"
 curl -fsSLO "https://downloads.slack-edge.com/desktop-releases/linux/x64/$V/slack-desktop-$V-amd64.deb"
 sudo apt install ./slack-desktop-"$V"-amd64.deb
-sudo apt install ./fresh-editor_<version>_amd64.deb
 ```
 
 Where each comes from:
