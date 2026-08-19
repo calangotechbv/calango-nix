@@ -15,11 +15,12 @@ Six constraints, and every one of them has cost somebody something:
 2. **The `nix-users` group needs a new login.**
    `/nix/var/nix/daemon-socket/` is `0770 root:nix-users`. Until you log in
    again, prefix each command with `sg nix-users -c '…'`.
-3. **The repositories before the corp packages.** Five of seven come from a
-   third-party repository.
+3. **The repositories before the corp packages.**
+   @corpRepoPackagesCount@ of @corpPackagesCount@ come from a third-party
+   repository.
 4. **The corp packages before `calango-desktop`.** apt resolves `Depends`
-   before it unpacks anything, and two of the seven are reachable from no
-   repository at all.
+   before it unpacks anything, and @corpFileOnlyCount@ of @corpPackagesCount@
+   are reachable from no repository at all.
 5. **`calango-desktop` before the first login.** It ships the greetd session
    entry.
 6. **The first `activate` before the first login.** The session entry runs
@@ -32,18 +33,30 @@ shown.
 
 ## Stage A — as root
 
+Whether `sudo` even works yet depends on how this machine was installed: the
+Debian installer puts the first user in the `sudo` group only when root was
+given an **empty** password. A machine installed with a real root password
+leaves the first user out of `sudo` -- and `sudo` is `Priority: optional` and
+absent from `calango.bootstrap.packages.base`, so it may not be on the
+machine at all yet. `sudo apt install ...` on such a machine fails before it
+does anything, with `sudo` reported as an unknown command.
+
+On that kind of machine, become root directly instead of through `sudo`:
+
 ```sh
-sudo apt install @basePackagesOneLine@
-sudo usermod -aG @groupsComma@ <user>
+su -
+apt install @basePackagesOneLine@
+usermod -aG @groupsComma@ <user>
+usermod -aG sudo <user>
 ```
 
-Stage C runs `sudo` from `<user>`'s own shell, not from a root login, so
-`<user>` needs the `sudo` group too. Whether it already has it depends on how
-this machine was installed: the Debian installer puts the first user in
-`sudo` only when root was given an **empty** password; a machine installed
-with a real root password leaves the first user out of it, and Stage A itself
-was run from `su -` on such a machine. If `id -nG <user>` does not list
-`sudo`, add it now: `sudo usermod -aG sudo <user>`.
+Where the account already has `sudo` -- root was given an empty password, or
+someone already ran the block above -- run the same three commands prefixed
+with `sudo` from `<user>`'s own shell instead of `su -`. Either way, `<user>`
+must end Stage A holding `sudo`: Stage C runs it from `<user>`'s own shell,
+not from a root login, and `usermod -aG sudo <user>` is what puts it there.
+If you are unsure which case applies, `id -nG <user>` after Gate A below
+settles it.
 
 Why each package is there:
 
@@ -149,14 +162,15 @@ sudo install -Dm644 -t /etc/apt/sources.list.d/ "$B"/etc/apt/sources.list.d/*.so
 sudo apt update
 ```
 
-**Then the corp packages.** Five come from those repositories:
+**Then the corp packages.** @corpRepoPackagesCount@ come from those
+repositories:
 
 ```sh
 sudo apt install @corpRepoPackagesOneLine@
 ```
 
-**Then the two that come from no repository at all.** Fetch each `.deb` and
-install it from the file:
+**Then the @corpFileOnlyCount@ that come from no repository at all.** Fetch
+each `.deb` and install it from the file:
 
 ```sh
 ./bin/slack-latest                 # prints the current version and the commands
@@ -247,3 +261,16 @@ working state and the broken state alike.
 - **A `ufw` rule.** This flake ships the profile vocabulary; `ufw allow
   calango-syncthing` is a human act, because `/etc/ufw/user.rules` is
   `0640 root:root` and nothing unprivileged can verify a rule.
+
+### Gate E
+
+```sh
+dpkg -V calango-desktop   # no output -- every shipped file matches its checksum
+```
+
+`dpkg -V` exits 0 whether or not it finds anything, so the gate is the
+OUTPUT, not the exit status: a clean install prints nothing at all, and any
+line of output names a shipped file -- the greetd session entry or
+`/etc/default/slack` among them -- that has since been hand-edited or has
+drifted from the package. `home/bootstrap.nix`'s own activation hook runs
+this same command at every switch and reports exactly this asymmetry.

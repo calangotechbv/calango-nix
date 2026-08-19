@@ -172,6 +172,20 @@ let
     attrs:
     lib.concatStrings (lib.mapAttrsToList (n: why: "| `${n}` | ${why} |\n") attrs);
 
+  # A corp package is file-only when its OWN reason string says so, rather
+  # than by a name spelled out here a second time. An earlier version of this
+  # filter read `p != "slack-desktop" && p != "fresh-editor"` -- a literal
+  # list in the one file whose header promises it cannot disagree with the
+  # flake, which a third file-only package could silently disprove by landing
+  # in the apt-install line anyway. Both slack-desktop's and fresh-editor's
+  # reasons already begin "NO repository" (they have to, so a reader of
+  # @corpPackagesTable@ knows not to look for one), so that prefix is the
+  # property to filter on instead of the name.
+  corpFileOnlyNames = lib.filter (n: lib.hasPrefix "NO repository" cfg.packages.corp.${n}) (
+    builtins.attrNames cfg.packages.corp
+  );
+  corpRepoNames = lib.subtractLists corpFileOnlyNames (builtins.attrNames cfg.packages.corp);
+
   substitutions = {
     "@basePackagesOneLine@" = lib.concatStringsSep " " (
       builtins.attrNames cfg.packages.base
@@ -180,13 +194,14 @@ let
       "| package | why |\n|---|---|\n" + reasonTable cfg.packages.base;
     "@corpPackagesTable@" =
       "| package | source |\n|---|---|\n" + reasonTable cfg.packages.corp;
-    # The two that come from no repository are installed from files, so they are
-    # excluded from the one apt install line the runbook prints.
-    "@corpRepoPackagesOneLine@" = lib.concatStringsSep " " (
-      lib.filter (p: p != "slack-desktop" && p != "fresh-editor") (
-        builtins.attrNames cfg.packages.corp
-      )
+    # The file-only packages are installed from files, so they are excluded
+    # from the one apt install line the runbook prints.
+    "@corpRepoPackagesOneLine@" = lib.concatStringsSep " " corpRepoNames;
+    "@corpPackagesCount@" = toString (
+      builtins.length (builtins.attrNames cfg.packages.corp)
     );
+    "@corpRepoPackagesCount@" = toString (builtins.length corpRepoNames);
+    "@corpFileOnlyCount@" = toString (builtins.length corpFileOnlyNames);
     "@groupsComma@" = lib.concatStringsSep "," cfg.groups;
     "@groupsGrepArgs@" = lib.concatStringsSep " " (map (g: "-e ${g}") cfg.groups);
     "@groupsCount@" = toString (builtins.length cfg.groups);
@@ -419,9 +434,26 @@ in
     }
   ];
 
-  # Rides in home.packages as well, so the guard runs on every generation
-  # build and not only under `nix build .#calangoBootstrap`.
-  config.home.packages = [ config.calango.bootstrapDir ];
+  # NOT in home.packages, on purpose -- an earlier version of this module put
+  # it there, on the theory that the guard needed a second entry point to
+  # run on every generation build and not only under
+  # `nix build .#calangoBootstrap`. It did not: config.home.activation's
+  # bootstrapDrift hook below interpolates ${config.calango.bootstrapDir}
+  # directly into its activation script, which makes bootstrapDir -- and so
+  # bootstrapTree and noStorePathsInEtc, both its inputs -- a build
+  # dependency of every activationPackage regardless. Measured by mutation:
+  # appending a `/nix/store` line to bootstrap/greetd-config.toml fails
+  # `nix build .#calangoBootstrap` AND
+  # `nix build .#homeConfigurations."isutton@suffer".activationPackage` on
+  # the same noStorePathsInEtc derivation, with the home.packages entry
+  # already gone.
+  #
+  # A home.packages entry bought nothing and cost something: buildEnv links
+  # every home.packages member into the profile, so bootstrapDir's own
+  # etc/greetd, etc/apt and RUNBOOK.md landed under
+  # ~/.nix-profile/{etc,RUNBOOK.md} -- and ~/.nix-profile/etc/greetd in
+  # particular reads as though it might be live configuration, which it
+  # never is.
 
   # Report where live /etc disagrees with the declaration. Non-fatal.
   #
