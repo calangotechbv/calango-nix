@@ -135,7 +135,97 @@ let
         cp ${pkgs.writeText "apt-source-${n}" v} "$out/etc/apt/sources.list.d/${n}"
       '') cfg.aptSources
     )}
+    cp ${runbook} "$out/RUNBOOK.md"
   '';
+
+  # Substitution happens in NIX, not in the builder's shell, and that is
+  # load-bearing rather than stylistic. substituteInPlace's replacement value is
+  # interpolated into a SINGLE-QUOTED shell argument, so an apostrophe in a
+  # reason string closes the quote. Measured against this flake's own pkgs:
+  #
+  #   line 2: unexpected EOF while looking for matching `'
+  #
+  # Four of the seventeen reasons contain one -- flake.nix's, Nix's, Debian's,
+  # nixpkgs'. Fixing the strings instead is fragile: the next reason to gain an
+  # apostrophe breaks the build, and nothing warns whoever wrote it.
+  # builtins.replaceStrings has no shell anywhere in the path.
+  #
+  # This gives up ONE property substituteInPlace --replace-fail provided --
+  # that the token exists -- because replaceStrings silently does nothing for an
+  # absent token. requireToken restores it, and it throws at evaluation rather
+  # than at build.
+  #
+  # home/hyprland.nix and home/gtk.nix use substituteInPlace, so this is a
+  # second idiom in the tree. It is here because their substituted values are
+  # store paths and hostnames, which cannot contain an apostrophe, and these
+  # are English sentences, which routinely do.
+  requireToken =
+    tok: body:
+    if lib.hasInfix tok body then
+      body
+    else
+      throw "runbook token ${tok} is not in bootstrap/runbook.md.in";
+
+  # A table row per entry, so the reason travels with the name. mapAttrsToList
+  # gives them in Nix's sorted-key order, which is stable across builds.
+  reasonTable =
+    attrs:
+    lib.concatStrings (lib.mapAttrsToList (n: why: "| `${n}` | ${why} |\n") attrs);
+
+  substitutions = {
+    "@basePackagesOneLine@" = lib.concatStringsSep " " (
+      builtins.attrNames cfg.packages.base
+    );
+    "@basePackagesTable@" =
+      "| package | why |\n|---|---|\n" + reasonTable cfg.packages.base;
+    "@corpPackagesTable@" =
+      "| package | source |\n|---|---|\n" + reasonTable cfg.packages.corp;
+    # The two that come from no repository are installed from files, so they are
+    # excluded from the one apt install line the runbook prints.
+    "@corpRepoPackagesOneLine@" = lib.concatStringsSep " " (
+      lib.filter (p: p != "slack-desktop" && p != "fresh-editor") (
+        builtins.attrNames cfg.packages.corp
+      )
+    );
+    "@groupsComma@" = lib.concatStringsSep "," cfg.groups;
+    "@groupsGrepArgs@" = lib.concatStringsSep " " (map (g: "-e ${g}") cfg.groups);
+    "@groupsCount@" = toString (builtins.length cfg.groups);
+    "@aptSourceCount@" = toString (
+      builtins.length (builtins.attrNames cfg.aptSources)
+    );
+  };
+
+  # attrNames and attrValues return the same sorted order, so the two lists
+  # replaceStrings receives are paired correctly.
+  runbookText =
+    builtins.replaceStrings (builtins.attrNames substitutions)
+      (builtins.attrValues substitutions)
+      (
+        lib.foldl' (body: tok: requireToken tok body)
+          (builtins.readFile ./../bootstrap/runbook.md.in)
+          (builtins.attrNames substitutions)
+      );
+
+  runbook =
+    pkgs.runCommand "calango-bootstrap-runbook"
+      { src = pkgs.writeText "runbook-substituted.md" runbookText; }
+      ''
+        cp "$src" "$out"
+
+        # The same token guard home/hyprland.nix and home/gtk.nix carry. Tokens
+        # are lowercase-alpha; the runbook's reader-supplied placeholders are
+        # <angle> and cannot match, which is why they are written that way.
+        #
+        # A CONDITION, not a bare command: a builder runs with errexit, and a
+        # grep matching nothing exits 1 -- which here is the PASSING case.
+        if grep -n '@[a-zA-Z]*@' "$out" >&2; then
+          echo "" >&2
+          echo "An unsubstituted token survived in the runbook." >&2
+          echo "  Either add it to home/bootstrap.nix's substitutions" >&2
+          echo "  attrset, or remove it from bootstrap/runbook.md.in." >&2
+          exit 1
+        fi
+      '';
 in
 {
   options.calango.bootstrap = {
@@ -152,6 +242,18 @@ in
       type = lib.types.attrsOf lib.types.lines;
       default = { };
       description = "File name under /etc/apt/sources.list.d -> deb822 content.";
+    };
+    packages = {
+      base = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        description = "Stage A apt package -> why the bootstrap needs it.";
+      };
+      corp = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        description = "Corp package -> where it comes from.";
+      };
     };
   };
 
@@ -202,6 +304,52 @@ in
         suites = "endpoint-verification";
         key = "google-cloud";
       };
+    };
+
+    # packages.base and calango.deb.keep answer DIFFERENT questions, which is
+    # why this is its own option rather than a reuse of keep:
+    #
+    #   calango.deb.keep  what must not be removed, once here
+    #   packages.base     what must be installed, to get here
+    #
+    # polkitd is the case that proves they differ. It owns
+    # /usr/lib/polkit-1/polkit-agent-helper-1, which flake.nix's debianPolkit
+    # overlay patches Nix's polkit to call, so the agent cannot authenticate
+    # without it -- and it needs no keep entry, because network-manager,
+    # udisks2, upower and systemd all hold it. On a bare install none of those
+    # holders is present either. Same shape as runtimeDeps against appPath:
+    # two lists, two questions, and merging them loses one.
+    #
+    # THIS LIST IS A HYPOTHESIS. It is reasoned from a machine holding 349
+    # manual packages, where everything needed is present for reasons that
+    # cannot be separated after the fact. The qemu rehearsal is what falsifies
+    # it, and a missing package found there is an expected outcome of the
+    # rehearsal rather than a defect in it.
+    packages.base = {
+      nix-bin = "The Nix client and the daemon binary. Nix comes from apt because nix-daemon is a root service and standalone Home Manager writes only user units.";
+      nix-setup-systemd = "Installs and enables nix-daemon.service. Check the SERVICE, not the socket: the service is WantedBy=multi-user.target and binds the socket itself, so nix-daemon.socket reads inactive forever on a working install.";
+      git = "To clone this flake. Priority optional, so absent from a bare install.";
+      greetd = "The login manager, and it ships /etc/pam.d/greetd carrying four keyring lines that /etc/pam.d/login does not.";
+      tuigreet = "The greeter that bootstrap/greetd-config.toml's command= line names.";
+      dbus-user-session = "Owns /usr/lib/systemd/user/dbus.socket, the per-login session bus every portal, the tray host and the compositor need.";
+      dbus-broker = "The bus implementation actually serving here, measured: systemctl --user show dbus.service reports dbus-broker.service as its fragment.";
+      polkitd = "Owns /usr/lib/polkit-1/polkit-agent-helper-1, the setuid helper flake.nix's debianPolkit overlay patches Nix's polkit to call. Without it hyprpolkitagent runs, loads its QML, and dies on the first authentication.";
+      network-manager = "home/services.nix runs nm-secret-agent against it.";
+      ca-certificates = "The four third-party repositories are https. Priority standard, so probably already present; named because probably is not measured.";
+    };
+
+    # Seven packages, four repositories, two files. The bootstrap supplies the
+    # repositories and stops: two of these are reachable from no repository at
+    # all, and endpoint-verification is a managed-device agent whose enrolment
+    # no script should attempt.
+    packages.corp = {
+      google-chrome-stable = "https://dl.google.com/linux/chrome-stable/deb/ -- calango-bootstrap-google-chrome.sources";
+      code = "https://packages.microsoft.com/repos/code -- calango-bootstrap-microsoft.sources";
+      "1password" = "https://downloads.1password.com/linux/debian/amd64 -- calango-bootstrap-1password.sources";
+      "1password-cli" = "The same repository as 1password. These two share one, which is why there are four repositories and not five.";
+      endpoint-verification = "https://packages.cloud.google.com/apt -- calango-bootstrap-google-cloud.sources. Corporate enrolment is a separate, human step.";
+      slack-desktop = "NO repository. apt-cache policy shows one version-table entry, /var/lib/dpkg/status. Fetch the .deb; bin/slack-latest prints the current version and the commands.";
+      fresh-editor = "NO repository, same as slack-desktop. Upstream is https://sinelaw.github.io/fresh/. Debian's 0.4.7 outranks nixpkgs' 0.3.6, which is why this one stays on apt.";
     };
   };
 
