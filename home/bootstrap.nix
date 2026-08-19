@@ -350,7 +350,8 @@ in
       dbus-broker = "The bus implementation actually serving here, measured: systemctl --user show dbus.service reports dbus-broker.service as its fragment.";
       polkitd = "Owns /usr/lib/polkit-1/polkit-agent-helper-1, the setuid helper flake.nix's debianPolkit overlay patches Nix's polkit to call. Without it hyprpolkitagent runs, loads its QML, and dies on the first authentication.";
       network-manager = "home/services.nix runs nm-secret-agent against it.";
-      ca-certificates = "The four third-party repositories are https. Priority standard, so probably already present; named because probably is not measured.";
+      ca-certificates = "The four third-party repositories are https. Priority standard, so probably already present; named because probably is not measured. Measured present on a bare Debian 13.6 netinst with standard plus ssh-server, so the hedge was right.";
+      sudo = "Stage C runs sudo from the user's own shell, and a Debian install given a root password ships neither the sudo group membership nor the sudo BINARY. Measured on a bare 13.6 netinst: after a Stage A that omitted this package, `sudo install ...` returned `sudo: command not found`, exit 127 -- and so did the `sudo usermod -aG sudo` the runbook offered as the remedy. Adding the group without the binary fixes nothing.";
     };
 
     # Seven packages, four repositories, two files. The bootstrap supplies the
