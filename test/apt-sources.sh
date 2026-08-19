@@ -5,6 +5,23 @@
 # and "The repository ... is not signed", naming the key it wanted. A stanza
 # that is merely well-formed proves nothing, so this fetches InRelease for real.
 #
+# `apt-get update`'s own exit status cannot be the check. An unresolvable host
+# -- or an offline machine generally -- prints "W: Failed to fetch ... Could
+# not resolve '...'" and STILL EXITS 0: that condition is a warning to apt, not
+# an error, so a check keyed on exit status calls it verified. Measured:
+#
+#   URIs: https://no-such-host.invalid/debian   -> apt-get update exits 0,
+#   and $t/lists holds nothing but its own lock file -- no InRelease fetched.
+#
+# So this asserts the POSITIVE outcome instead: an InRelease file for the
+# source must actually land in $t/lists. A real fetch against
+# dl.google.com's repository puts
+# dl.google.com_linux_chrome-stable_deb_dists_stable_InRelease there; the
+# unreachable case puts nothing. Grepping the log for "^Err:" or "^W: Failed
+# to fetch" was the other option and was rejected: a negative pattern list
+# goes stale the moment apt's wording changes, where "no InRelease exists"
+# cannot go stale in the same way.
+#
 # APT::Sandbox::User=root disables apt's drop to the _apt user, which cannot
 # read a directory under $TMPDIR. Nothing here runs as root.
 set -euo pipefail
@@ -27,7 +44,8 @@ for f in "$src"/*.sources; do
              -o Dir::Cache="$t/cache" \
              -o APT::Sandbox::User=root \
              -o Acquire::Languages=none \
-             update >"$t/log" 2>&1; then
+             update >"$t/log" 2>&1 \
+     && [ -n "$(find "$t/lists" -maxdepth 1 -name '*_InRelease')" ]; then
     echo "ok   $(basename "$f")"
   else
     echo "FAIL $(basename "$f")" >&2
