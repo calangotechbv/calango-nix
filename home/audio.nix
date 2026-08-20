@@ -353,6 +353,25 @@ let
       exit 1
     fi
   '';
+
+  # The noise-canceling source, and the one directory its LADSPA plugin lives
+  # in. Both are bound here rather than written out at each use, because the
+  # drop-in below has to name the same store path that xdg.configFile installs:
+  # X-Restart-Triggers works by naming a path that MOVES when the content
+  # changes, so two independent references to the same file would be a defect
+  # waiting for someone to edit one of them.
+  noiseCancelingSource = ./../pipewire/50-noise-canceling-source.conf;
+
+  # LADSPA_PATH, not an absolute plugin path. PipeWire appends ".so" to the
+  # `plugin` field and searches a directory list -- measured, with an absolute
+  # path, as: failed to load plugin '<abs path>' in
+  # '/usr/lib64/ladspa:/usr/lib/ladspa:<pipewire libdir>'. None of those three
+  # is a directory this flake controls, so the search path itself must be set.
+  #
+  # Same species as home/uwsm.nix's ExecStart=fumon defect -- a name resolved
+  # against a search path no /nix/store entry will ever join -- with the
+  # opposite fix, because here an absolute path is the thing that is refused.
+  ladspaPath = "${pkgs.rnnoise-plugin}/lib/ladspa";
 in
 {
   # pipewire brings pw-play, pw-dump, pw-top, pw-cli and the 14 bluez5 SPA
@@ -485,6 +504,38 @@ in
     "systemd/user/wireplumber@.service.d/10-data-dir.conf".text = ''
       [Service]
       Environment=WIREPLUMBER_DATA_DIR=${pkgs.wireplumber}/share/wireplumber
+    '';
+
+    # The filter graph. A .d fragment merges into the filter-chain.conf that
+    # pipewire finds in its own compiled-in share directory, so no base config
+    # is needed here -- verified by running `pipewire -c filter-chain.conf`
+    # against a scratch XDG_CONFIG_HOME holding only this fragment, which
+    # produced the source `fragtest_output.rnnoise` with an empty log.
+    "pipewire/filter-chain.conf.d/50-noise-canceling-source.conf".source =
+      noiseCancelingSource;
+
+    # Two directives that look unrelated and are both mandatory.
+    #
+    # LADSPA_PATH: see the ladspaPath binding above. Without it the graph does
+    # not load and the unit fails.
+    #
+    # X-Restart-Triggers: sd-switch restarts a unit when the unit FILE changes,
+    # never when a file the unit reads changes. A change confined to the
+    # fragment above leaves filter-chain.service byte-identical, sd-switch
+    # correctly does nothing, and the service goes on serving the previous
+    # graph from a store path nothing points at any more. The switch succeeds
+    # and the edit has no effect -- the defect every quickshell change in this
+    # flake carried until spec 11. Naming the config's store path here makes
+    # this drop-in's own text move whenever the config's content moves.
+    #
+    # X- keys are ignored by systemd itself, which is why this is the
+    # conventional spelling; see home/quickshell.nix's Unit.X-Restart-Triggers.
+    "systemd/user/filter-chain.service.d/10-noise-canceling-source.conf".text = ''
+      [Unit]
+      X-Restart-Triggers=${noiseCancelingSource}
+
+      [Service]
+      Environment=LADSPA_PATH=${ladspaPath}
     '';
   };
 
