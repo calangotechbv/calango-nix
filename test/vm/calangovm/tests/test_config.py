@@ -74,3 +74,26 @@ class Paths(unittest.TestCase):
     def test_a_tilde_is_expanded(self):
         c = config.resolve(overrides={"dir": "~/vm/x"}, environ={}, repo=FAKE_REPO)
         self.assertFalse(str(c.dir).startswith("~"))
+
+
+class FindRepo(unittest.TestCase):
+    """find_repo had no coverage: every other test passes repo= and skips it."""
+
+    def test_it_climbs_three_levels_to_the_flake(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            (root / "flake.nix").write_text("{}\n")
+            pkg = root / "test" / "vm" / "calangovm"
+            pkg.mkdir(parents=True)
+            here = pkg / "config.py"
+            here.write_text("")
+            self.assertEqual(config.find_repo(here), root)
+
+    def test_no_flake_above_it_is_a_precondition(self):
+        with tempfile.TemporaryDirectory() as d:
+            pkg = Path(d).resolve() / "a" / "b" / "c"
+            pkg.mkdir(parents=True)
+            here = pkg / "config.py"
+            here.write_text("")
+            with self.assertRaises(config.Precondition):
+                config.find_repo(here)

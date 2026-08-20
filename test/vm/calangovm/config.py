@@ -1,4 +1,4 @@
-"""Configuration for the VM harness: five values, two derived, two read.
+"""Configuration for the VM harness: five values, three derived, two read.
 
 Ported from lib-qemu.sh.
 
@@ -65,11 +65,17 @@ class Config:
         return self.dir / "console.sock"
 
 
-def find_repo() -> Path:
+def find_repo(start=None) -> Path:
     """The repository this harness tests, found from the harness's own location
     rather than hard-coded, so a clone anywhere works. lib-qemu.sh:29-30.
+
+    `start` exists so a test can build a tree and check the arithmetic. A test
+    that instead called find_repo() bare and asserted against the real
+    repository would pass here and FAIL inside the sandbox of
+    checks.vm-harness-tests, which copies test/vm to harness/ with no flake.nix
+    three levels above it.
     """
-    repo = Path(__file__).resolve().parents[3]
+    repo = (Path(__file__) if start is None else Path(start)).resolve().parents[3]
     if not (repo / "flake.nix").is_file():
         raise Precondition(
             f"no flake.nix at {repo} -- is calangovm/ still at test/vm/calangovm/?")
