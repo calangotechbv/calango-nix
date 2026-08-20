@@ -37,8 +37,10 @@ against the *pushed* document, tells you the sequence works. Keep them apart
 when reporting.
 
 **A `final-pass` run must not be started from a managed background shell.**
-See "Nine things not to undo" below — it is a rule about running this harness,
-not about the harness's own code, which is why it lives there rather than here.
+See the "things not to undo" list below — it is a rule about running this
+harness, not about the harness's own code, which is why it lives there rather
+than here. The list's heading carries a count; this sentence deliberately does
+not, because it said "Nine" for two entries after the list had grown.
 
 ## Configuration
 

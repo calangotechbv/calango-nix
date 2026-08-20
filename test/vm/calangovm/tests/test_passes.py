@@ -1,3 +1,4 @@
+import socket
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -122,3 +123,82 @@ class Stop(unittest.TestCase):
              mock.patch.object(passes.qemu, "terminate_running_vms") as term:
             self.assertEqual(passes.stop(CFG), 0)
             term.assert_called_once()
+
+
+class Boot(unittest.TestCase):
+    """boot() had no test and no execution: final_pass re-implemented its body.
+
+    So the green pass exercised a COPY of this code, and the copy had already
+    drifted -- it omitted require_no_running_vm. Both paths now share
+    _prepare_boot, and both are tested here.
+    """
+
+    def _cfg(self, d):
+        return config.resolve(overrides={"dir": d}, environ={},
+                              repo=Path("/nowhere/repo"))
+
+    def test_it_execs_qemu_with_the_boot_args(self):
+        seen = []
+        with TemporaryDirectory() as d, \
+             mock.patch.object(passes.qemu, "require_no_running_vm"):
+            cfg = self._cfg(d)
+            passes.boot(cfg, exec_qemu=lambda c, a: seen.append(a))
+        self.assertEqual(seen, [passes.BOOT_ARGS(cfg)])
+
+    def test_it_refuses_while_another_vm_holds_the_disk(self):
+        with TemporaryDirectory() as d, \
+             mock.patch.object(passes.qemu, "running_vm_pids", return_value=[11]):
+            with self.assertRaises(config.Precondition):
+                passes.boot(self._cfg(d), exec_qemu=lambda c, a: None)
+
+    def test_a_stale_socket_file_is_removed_before_qemu_starts(self):
+        # qemu creates the socket, and refuses to if the path is taken. A
+        # leftover from a killed run is otherwise read as a live console.
+        order = []
+        with TemporaryDirectory() as d, \
+             mock.patch.object(passes.qemu, "require_no_running_vm"):
+            cfg = self._cfg(d)
+            cfg.console_sock.write_text("stale")
+            passes.boot(cfg, exec_qemu=lambda c, a: order.append(cfg.console_sock.exists()))
+        self.assertEqual(order, [False])
+
+    def test_detached_returns_once_the_console_socket_exists(self):
+        with TemporaryDirectory() as d, \
+             mock.patch.object(passes.qemu, "require_no_running_vm"):
+            cfg = self._cfg(d)
+
+            def spawn(c, argv, out):
+                sock = socket.socket(socket.AF_UNIX)
+                self.addCleanup(sock.close)
+                sock.bind(str(c.console_sock))
+                return "popen"
+
+            self.assertEqual(passes.boot_detached(cfg, spawn=spawn), "popen")
+            self.assertTrue((cfg.dir / "qemu-boot.out").is_file())
+
+    def test_detached_is_a_precondition_when_the_socket_never_appears(self):
+        # The shape this catches is a qemu that died at once -- a bad argument,
+        # a held disk. Without it the next thing to run is Console.connect
+        # against nothing, whose ConnectionRefusedError names neither.
+        with TemporaryDirectory() as d, \
+             mock.patch.object(passes.qemu, "require_no_running_vm"):
+            cfg = self._cfg(d)
+            with self.assertRaises(config.Precondition) as caught:
+                passes.boot_detached(cfg, timeout=0, spawn=lambda c, a, o: None)
+            self.assertIn("qemu-boot.out", str(caught.exception))
+
+    def test_detached_refuses_while_another_vm_holds_the_disk(self):
+        # final_pass's own copy of this body had no such guard.
+        #
+        # The message is asserted because this test PASSED VACUOUSLY without
+        # it: with timeout=0 and a spawn that starts nothing, the socket check
+        # below raises a Precondition of its own, so deleting the guard under
+        # test left the assertRaises satisfied by the wrong exception. Found by
+        # mutating _prepare_boot, which failed the boot() test beside this one
+        # and not this one.
+        with TemporaryDirectory() as d, \
+             mock.patch.object(passes.qemu, "running_vm_pids", return_value=[11]):
+            with self.assertRaises(config.Precondition) as caught:
+                passes.boot_detached(self._cfg(d), timeout=0,
+                                     spawn=lambda c, a, o: None)
+            self.assertIn("already running", str(caught.exception))

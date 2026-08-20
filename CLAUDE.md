@@ -59,8 +59,9 @@ at `test/vm/`** — read `test/vm/README.md` first. It had been written from
 scratch twice before landing, and each rewrite paid again for the same traps
 -- typing into GRUB, a redirected step hiding a debconf prompt, `/tmp` cleared
 on reboot taking the evidence with it, a wrapper whose `echo` reported success
-for a failed run; `test/vm/README.md`'s own "Nine things not to undo" is where
-those live now. `test/vm/steps/*.txt` transcribe the runbook's commands by
+for a failed run; the "things not to undo" list in `test/vm/README.md` is where
+those live now -- read its heading for the count rather than carrying one here,
+which read "Nine" while the list stood at eleven. `test/vm/steps/*.txt` transcribe the runbook's commands by
 hand, each mirrored line carrying the runbook's own text above it as a `#= `
 line. `vm-step-lines-verbatim` asserts every one appears verbatim in the
 rendered `RUNBOOK.md`, at build time, so a runbook edit with no matching

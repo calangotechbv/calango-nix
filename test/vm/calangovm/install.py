@@ -25,7 +25,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import qemu
-from .config import Config, Precondition, bootstrap_path, username
+from .config import Config, Precondition, bootstrap_path, harness_dir, username
 
 NEWC_MAGIC = b"070701"
 
@@ -194,7 +194,19 @@ def extract_kernel(cfg: Config) -> tuple[Path, Path]:
     return vmlinuz, initrd
 
 
-def make_server(store: Path, port: int, fetches: list) -> ThreadingHTTPServer:
+def make_server(store: Path, port: int, fetches: list, log=None) -> ThreadingHTTPServer:
+    """Serve the store path, and count the fetches of preseed.cfg.
+
+    The log line keeps its TIMESTAMP. slirp presents the guest as 127.0.0.1,
+    exactly like a host-side probe, so the address distinguishes nothing and the
+    time each request arrived is the only thing that tells the host's own probe
+    from the installer's fetch two minutes later. The first port dropped it --
+    an override that only removed `- - [%s]` from the base class's line -- while
+    README.md went on naming the timestamps as the evidence. A log that cannot
+    date its own lines is not evidence of a sequence.
+    """
+    stream = sys.stderr if log is None else log
+
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=str(store), **kw)
@@ -205,7 +217,9 @@ def make_server(store: Path, port: int, fetches: list) -> ThreadingHTTPServer:
             super().do_GET()
 
         def log_message(self, fmt, *args):
-            sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+            stream.write("%s - - [%s] %s\n" % (
+                self.address_string(), self.log_date_time_string(), fmt % args))
+            stream.flush()
 
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
@@ -251,7 +265,7 @@ def install(cfg: Config) -> int:
     vmlinuz, initrd = extract_kernel(cfg)
 
     print("building the preseeded initrd")
-    harness = Path(__file__).resolve().parent.parent
+    harness = harness_dir()
     answers = render_answers((harness / "human-answers.cfg").read_text(),
                              cfg.host, cfg.pw)
     check_answers(answers, cfg.host, cfg.pw)

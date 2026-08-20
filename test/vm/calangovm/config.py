@@ -65,6 +65,29 @@ class Config:
         return self.dir / "console.sock"
 
 
+def harness_dir(start=None) -> Path:
+    """test/vm, the harness's own directory -- the arithmetic, in ONE place.
+
+    Three modules worked this out independently: install() and steps_files()
+    each spelled `Path(__file__).resolve().parent.parent`, from two different
+    files, and find_repo() spelled `parents[3]` from a third. Three spellings
+    of one fact, and only find_repo's carried a guard, so moving calangovm/ one
+    level down would have left install() reading human-answers.cfg out of a
+    directory that does not exist and reporting a bare FileNotFoundError -- an
+    exit 3, "the harness broke", for a tree that is merely laid out wrong.
+
+    Both markers are checked because the two callers need different ones:
+    install() reads human-answers.cfg and steps_files() globs steps/.
+    """
+    harness = (Path(__file__) if start is None else Path(start)).resolve().parents[1]
+    for marker in ("human-answers.cfg", "steps"):
+        if not (harness / marker).exists():
+            raise Precondition(
+                f"no {marker} under {harness} -- is calangovm/ still at "
+                "test/vm/calangovm/?")
+    return harness
+
+
 def find_repo(start=None) -> Path:
     """The repository this harness tests, found from the harness's own location
     rather than hard-coded, so a clone anywhere works. lib-qemu.sh:29-30.
@@ -75,7 +98,7 @@ def find_repo(start=None) -> Path:
     checks.vm-harness-tests, which copies test/vm to harness/ with no flake.nix
     three levels above it.
     """
-    repo = (Path(__file__) if start is None else Path(start)).resolve().parents[3]
+    repo = harness_dir(start).parent.parent
     if not (repo / "flake.nix").is_file():
         raise Precondition(
             f"no flake.nix at {repo} -- is calangovm/ still at test/vm/calangovm/?")

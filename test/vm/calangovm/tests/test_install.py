@@ -1,3 +1,6 @@
+import shutil
+import tempfile
+import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -182,3 +185,50 @@ class Verdict(unittest.TestCase):
         self.assertEqual(code, 2, "a dead qemu was diagnosed as something else")
         self.assertIn("qemu", message)
         self.assertNotIn("fetch", message)
+
+
+class MakeServer(unittest.TestCase):
+    """The one piece of Stage 0 that had no test, and the one that lost a property.
+
+    Run for real against a live socket: the counter and the log line are both
+    written from inside http.server's own request path, so a test that called
+    log_message on a stand-in object would assert about a class this code does
+    not serve with.
+    """
+
+    def _serve(self, path):
+        import io
+        import urllib.request
+        store = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, store)
+        (store / "preseed.cfg").write_text("d-i debian-installer/locale string en_US\n")
+        log, fetches = io.StringIO(), []
+        httpd = install.make_server(store, 0, fetches, log=log)
+        self.addCleanup(httpd.server_close)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        port = httpd.server_address[1]
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=10) as r:
+            body = r.read()
+        return body, fetches, log.getvalue()
+
+    def test_it_serves_the_preseed_and_counts_the_fetch(self):
+        body, fetches, _ = self._serve("/preseed.cfg")
+        self.assertIn(b"debian-installer/locale", body)
+        self.assertEqual(len(fetches), 1)
+
+    def test_the_log_line_carries_a_timestamp(self):
+        # The evidence README.md names: slirp presents the guest as 127.0.0.1,
+        # exactly like the host's own probe, so the address separates nothing
+        # and the time is what tells the two apart. The first port dropped it.
+        _, _, logged = self._serve("/preseed.cfg")
+        self.assertRegex(
+            logged,
+            r"127\.0\.0\.1 - - \[\d\d/\w\w\w/\d{4} \d\d:\d\d:\d\d\] .*preseed\.cfg")
+
+    def test_a_fetch_of_something_else_is_not_counted(self):
+        # The count is the assertion install() makes; anything else the
+        # installer asks for must not inflate it.
+        body, fetches, logged = self._serve("/")
+        self.assertEqual(fetches, [])
+        self.assertIn("GET /", logged)

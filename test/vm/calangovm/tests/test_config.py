@@ -1,3 +1,4 @@
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +77,14 @@ class Paths(unittest.TestCase):
         self.assertFalse(str(c.dir).startswith("~"))
 
 
+def _harness_tree(harness: Path) -> Path:
+    """A test/vm laid out the way harness_dir insists on, returning it."""
+    (harness / "calangovm").mkdir(parents=True)
+    (harness / "steps").mkdir()
+    (harness / "human-answers.cfg").write_text("")
+    return harness
+
+
 class FindRepo(unittest.TestCase):
     """find_repo had no coverage: every other test passes repo= and skips it."""
 
@@ -83,17 +92,53 @@ class FindRepo(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d).resolve()
             (root / "flake.nix").write_text("{}\n")
-            pkg = root / "test" / "vm" / "calangovm"
-            pkg.mkdir(parents=True)
-            here = pkg / "config.py"
+            here = _harness_tree(root / "test" / "vm") / "calangovm" / "config.py"
             here.write_text("")
             self.assertEqual(config.find_repo(here), root)
 
     def test_no_flake_above_it_is_a_precondition(self):
         with tempfile.TemporaryDirectory() as d:
-            pkg = Path(d).resolve() / "a" / "b" / "c"
-            pkg.mkdir(parents=True)
-            here = pkg / "config.py"
+            here = (_harness_tree(Path(d).resolve() / "a" / "b")
+                    / "calangovm" / "config.py")
             here.write_text("")
-            with self.assertRaises(config.Precondition):
+            with self.assertRaises(config.Precondition) as caught:
                 config.find_repo(here)
+            # Named, because find_repo now climbs through harness_dir and that
+            # raises a Precondition of its own. Without this the test passes on
+            # a tree that never reached the flake check at all.
+            self.assertIn("flake.nix", str(caught.exception))
+
+
+class HarnessDir(unittest.TestCase):
+    """The arithmetic install(), steps_files() and find_repo() each had a copy of."""
+
+    def test_the_real_one_holds_the_harness(self):
+        # Asserted by CONTENT, not by name. An earlier version of this test read
+        # `harness.name == "vm"` and failed only inside
+        # checks.vm-harness-tests, which copies test/vm to harness/ -- the trap
+        # find_repo's docstring names, met by a test written to cover it.
+        harness = config.harness_dir()
+        self.assertTrue((harness / "human-answers.cfg").is_file())
+        self.assertTrue((harness / "steps").is_dir())
+        self.assertTrue((harness / "calangovm" / "config.py").is_file())
+
+    def test_it_is_the_directory_holding_the_package(self):
+        with tempfile.TemporaryDirectory() as d:
+            harness = _harness_tree(Path(d).resolve() / "test" / "vm")
+            self.assertEqual(config.harness_dir(harness / "calangovm" / "x.py"),
+                             harness)
+
+    def test_a_missing_marker_is_a_precondition_not_a_traceback(self):
+        # install() reads human-answers.cfg straight off this path. Unguarded,
+        # a calangovm/ moved one level down gives a bare FileNotFoundError --
+        # exit 3, "the harness broke" -- for a tree that is merely laid out
+        # wrong. Each marker is dropped in turn: a guard naming two properties
+        # and enforcing one is the shape this project keeps paying for.
+        for drop in ("human-answers.cfg", "steps"):
+            with self.subTest(drop=drop), tempfile.TemporaryDirectory() as d:
+                harness = _harness_tree(Path(d).resolve() / "test" / "vm")
+                target = harness / drop
+                shutil.rmtree(target) if target.is_dir() else target.unlink()
+                with self.assertRaises(config.Precondition) as caught:
+                    config.harness_dir(harness / "calangovm" / "x.py")
+                self.assertIn(drop, str(caught.exception))

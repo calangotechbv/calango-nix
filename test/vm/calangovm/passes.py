@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import driver, install, qemu
-from .config import Config, Precondition, bootstrap_path, username
+from .config import Config, Precondition, bootstrap_path, harness_dir, username
 
 
 def BOOT_ARGS(cfg: Config) -> list[str]:
@@ -26,10 +26,46 @@ def BOOT_ARGS(cfg: Config) -> list[str]:
             "-serial", f"unix:{cfg.console_sock},server=on,wait=off"]
 
 
-def boot(cfg: Config) -> None:
+def _prepare_boot(cfg: Config) -> list[str]:
+    """Everything the two boot paths share: the guard, the stale socket, the argv.
+
+    They differ only in how qemu is started -- boot() replaces this process with
+    it, final_pass() spawns it as a child and stays to drive the console -- and
+    that one difference was expressed by writing the whole body twice.
+    final_pass's copy omitted require_no_running_vm, so the guard that refuses
+    while another qemu holds the disk was in the path a person runs and not in
+    the path the evidence comes from.
+    """
     qemu.require_no_running_vm(cfg)
     cfg.console_sock.unlink(missing_ok=True)
-    qemu.exec_qemu(cfg, BOOT_ARGS(cfg))          # never returns
+    return BOOT_ARGS(cfg)
+
+
+def boot(cfg: Config, exec_qemu=None) -> None:
+    exec_qemu = qemu.exec_qemu if exec_qemu is None else exec_qemu
+    exec_qemu(cfg, _prepare_boot(cfg))           # never returns
+
+
+def boot_detached(cfg: Config, timeout: float = 180.0, spawn=None,
+                  sleep=time.sleep) -> subprocess.Popen:
+    """boot(), as a child this process outlives, waiting for the console socket.
+
+    qemu creates the socket when it opens the serial device, so its appearance
+    is the readiness signal. Nothing else is: the guest is still in GRUB at that
+    point, which is why login() must not type.
+    """
+    spawn = qemu.spawn_qemu if spawn is None else spawn
+    argv = _prepare_boot(cfg)
+    boot_log = cfg.dir / "qemu-boot.out"
+    with boot_log.open("w") as out:
+        proc = spawn(cfg, argv, out)
+    end = time.monotonic() + timeout
+    while not cfg.console_sock.is_socket() and time.monotonic() < end:
+        sleep(1)
+    if not cfg.console_sock.is_socket():
+        raise Precondition(
+            f"{cfg.console_sock} never appeared in {timeout:.0f}s; see {boot_log}")
+    return proc
 
 
 def display(cfg: Config) -> None:
@@ -56,7 +92,7 @@ def stop(cfg: Config) -> int:
 
 
 def steps_files(harness: Path | None = None) -> list[Path]:
-    harness = Path(__file__).resolve().parent.parent if harness is None else harness
+    harness = harness_dir() if harness is None else harness
     files = sorted((harness / "steps").glob("*.txt"))
     if not files:
         raise Precondition(f"no steps/*.txt under {harness}/steps -- "
@@ -142,14 +178,7 @@ def final_pass(cfg: Config) -> int:
         return 1
 
     log("boot the installed machine")
-    cfg.console_sock.unlink(missing_ok=True)
-    with (cfg.dir / "qemu-boot.out").open("w") as out:
-        qemu.spawn_qemu(cfg, BOOT_ARGS(cfg), out)
-    end = time.monotonic() + 180
-    while not cfg.console_sock.is_socket() and time.monotonic() < end:
-        time.sleep(1)
-    if not cfg.console_sock.is_socket():
-        raise Precondition(f"{cfg.console_sock} never appeared; see {cfg.dir}/qemu-boot.out")
+    boot_detached(cfg)
 
     log("Gate A through Stage D")
     rc = run_all(cfg)
