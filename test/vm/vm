@@ -23,6 +23,10 @@ def build_parser():
     p = sub.add_parser("config", help="print the resolved configuration")
     p.set_defaults(func=cmd_config)
 
+    p = sub.add_parser("drive", help="run one steps file against a booted VM")
+    p.add_argument("steps", help="path to a steps/*.txt file")
+    p.set_defaults(func=cmd_drive)
+
     return ap
 
 
@@ -34,6 +38,12 @@ def cmd_config(cfg, args):
     print(f"{'bootstrap':<12} {store}")
     print(f"{'account':<12} {config.username(store)}")
     return 0
+
+
+def cmd_drive(cfg, args):
+    from calangovm import driver
+    store = config.bootstrap_path(cfg)
+    return driver.drive(cfg, args.steps, config.username(store))
 
 
 def main(argv=None):
