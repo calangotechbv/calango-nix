@@ -61,8 +61,30 @@ Gate A was driven over the serial console. Spec 18's rehearsal added
 `ssh-server` as a harness deviation; not adding it here is what exposed
 finding 6.
 
-All six predictions written before the run held. Full text in
-`~/vm/spec19-rehearsal/PREDICTIONS.md`.
+**All six predictions written before the run held.** They are reproduced here
+rather than left in a scratch directory, because a prediction that survives only
+where the run happened is not a record of anything:
+
+1. the installer fetches the preseed — one `GET /preseed.cfg` in the server's
+   log, from the guest's point of view, or nothing else in the run means
+   anything;
+2. the install runs to the end without stopping at a dialog — a prediction about
+   the *scaffolding*, that the 30 answers cover every question the generated
+   preseed leaves standing;
+3. all 12 packages install, which `pkgsel/include` enforces by failing the
+   install loudly rather than shipping a machine missing one;
+4. **`late_command`'s `usermod` succeeds** — the genuinely open question, and the
+   reason the run was worth doing. Confidence was recorded as moderate, not
+   high, with the failure mode named in advance: `usermod -aG` is
+   all-or-nothing, so a missing group leaves the account in *none* of the four,
+   and Gate A reads 0 and 0 rather than 3 and 1;
+5. Gate A answers `active`, `3`, `1` — the `1` can only come from
+   `late_command`, because root was given a real password on purpose so the
+   installer would not add `sudo` itself;
+6. nothing ever asks for the username.
+
+Writing 4 and 5 down first is what made the run falsifiable: both name the
+reading that would have disproved them, before the reading was taken.
 
 ## Defects, findings and their owners
 
@@ -344,6 +366,12 @@ It has since left `home/deb.nix`'s `keep` and
 
 `test/vm/README.md` says which files are the product and which are scaffolding,
 and `test/vm/drive.py` carries findings 10, 11 and 14 as comments on the lines
-that fix them. The two scratch directories these runs used --
-`~/vm/spec19-rehearsal` and `~/vm/spec19-full` -- are superseded and can be
-deleted; the harness rebuilds either from nothing in about twenty minutes.
+that fix them.
+
+The four scratch directories these runs used -- `~/vm/spec18-rehearsal`,
+`~/vm/spec19-rehearsal`, `~/vm/spec19-full` and `~/vm/runbook-loop`, 43 GB
+between them -- were deleted on 2026-08-20, once everything they held that a
+document referred to had been copied into this one. Nothing points at them any
+more. `test/vm/final-pass.sh` rebuilds an equivalent machine from nothing in
+about twenty minutes, which is the whole reason the harness was worth importing
+rather than kept as a directory somebody remembers not to delete.
