@@ -354,7 +354,7 @@ let
     fi
   '';
 
-  # The noise-canceling source, and the one directory its LADSPA plugin lives
+  # The noise-canceling source, and the directories its LADSPA plugins live
   # in. Both are bound here rather than written out at each use, because the
   # drop-in below has to name the same store path that xdg.configFile installs:
   # X-Restart-Triggers works by naming a path that MOVES when the content
@@ -373,6 +373,10 @@ let
   # directory in turn and the miss is harmless -- measured, it logs
   # "failed to open '<rnnoise dir>/gate_1410.so'" at debug level and then finds
   # it in the second directory.
+  #
+  # Same species as home/uwsm.nix's ExecStart=fumon defect -- a name resolved
+  # against a search path no /nix/store entry will ever join -- with the
+  # opposite fix, because here an absolute path is the thing that is refused.
   ladspaDirs = [
     "${pkgs.rnnoise-plugin}/lib/ladspa"
     "${pkgs.ladspaPlugins}/lib/ladspa"
