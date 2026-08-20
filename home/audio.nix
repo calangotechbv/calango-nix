@@ -353,6 +353,262 @@ let
       exit 1
     fi
   '';
+
+  # The noise-canceling source, and the directories its LADSPA plugins live
+  # in. Both are bound here rather than written out at each use, because the
+  # drop-in below has to name the same store path that xdg.configFile installs:
+  # X-Restart-Triggers works by naming a path that MOVES when the content
+  # changes, so two independent references to the same file would be a defect
+  # waiting for someone to edit one of them.
+  noiseCancelingSource = ./../pipewire/50-noise-canceling-source.conf;
+
+  # LADSPA_PATH, not an absolute plugin path. PipeWire appends ".so" to the
+  # `plugin` field and searches a directory list -- measured, with an absolute
+  # path, as: failed to load plugin '<abs path>' in
+  # '/usr/lib64/ladspa:/usr/lib/ladspa:<pipewire libdir>'. None of those three
+  # is a directory this flake controls, so the search path itself must be set.
+  #
+  # Two directories, because the graph needs two plugins from two packages:
+  # rnnoise for the denoiser and swh-plugins for the gate. PipeWire tries each
+  # directory in turn and the miss is harmless -- measured, it logs
+  # "failed to open '<rnnoise dir>/gate_1410.so'" at debug level and then finds
+  # it in the second directory.
+  #
+  # Same species as home/uwsm.nix's ExecStart=fumon defect -- a name resolved
+  # against a search path no /nix/store entry will ever join -- with the
+  # opposite fix, because here an absolute path is the thing that is refused.
+  ladspaDirs = [
+    "${pkgs.rnnoise-plugin}/lib/ladspa"
+    "${pkgs.ladspaPlugins}/lib/ladspa"
+  ];
+  ladspaPath = lib.concatStringsSep ":" ladspaDirs;
+
+  # Every name pipewire/50-noise-canceling-source.conf hands to a library,
+  # checked against that library, at build time.
+  #
+  # The names are read OUT OF THE FILE rather than written here. A list of
+  # "the six controls" typed into this derivation would go stale the first
+  # time someone edits the config, and would go on passing -- which is the
+  # exact failure CLAUDE.md's "enumerate by syntax, never by a remembered
+  # list" rule exists to prevent, and which produced ExecStart=fumon.
+  #
+  # This rides in home.packages rather than in flake.nix's checks so it runs on
+  # every generation build, which is strictly more often than anyone types
+  # `nix flake check`. Same choice as wrappedGuiApps and pulseaudioClients.
+  noiseCancelingGuard =
+    pkgs.runCommand "noise-canceling-source-guard"
+      {
+        conf = noiseCancelingSource;
+        dirs = lib.concatStringsSep " " ladspaDirs;
+        builtinSo = "${pkgs.pipewire}/lib/spa-0.2/filter-graph/libspa-filter-graph-plugin-builtin.so";
+        # binutils, for strings -- the whole-line existence test below caches
+        # each library's string table with it rather than grepping the .so
+        # directly, so it needs a real toolchain. This is the first guard in
+        # home/audio.nix to declare one.
+        nativeBuildInputs = [ pkgs.binutils ];
+      }
+      ''
+        # A state machine over the config, not a list of names. The selector is
+        # the PLUGIN name rather than the node type, because the graph now uses
+        # two LADSPA plugins from two different packages and `type = ladspa` no
+        # longer identifies which library a name must be found in.
+        #
+        # A control KEY is quoted and sits left of the `=`. A quoted VALUE sits
+        # right of it, so the trailing `=` in the pattern is what tells the two
+        # apart -- node.description = "Noise Canceling source" must not be read
+        # as a control name.
+        awk '
+          # Comments first, and this rule is not optional. It keeps a future
+          # comment from being read as config -- a mention of a plugin or
+          # control name in prose would otherwise parse the same as the real
+          # thing. Same species as the spec 11 appPath guard, which matched
+          # the very comment written to describe it.
+          #
+          # NOTE for anyone editing this awk program: it is inside a
+          # single-quoted shell string, so no apostrophe may appear anywhere
+          # in it, comments included. One apostrophe ends the string and the
+          # rest of the program becomes shell words.
+          /^[[:space:]]*#/ { next }
+          # type = is optional in PipeWire filter-graph syntax, so lib must
+          # not simply persist from the previous node -- a node that names no
+          # plugin and no type would otherwise be checked against whatever
+          # library the PRIOR node happened to use. Reset at the name = line
+          # that starts every node, before the plugin rule below can set it.
+          # Deliberately no next. Verified against the shipped config rather
+          # than assumed: this pattern does NOT also catch the modules own
+          # header line, { name = libpipewire-module-filter-chain -- the
+          # leading brace on that line means it does not start with
+          # whitespace then name, so ^ anchors past it. Harmless either way,
+          # since that line is followed immediately by a real node whose own
+          # type or plugin line sets lib correctly. A node that declares no
+          # plugin and no type reaches the orphan branch below.
+          /^[[:space:]]*name[[:space:]]*=/ { lib = "" }
+          /type[[:space:]]*=[[:space:]]*ladspa/  { lib = ""; next }
+          /type[[:space:]]*=[[:space:]]*builtin/ { lib = "builtin"; next }
+          match($0, /plugin[[:space:]]*=[[:space:]]*"[^"]+"/) {
+            s = substr($0, RSTART, RLENGTH)
+            sub(/plugin[[:space:]]*=[[:space:]]*"/, "", s); sub(/"$/, "", s)
+            lib = s
+            print "PLUGIN " (lib == "" ? "-" : lib) " " s; next
+          }
+          match($0, /label[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+/) {
+            s = substr($0, RSTART, RLENGTH)
+            sub(/label[[:space:]]*=[[:space:]]*/, "", s)
+            print "LABEL " (lib == "" ? "-" : lib) " " s; next
+          }
+          # A loop over every match on the line, not a single match(). match()
+          # finds only the FIRST occurrence, and the shipped config already
+          # has an inline control block on one line --
+          # control = { "VAD Threshold (%)" = 50.0 } -- so a second control
+          # added to that same line would otherwise go entirely unchecked,
+          # silently, with the vacuity anchor below none the wiser since its
+          # counters would still be non-zero.
+          {
+            rest = $0
+            while (match(rest, /"[^"]+"[[:space:]]*=/)) {
+              s = substr(rest, RSTART, RLENGTH)
+              rest = substr(rest, RSTART + RLENGTH)
+              sub(/^"/, "", s); sub(/"[[:space:]]*=$/, "", s)
+              print "CONTROL " (lib == "" ? "-" : lib) " " s
+            }
+          }
+        ' "$conf" > names.txt
+
+        labels=0
+        controls=0
+        plugins=0
+        bad=0
+
+        # Redirected from a file, never piped: a `while read` on the right of a
+        # pipe runs in a subshell and every counter below would be discarded.
+        #
+        # The awk program above prints "-" rather than leaving lib blank when
+        # a name belongs to no plugin. An empty field is invisible to `read`
+        # under the default IFS: "LABEL␣␣name" (two spaces, empty middle
+        # field) collapses on whitespace, so lib would receive the NEXT
+        # non-blank word instead of empty, and name would receive nothing.
+        # `[ -z "$lib" ]` against that misparse is never true, so the orphan
+        # branch below could never fire -- the build would still fail, but
+        # through the wrong branch, blaming a missing .so instead of the real
+        # fault: a node with no plugin line at all. The sentinel makes the
+        # empty case a real, non-empty token that `read` cannot swallow.
+        while read -r kind lib name; do
+          # Resolve which library this name must be found in.
+          so=""
+          if [ "$lib" = "builtin" ]; then
+            so="$builtinSo"
+            if [ ! -e "$so" ]; then
+              echo "The config uses a builtin filter, but pipewire no longer" >&2
+              echo "ships its builtin filter-graph plugin at" >&2
+              echo "  $so" >&2
+              echo "Find where upstream moved it and update builtinSo." >&2
+              exit 1
+            fi
+          elif [ -n "$lib" ]; then
+            for d in $dirs; do
+              if [ -e "$d/$lib.so" ]; then so="$d/$lib.so"; break; fi
+            done
+          fi
+
+          if [ "$lib" = "-" ]; then
+            echo "home/audio.nix's guard read a $kind named '$name' that" >&2
+            echo "belongs to no filter node -- no plugin line and no" >&2
+            echo "'type = builtin' preceded it in the config. Either a node" >&2
+            echo "lost its plugin, or a new node type was added and this" >&2
+            echo "guard has not been taught about it." >&2
+            exit 1
+          fi
+
+          if [ -z "$so" ]; then
+            echo "The config names the LADSPA plugin '$lib', but no" >&2
+            echo "'$lib.so' exists in any directory of LADSPA_PATH:" >&2
+            for d in $dirs; do echo "  $d" >&2; done
+            echo "The package that provides it has moved or renamed it. Note" >&2
+            echo "the config must NOT be changed to an absolute path --" >&2
+            echo "pipewire refuses one; fix ladspaDirs instead." >&2
+            bad=1
+            continue
+          fi
+
+          # A whole-line test, not a substring one. PipeWire matches a control
+          # name exactly and IGNORES one it does not know, so a name that is
+          # merely a substring of a real port -- "Threshold" against
+          # "Threshold (dB)" -- would pass a substring grep and then be
+          # silently dropped at runtime, which is the exact failure this
+          # guard exists to stop. Measured against the shipped library:
+          # `grep -caF -e Threshold gate_1410.so` reads 1, so a truncated
+          # name would have gone undetected.
+          #
+          # Cached to a file rather than piped. `strings ... | grep -q` looks
+          # obvious and is wrong here: grep -q exits at the first match and
+          # SIGPIPEs strings, and under pipefail the pipeline then reports
+          # 141, so the guard would announce a name as missing precisely when
+          # it is present.
+          cache="strings-$(printf '%s' "$so" | tr -c 'A-Za-z0-9' '_')"
+          if [ ! -f "$cache" ]; then
+            strings "$so" > "$cache"
+          fi
+
+          case "$kind" in
+            PLUGIN)
+              # Resolution above WAS the existence check, and it is what makes
+              # the LADSPA_PATH drop-in honest: some directory it names must
+              # really hold this object.
+              plugins=$((plugins + 1))
+              ;;
+            LABEL)
+              labels=$((labels + 1))
+              # A condition, not a bare grep: this builder runs with errexit,
+              # and a grep that matches nothing exits 1.
+              if ! grep -qxF -e "$name" "$cache"; then
+                echo "The config uses the filter label '$name', which does" >&2
+                echo "not appear in $so." >&2
+                echo "  (from $conf)" >&2
+                echo "Upstream renamed or dropped it. The config's flags do" >&2
+                echo "NOT include nofail, so this would fail the unit at" >&2
+                echo "runtime rather than pass silently." >&2
+                bad=1
+              fi
+              ;;
+            CONTROL)
+              controls=$((controls + 1))
+              if ! grep -qxF -e "$name" "$cache"; then
+                echo "The config sets the control '$name', which does not" >&2
+                echo "appear in $so." >&2
+                echo "  (from $conf)" >&2
+                echo "A control pipewire does not know is IGNORED, so the" >&2
+                echo "filter would run at its default instead of the value" >&2
+                echo "the config asks for -- silently. Note this guard checks" >&2
+                echo "that a NAME exists; it cannot tell you that a filter" >&2
+                echo "loads and then emits silence, which is how the builtin" >&2
+                echo "noisegate defect reached a live machine." >&2
+                bad=1
+              fi
+              ;;
+          esac
+        done < names.txt
+
+        # The vacuity anchor. Without it a config the parser cannot read at all
+        # -- a reformat, a renamed key, a file replaced by an empty one --
+        # produces zero names to check, zero failures, and a guard that reports
+        # success having asserted nothing.
+        if [ "$plugins" -eq 0 ] || [ "$labels" -eq 0 ] || [ "$controls" -eq 0 ]; then
+          echo "The guard parsed $plugins plugin(s), $labels label(s) and" >&2
+          echo "$controls control(s) out of" >&2
+          echo "  $conf" >&2
+          echo "and at least one of those is zero, so it checked nothing." >&2
+          echo "The config's syntax has changed under the parser above. Read" >&2
+          echo "the file and update the awk program, and do not delete this" >&2
+          echo "check -- it is the only thing standing between a reformat and" >&2
+          echo "a guard that passes vacuously for ever." >&2
+          exit 1
+        fi
+
+        [ "$bad" -eq 0 ] || exit 1
+
+        echo "ok: $plugins plugin(s), $labels label(s), $controls control(s) checked"
+        mkdir -p "$out"
+      '';
 in
 {
   # pipewire brings pw-play, pw-dump, pw-top, pw-cli and the 14 bluez5 SPA
@@ -382,7 +638,7 @@ in
   # which resolves its own configuration through a compiled-in datadir and
   # PIPEWIRE_CONFIG_DIR, not XDG_DATA_DIRS (checked with strings on both
   # libraries) -- so pipewire needed no equivalent fix.
-  home.packages = [ pkgs.pipewire pkgs.wireplumber pulseaudioClients ];
+  home.packages = [ pkgs.pipewire pkgs.wireplumber pulseaudioClients noiseCancelingGuard ];
 
   # apt packages this audio stack needs Debian to keep. Nine of the ten fill
   # the compiled-in module directory of DEBIAN's libpipewire-0.3.so, which is a
@@ -485,6 +741,38 @@ in
     "systemd/user/wireplumber@.service.d/10-data-dir.conf".text = ''
       [Service]
       Environment=WIREPLUMBER_DATA_DIR=${pkgs.wireplumber}/share/wireplumber
+    '';
+
+    # The filter graph. A .d fragment merges into the filter-chain.conf that
+    # pipewire finds in its own compiled-in share directory, so no base config
+    # is needed here -- verified by running `pipewire -c filter-chain.conf`
+    # against a scratch XDG_CONFIG_HOME holding only this fragment, which
+    # produced the source `fragtest_output.rnnoise` with an empty log.
+    "pipewire/filter-chain.conf.d/50-noise-canceling-source.conf".source =
+      noiseCancelingSource;
+
+    # Two directives that look unrelated and are both mandatory.
+    #
+    # LADSPA_PATH: see the ladspaPath binding above. Without it the graph does
+    # not load and the unit fails.
+    #
+    # X-Restart-Triggers: sd-switch restarts a unit when the unit FILE changes,
+    # never when a file the unit reads changes. A change confined to the
+    # fragment above leaves filter-chain.service byte-identical, sd-switch
+    # correctly does nothing, and the service goes on serving the previous
+    # graph from a store path nothing points at any more. The switch succeeds
+    # and the edit has no effect -- the defect every quickshell change in this
+    # flake carried until spec 11. Naming the config's store path here makes
+    # this drop-in's own text move whenever the config's content moves.
+    #
+    # X- keys are ignored by systemd itself, which is why this is the
+    # conventional spelling; see home/quickshell.nix's Unit.X-Restart-Triggers.
+    "systemd/user/filter-chain.service.d/10-noise-canceling-source.conf".text = ''
+      [Unit]
+      X-Restart-Triggers=${noiseCancelingSource}
+
+      [Service]
+      Environment=LADSPA_PATH=${ladspaPath}
     '';
   };
 
