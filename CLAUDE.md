@@ -120,20 +120,26 @@ sed -n "/pulseaudioClients = pkgs.runCommand/,/^  '';$/p" home/audio.nix | /usr/
 ```
 
 A package-producing derivation can be a guard too, which is exactly what a
-remembered list of "the guards" misses. `home/default.nix`'s
-`nixglSingleSource` is the fourth, added by the nixGL consolidation, and it is
-a different shape again: not a package at all, but a `runCommand` that greps
-the tree's own source text for a literal wrapper call and fails the build if
-one turns up outside `lib/nixgl.nix` — the first guard here that inspects
-source text rather than a built package's contents. `home/deb.nix`'s
-`noStorePaths` is the fifth, added by the glue-deb work: another `runCommand`
-in `home.packages`, this one grepping the rendered manifest (`calango.deb.keep`,
-`.ban`, `.ufwProfiles` and `.files` together) for a literal `/nix/store` and
-failing the build if one turns up — the property `home/session.nix`'s own
-comment names directly, since a root-owned file naming the store breaks
-unrecoverably once that path is garbage-collected.
+remembered list of "the guards" misses, and so is an ordinal count of them —
+this passage named its guards "the fourth", "the fifth" and "the sixth" for a
+whole spec, until the very next one landed and the count was wrong the moment
+of insertion, in the same edit that was correcting a stale count above it.
+Ordinals go stale on every insertion; a command does not. Enumerate with
+`grep -n 'home.packages' home/*.nix`, then read what each list contains, same
+as the count of two paragraphs above. `home/default.nix`'s `nixglSingleSource`
+is another, added by the nixGL consolidation, and it is a different shape
+again: not a package at all, but a `runCommand` that greps the tree's own
+source text for a literal wrapper call and fails the build if one turns up
+outside `lib/nixgl.nix` — the first guard here that inspects source text
+rather than a built package's contents. `home/deb.nix`'s `noStorePaths` is
+another, added by the glue-deb work: another `runCommand` in `home.packages`,
+this one grepping the rendered manifest (`calango.deb.keep`, `.ban`,
+`.ufwProfiles` and `.files` together) for a literal `/nix/store` and failing
+the build if one turns up — the property `home/session.nix`'s own comment
+names directly, since a root-owned file naming the store breaks unrecoverably
+once that path is garbage-collected.
 
-`home/bootstrap.nix`'s `bootstrapDir` is the sixth, added by the bare-Debian
+`home/bootstrap.nix`'s `bootstrapDir` is another, added by the bare-Debian
 bootstrap work, and it is the **second** guard in this flake to ride as an
 *input of an exposed package*, not merely as a `home.packages` sibling — the
 shape spec 16's defect 10 established, when `noStorePaths` above was found to

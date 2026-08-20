@@ -1,8 +1,24 @@
 # Spec 21: a noise-canceling source, built from what PipeWire already ships
 
+> **ERRATUM, 2026-08-20, added after implementation.** This design's gate is
+> PipeWire's builtin `noisegate`, and the builtin **cannot open**: its `Level`
+> port loads as an INPUT control with range 0.0-0.0 and the node declares
+> `n_notify:0`, so the level it compares against its own threshold is
+> permanently zero and any threshold above zero holds it shut forever. It made
+> the machine's microphone permanently silent, every guard in this document's
+> plan passed while it did, and a person found it by listening. The shipped
+> gate is swh-plugins' `gate_1410`, label `gate`, from `pkgs.ladspaPlugins` —
+> **not** the builtin, and **not** a drop-in replacement: its controls are in
+> DECIBELS and MILLISECONDS, not the linear amplitude and seconds tables below,
+> and its input port is named `Input`, not `In`. Every control table, every
+> tuning formula and every `gate:Level`/`gate:Open Threshold`/`gate:Close
+> Threshold` reference below describes the superseded builtin and must not be
+> applied to the shipped config. The authority for what was actually built and
+> shipped is `docs/2026-08-20-results-suffer-pipewire-noise-reduction.md`.
+
 **Branch:** `worktree-pipewire-noise-reduction`
 **Written:** 2026-08-20
-**Status:** design approved in chat; not implemented
+**Status:** implemented, with deviation — see the erratum above and the results document
 **Follows:** spec 20, `docs/superpowers/specs/2026-08-20-vm-harness-python-design.md`
 
 ---
@@ -110,23 +126,32 @@ so the loop cannot form. This is recorded because decision 3 keeps the filter
 off the default *by policy*, and policy can change; the mechanism is what makes
 that change safe.
 
-**All eight controls are node properties, addressable as `<node>:<control>`.**
-Read off the running probe, with upstream's defaults:
-
-| control | default |
-|---|---|
-| `rn:VAD Threshold (%)` | 50 |
-| `rn:VAD Grace Period (ms)` | 500 |
-| `rn:Retroactive VAD Grace (ms)` | 100 |
-| `gate:Open Threshold` | 0.04 |
-| `gate:Close Threshold` | 0.03 |
-| `gate:Attack (s)` | 0.005 |
-| `gate:Hold (s)` | 0.05 |
-| `gate:Release (s)` | 0.01 |
-
-`gate:Level` is a ninth entry and is a *read-out*, not a control. It is the
-tuning instrument: read it while you speak, read it again while only the room
-speaks, and the two thresholds go between the two numbers.
+> **SUPERSEDED — describes the builtin `noisegate`, not the shipped gate.**
+> The table and the `gate:Level` paragraph below are about PipeWire's builtin
+> filter, which cannot open (see the erratum at the top of this document) and
+> was never shipped tuned. The shipped gate is swh-plugins' `gate_1410`; its
+> control names, units (decibels, milliseconds) and tuning method are
+> unrelated to what follows. Do not apply any value here to the shipped
+> config. See `docs/2026-08-20-results-suffer-pipewire-noise-reduction.md`'s
+> tuning section for the real method and the real names.
+>
+> **All eight controls are node properties, addressable as `<node>:<control>`.**
+> Read off the running probe, with upstream's defaults:
+>
+> | control | default |
+> |---|---|
+> | `rn:VAD Threshold (%)` | 50 |
+> | `rn:VAD Grace Period (ms)` | 500 |
+> | `rn:Retroactive VAD Grace (ms)` | 100 |
+> | `gate:Open Threshold` | 0.04 |
+> | `gate:Close Threshold` | 0.03 |
+> | `gate:Attack (s)` | 0.005 |
+> | `gate:Hold (s)` | 0.05 |
+> | `gate:Release (s)` | 0.01 |
+>
+> `gate:Level` is a ninth entry and is a *read-out*, not a control. It is the
+> tuning instrument: read it while you speak, read it again while only the room
+> speaks, and the two thresholds go between the two numbers.
 
 ## The files
 
@@ -259,6 +284,15 @@ aborts the build on a zero count instead of reporting one.
 
 ## Tuning is a second commit
 
+> **SUPERSEDED — this method describes the builtin `noisegate`, which exposes
+> a `gate:Level` read-out.** The shipped gate, swh's `gate_1410`, declares
+> `n_notify:0` like the builtin does — it exposes no level read-out at all —
+> so `pw-dump | grep -A1 '"gate:Level"'` finds nothing for it. This is the
+> same trap as the headline defect, met a second time on a different plugin.
+> See `docs/2026-08-20-results-suffer-pipewire-noise-reduction.md`'s tuning
+> section for the method that replaced this one, and for why the shipped
+> config's threshold ultimately stayed at its floor.
+
 The file lands with upstream's defaults. A threshold picked before anyone
 measured a level is a guess presented as a decision. The method:
 
@@ -304,8 +338,10 @@ forgotten between the spec and the results document.
 
 Recorded so that no later document mistakes an assumption for a result.
 
-- **Whether sd-switch diffs drop-ins.** Test 4 exists to answer this. Until it
-  runs, the design's restart path is unproven and the fallback is real.
+- **Whether sd-switch diffs drop-ins — ANSWERED, this branch.** It does. See
+  `docs/2026-08-20-results-suffer-pipewire-noise-reduction.md`'s "The
+  sd-switch drop-in question, ANSWERED" section for the T0-T4 measurement and
+  its control; the fallback in this document was not needed.
 - **How the panel row actually renders.** The `media.class` is measured; the
   QML's treatment of it is read from the source, not seen on screen.
 - **CPU cost.** RNNoise per stream was not measured on this machine. It is

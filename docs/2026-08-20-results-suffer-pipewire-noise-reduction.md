@@ -140,15 +140,10 @@ The three mutations: a renamed/nonexistent plugin, a misspelled control name,
 and the vacuity anchor (config emptied). Note the vacuity anchor is the one a
 reviewer would skip and the one that matters most — without it a config the
 parser can no longer read produces zero names, zero failures, and a guard
-that passes having asserted nothing.
-
-`nix flake check` still reports 8 throughout; this work adds no `checks`
-entry — the guard rides in `home.packages`, the same shape as
-`pulseaudioClients`, not in `flake.nix`'s `checks`:
-
-```
-running 8 flake checks...
-```
+that passes having asserted nothing. This work adds no `checks` entry — the
+guard rides in `home.packages`, the same shape as `pulseaudioClients`, not in
+`flake.nix`'s `checks`; see "Reproducing the guard" below for the
+`nix flake check` count.
 
 ## THE CONTROLLER'S OWN INSTRUMENT ERROR
 
@@ -246,9 +241,8 @@ into during part of this investigation.
 
 ## Guard enumeration, re-measured
 
-`CLAUDE.md`'s count of `exit 1` guards inside `home/audio.nix` was stale
-before this branch and is corrected here, re-measured rather than
-incremented by hand:
+`CLAUDE.md`'s count of `exit 1` guards inside `home/audio.nix` is corrected
+here, re-measured rather than incremented by hand:
 
 ```
 /usr/bin/grep -c 'exit 1' home/audio.nix
@@ -260,8 +254,11 @@ sed -n "/pulseaudioClients = pkgs.runCommand/,/^  '';$/p" home/audio.nix | /usr/
 
 13 across the whole file (was 9), 3 unchanged inside `pulseaudioClients`. The
 difference is `noiseCancelingGuard`'s own four `exit 1`s, added by this
-branch and now a fourth `home.packages` guard alongside `pulseaudioClients`,
-`wrappedGuiApps` and `dbusActivatableGuiApps`.
+branch and now another `home.packages` guard alongside `pulseaudioClients`,
+`wrappedGuiApps` and `dbusActivatableGuiApps` — not a fourth: `home/default.nix`'s
+`nixgl-guard` and `home/deb.nix`'s `calango-deb-guard` are two more, so the
+count is at least six. Enumerate rather than trust an ordinal:
+`grep -n 'home.packages' home/*.nix`.
 
 ## What was NOT measured
 

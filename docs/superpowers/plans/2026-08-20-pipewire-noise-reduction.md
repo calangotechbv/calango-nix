@@ -1,5 +1,25 @@
 # PipeWire Noise-Canceling Source Implementation Plan
 
+> **ERRATUM, 2026-08-20, added after implementation.** This plan's gate is
+> PipeWire's builtin `noisegate`, which **cannot open**: its `Level` port
+> loads as an INPUT control of range 0.0-0.0 and the node declares
+> `n_notify:0`, so it compares against a value that is permanently zero and
+> any threshold above zero holds it shut forever. It made the machine's
+> microphone permanently silent while every check in this plan passed, and a
+> person found it by listening. The shipped gate is swh-plugins' `gate_1410`
+> (label `gate`, from `pkgs.ladspaPlugins`), whose controls are in DECIBELS
+> and MILLISECONDS, not the linear amplitude and seconds this plan's Task 1
+> and Task 5 assume, and whose input port is `Input`, not `In`. **Task 5's
+> tuning formula is marked dead in place below — do not use it.** It produces
+> a linear ratio; applied unconverted to the shipped gate's decibel control it
+> yields a value near 0 dB, which blocks all audio while passing every guard,
+> reproducing the exact defect described above. Tasks 7 and 8 — the gate
+> replacement and the comment corrections that actually shipped — exist in
+> git history (`decc66f`, `d368198`) but were never written into this plan;
+> this erratum and the results document are the record of them. Authority for
+> what was actually built:
+> `docs/2026-08-20-results-suffer-pipewire-noise-reduction.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a selectable "Noise Canceling source" microphone to this desktop, built from RNNoise and PipeWire's own builtin `noisegate`, guarded at build time.
@@ -36,7 +56,7 @@ These apply to every task. They are this repository's standing rules, copied fro
 | `docs/2026-08-20-results-suffer-pipewire-noise-reduction.md` | **New.** The results document. Its existence is what makes this spec 21 — `ls -1 docs/*results-suffer-*.md \| wc -l` is the authority on the count. |
 | `CLAUDE.md` | **Modified.** Three entries: the new LADSPA path trap, the measured sd-switch drop-in answer, and the corrected guard enumeration. |
 
-**A note on why `nofail` is omitted.** PipeWire's shipped example, `share/pipewire/filter-chain/source-rnnoise.conf`, carries `flags = [ nofail ]`. This plan does not. With `nofail` a broken graph produces a running service that serves nothing, which is the failure this project keeps paying for. Without it, `pipewire` exits and systemd marks the unit failed. That is bounded, not a restart loop: `filter-chain.service` carries `Restart=on-failure` with `RestartUSec=100ms` and `StartLimitBurst=5`, so it gives up inside a second and lands in `failed`, where `systemctl --user status` shows it. This is a deliberate departure from upstream's example and is recorded in the results document.
+**A note on why `nofail` is omitted.** PipeWire's shipped example, `share/pipewire/filter-chain/source-rnnoise.conf`, carries `flags = [ nofail ]`. This plan does not. With `nofail` a broken graph produces a running service that serves nothing, which is the failure this project keeps paying for. Without it, `pipewire` exits and systemd marks the unit failed. That is bounded, not a restart loop: `filter-chain.service` carries `Restart=on-failure` — the unit fragment's own text, nothing more — and `RestartUSec=100ms` and `StartLimitBurst=5` are systemd's defaults, not lines this unit ships, so it gives up inside a second and lands in `failed`, where `systemctl --user status` shows it. This is a deliberate departure from upstream's example and is recorded in the results document.
 
 ---
 
@@ -894,6 +914,22 @@ syllable of every sentence" are both useful; only one of them is good news.
 
 ## Task 5: Tune the thresholds, then commit the numbers
 
+> **DEAD — do not follow this task.** It was written for PipeWire's builtin
+> `noisegate` and reads `gate:Level`, a read-out the shipped gate does not
+> expose (swh's `gate_1410` declares `n_notify:0`, same as the builtin — see
+> the erratum at the top of this document). Worse than merely not working:
+> Step 3's formula, `Open Threshold = SPEECH_MIN * 0.7`, produces a **linear
+> ratio** — something like 0.077. The shipped gate's threshold control is
+> `"Threshold (dB)"`, in DECIBELS, range -70..+20. Applying 0.077 to it
+> unconverted yields **+0.077 dB**, and this branch measured that **+10 dB
+> blocks everything** on this gate — so this formula, followed as written,
+> silences the microphone again while every guard stays green, which is
+> exactly the headline defect this branch exists to fix. See
+> `docs/2026-08-20-results-suffer-pipewire-noise-reduction.md`'s "Task 5: the
+> tuning, and why nothing was tuned" section for the method that replaced this
+> one and for the reasoning the shipped config's threshold was left at its
+> floor, -70 dB.
+
 **Files:**
 - Modify: `pipewire/50-noise-canceling-source.conf`
 
@@ -945,6 +981,14 @@ Otherwise:
 Open Threshold  = SPEECH_MIN * 0.7        (rounded to two significant figures)
 Close Threshold = Open Threshold * 0.75   (hysteresis: it must be lower, or the gate chatters)
 ```
+
+> **DEAD FORMULA — do not use.** This produces a linear ratio (e.g. 0.077),
+> correct for the builtin `noisegate`'s 0-1 linear `Open Threshold`. The
+> shipped gate's control is `"Threshold (dB)"`, in decibels, range -70..+20.
+> Feeding this formula's output into it unconverted yields a value near 0 dB
+> — measured on this branch, +10 dB blocks all audio on this gate — which
+> silences the microphone while every guard passes. See the results
+> document's tuning section for the replacement method.
 
 Both must sit above `ROOM_MAX`. If `Close Threshold` lands below `ROOM_MAX`, raise both until it does not.
 

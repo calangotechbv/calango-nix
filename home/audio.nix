@@ -401,6 +401,11 @@ let
         conf = noiseCancelingSource;
         dirs = lib.concatStringsSep " " ladspaDirs;
         builtinSo = "${pkgs.pipewire}/lib/spa-0.2/filter-graph/libspa-filter-graph-plugin-builtin.so";
+        # binutils, for strings -- the whole-line existence test below caches
+        # each library's string table with it rather than grepping the .so
+        # directly, so it needs a real toolchain. This is the first guard in
+        # home/audio.nix to declare one.
+        nativeBuildInputs = [ pkgs.binutils ];
       }
       ''
         # A state machine over the config, not a list of names. The selector is
@@ -413,36 +418,59 @@ let
         # apart -- node.description = "Noise Canceling source" must not be read
         # as a control name.
         awk '
-          # Comments first, and this rule is not optional. Without it the
-          # parser reads the prose in the config header: a dry run against an
-          # early draft emitted LABEL from a sentence that merely mentioned
-          # the word, with no library attached, which lands in the orphan
-          # branch below and fails the build over a comment. Same species as
-          # the spec 11 appPath guard, which matched the very comment written
-          # to describe it.
+          # Comments first, and this rule is not optional. It keeps a future
+          # comment from being read as config -- a mention of a plugin or
+          # control name in prose would otherwise parse the same as the real
+          # thing. Same species as the spec 11 appPath guard, which matched
+          # the very comment written to describe it.
           #
           # NOTE for anyone editing this awk program: it is inside a
           # single-quoted shell string, so no apostrophe may appear anywhere
           # in it, comments included. One apostrophe ends the string and the
           # rest of the program becomes shell words.
           /^[[:space:]]*#/ { next }
+          # type = is optional in PipeWire filter-graph syntax, so lib must
+          # not simply persist from the previous node -- a node that names no
+          # plugin and no type would otherwise be checked against whatever
+          # library the PRIOR node happened to use. Reset at the name = line
+          # that starts every node, before the plugin rule below can set it.
+          # Deliberately no next. Verified against the shipped config rather
+          # than assumed: this pattern does NOT also catch the modules own
+          # header line, { name = libpipewire-module-filter-chain -- the
+          # leading brace on that line means it does not start with
+          # whitespace then name, so ^ anchors past it. Harmless either way,
+          # since that line is followed immediately by a real node whose own
+          # type or plugin line sets lib correctly. A node that declares no
+          # plugin and no type reaches the orphan branch below.
+          /^[[:space:]]*name[[:space:]]*=/ { lib = "" }
           /type[[:space:]]*=[[:space:]]*ladspa/  { lib = ""; next }
           /type[[:space:]]*=[[:space:]]*builtin/ { lib = "builtin"; next }
           match($0, /plugin[[:space:]]*=[[:space:]]*"[^"]+"/) {
             s = substr($0, RSTART, RLENGTH)
             sub(/plugin[[:space:]]*=[[:space:]]*"/, "", s); sub(/"$/, "", s)
             lib = s
-            print "PLUGIN " lib " " s; next
+            print "PLUGIN " (lib == "" ? "-" : lib) " " s; next
           }
           match($0, /label[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+/) {
             s = substr($0, RSTART, RLENGTH)
             sub(/label[[:space:]]*=[[:space:]]*/, "", s)
-            print "LABEL " lib " " s; next
+            print "LABEL " (lib == "" ? "-" : lib) " " s; next
           }
-          match($0, /"[^"]+"[[:space:]]*=/) {
-            s = substr($0, RSTART, RLENGTH)
-            sub(/^"/, "", s); sub(/"[[:space:]]*=$/, "", s)
-            print "CONTROL " lib " " s
+          # A loop over every match on the line, not a single match(). match()
+          # finds only the FIRST occurrence, and the shipped config already
+          # has an inline control block on one line --
+          # control = { "VAD Threshold (%)" = 50.0 } -- so a second control
+          # added to that same line would otherwise go entirely unchecked,
+          # silently, with the vacuity anchor below none the wiser since its
+          # counters would still be non-zero.
+          {
+            rest = $0
+            while (match(rest, /"[^"]+"[[:space:]]*=/)) {
+              s = substr(rest, RSTART, RLENGTH)
+              rest = substr(rest, RSTART + RLENGTH)
+              sub(/^"/, "", s); sub(/"[[:space:]]*=$/, "", s)
+              print "CONTROL " (lib == "" ? "-" : lib) " " s
+            }
           }
         ' "$conf" > names.txt
 
@@ -453,6 +481,17 @@ let
 
         # Redirected from a file, never piped: a `while read` on the right of a
         # pipe runs in a subshell and every counter below would be discarded.
+        #
+        # The awk program above prints "-" rather than leaving lib blank when
+        # a name belongs to no plugin. An empty field is invisible to `read`
+        # under the default IFS: "LABEL␣␣name" (two spaces, empty middle
+        # field) collapses on whitespace, so lib would receive the NEXT
+        # non-blank word instead of empty, and name would receive nothing.
+        # `[ -z "$lib" ]` against that misparse is never true, so the orphan
+        # branch below could never fire -- the build would still fail, but
+        # through the wrong branch, blaming a missing .so instead of the real
+        # fault: a node with no plugin line at all. The sentinel makes the
+        # empty case a real, non-empty token that `read` cannot swallow.
         while read -r kind lib name; do
           # Resolve which library this name must be found in.
           so=""
@@ -471,7 +510,7 @@ let
             done
           fi
 
-          if [ -z "$lib" ]; then
+          if [ "$lib" = "-" ]; then
             echo "home/audio.nix's guard read a $kind named '$name' that" >&2
             echo "belongs to no filter node -- no plugin line and no" >&2
             echo "'type = builtin' preceded it in the config. Either a node" >&2
@@ -491,6 +530,25 @@ let
             continue
           fi
 
+          # A whole-line test, not a substring one. PipeWire matches a control
+          # name exactly and IGNORES one it does not know, so a name that is
+          # merely a substring of a real port -- "Threshold" against
+          # "Threshold (dB)" -- would pass a substring grep and then be
+          # silently dropped at runtime, which is the exact failure this
+          # guard exists to stop. Measured against the shipped library:
+          # `grep -caF -e Threshold gate_1410.so` reads 1, so a truncated
+          # name would have gone undetected.
+          #
+          # Cached to a file rather than piped. `strings ... | grep -q` looks
+          # obvious and is wrong here: grep -q exits at the first match and
+          # SIGPIPEs strings, and under pipefail the pipeline then reports
+          # 141, so the guard would announce a name as missing precisely when
+          # it is present.
+          cache="strings-$(printf '%s' "$so" | tr -c 'A-Za-z0-9' '_')"
+          if [ ! -f "$cache" ]; then
+            strings "$so" > "$cache"
+          fi
+
           case "$kind" in
             PLUGIN)
               # Resolution above WAS the existence check, and it is what makes
@@ -502,7 +560,7 @@ let
               labels=$((labels + 1))
               # A condition, not a bare grep: this builder runs with errexit,
               # and a grep that matches nothing exits 1.
-              if ! grep -qaF -e "$name" "$so"; then
+              if ! grep -qxF -e "$name" "$cache"; then
                 echo "The config uses the filter label '$name', which does" >&2
                 echo "not appear in $so." >&2
                 echo "  (from $conf)" >&2
@@ -514,7 +572,7 @@ let
               ;;
             CONTROL)
               controls=$((controls + 1))
-              if ! grep -qaF -e "$name" "$so"; then
+              if ! grep -qxF -e "$name" "$cache"; then
                 echo "The config sets the control '$name', which does not" >&2
                 echo "appear in $so." >&2
                 echo "  (from $conf)" >&2
@@ -548,7 +606,7 @@ let
 
         [ "$bad" -eq 0 ] || exit 1
 
-        echo "ok: $plugins plugins, $labels labels, $controls controls checked"
+        echo "ok: $plugins plugin(s), $labels label(s), $controls control(s) checked"
         mkdir -p "$out"
       '';
 in
