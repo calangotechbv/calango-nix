@@ -606,7 +606,40 @@ let
 
         [ "$bad" -eq 0 ] || exit 1
 
-        echo "ok: $plugins plugin(s), $labels label(s), $controls control(s) checked"
+        # The two calango.role declarations the audio panel identifies these
+        # nodes by. quickshell/audio/AudioService.qml filters on this property
+        # rather than on node.name, so that renaming a node does not silently
+        # change what the panel shows -- but that indirection only helps while
+        # the property is actually there.
+        #
+        # Losing it degrades SILENTLY and in the wrong direction: the panel
+        # stops recognising the filter, so the filtered source reappears in the
+        # Input device list and the filter's own capture stream reappears as a
+        # permanent "Recording" row. Nothing errors, nothing looks broken, and
+        # the cleanup this property exists to enable is simply undone. That is
+        # the shape this repository keeps paying for, so it is asserted here.
+        # Counted with awk over NON-COMMENT lines, and that is not fastidiousness:
+        # written as a plain `grep -c` this read 3, because the comment above the
+        # two props blocks explains what calango.role is and names it once in
+        # prose. The guard would have failed on a correct config, for the same
+        # reason the spec 11 appPath guard PASSED on a broken one -- a check
+        # answering to the prose written to describe it. awk also exits 0 on a
+        # count of zero, where `grep -c` exits 1 and would abort this builder
+        # under errexit before the message below could print.
+        roles="$(awk '!/^[[:space:]]*#/ && /calango\.role/ { n++ } END { print n + 0 }' "$conf")"
+        if [ "$roles" != 2 ]; then
+          echo "The config declares calango.role $roles time(s); the audio" >&2
+          echo "panel needs exactly 2 -- one in capture.props and one in" >&2
+          echo "playback.props of" >&2
+          echo "  $conf" >&2
+          echo "quickshell/audio/AudioService.qml finds the filter by that" >&2
+          echo "property. Without both, the filtered source returns to the" >&2
+          echo "Input list and the filter's capture side returns as a" >&2
+          echo "permanent Recording row, with nothing reporting an error." >&2
+          exit 1
+        fi
+
+        echo "ok: $plugins plugin(s), $labels label(s), $controls control(s), $roles role(s) checked"
         mkdir -p "$out"
       '';
 in
