@@ -1,8 +1,34 @@
 import socket
 import threading
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from calangovm import console
+
+
+class Connect(unittest.TestCase):
+    def test_connects_to_a_real_unix_socket_and_round_trips(self):
+        # socketpair() in the rest of this file never goes through connect() at
+        # all, so it cannot catch a Path-not-str regression (str(path) is what
+        # makes connect() work) or a wrong socket family/type. This binds an
+        # actual AF_UNIX listener, the shape drive.py connects to for real.
+        with TemporaryDirectory() as d:
+            sock_path = Path(d) / "console.sock"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            with listener:
+                listener.bind(str(sock_path))
+                listener.listen(1)
+                c = console.Console.connect(sock_path, timeout=2.0)
+                try:
+                    server, _ = listener.accept()
+                    with server:
+                        c.send("ping")
+                        self.assertEqual(server.recv(64), b"ping\n")
+                        server.sendall(b"pong\n")
+                        self.assertEqual(c.read(1.0), "pong\n")
+                finally:
+                    c.s.close()
 
 
 def pair():
