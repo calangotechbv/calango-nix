@@ -553,10 +553,19 @@ A guard that passed here would be a guard that can never fail.
 
 ```bash
 git restore --worktree pipewire/50-noise-canceling-source.conf
-/usr/bin/grep -c 'noisegate' pipewire/50-noise-canceling-source.conf   # 1
+/usr/bin/grep -cF 'label   = noisegate' pipewire/50-noise-canceling-source.conf   # 1
 sg nix-users -c 'nix build --no-link -L .#homeConfigurations."isutton@suffer".activationPackage' 2>&1 | /usr/bin/grep -F 'noise-canceling-source-guard>'
 # ok: 1 plugin, 2 labels, 6 controls checked
 ```
+
+Note the needle is the assignment, not the bare word. This step first read
+`grep -c 'noisegate'` and asserted `1`; the true count is **3**, because the
+config's own header explains what `noisegate` is and mentions it twice more.
+An implementer measured it and reported the discrepancy. That is the trap
+`CLAUDE.md` records three times over — a check satisfied by the very prose
+written to describe it — reproduced here inside a step whose whole job is to
+confirm a revert. A revert check that reads a comment is not reading the
+revert.
 
 - [ ] **Step 11: Confirm the flake check count did not move**
 
