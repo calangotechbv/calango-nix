@@ -243,6 +243,25 @@ which is also the syntax check `bin/calango-serve-bootstrap` gets from its own
 builder. Both fixes were proven by mutation: restoring `return 1` in place of
 `return 3`, and restoring the bare `int()`, each fail exactly one test.
 
+### The pass re-taken on the finished tree
+
+`b74583a` — the exit-code contract, the stage-log buffering and `login()`'s
+continuation escape all in — GREEN again on a fresh disk, 14:22:26Z to
+14:38:30Z, six stages, zero failures, Gate A reading `active` / **3** / **1** /
+**12**. Zero commits and zero modified files during it.
+
+**The buffering fix was confirmed against that run rather than only by test.**
+Sampling the stage log while its stage was still executing:
+
+```
+14:25:15Z  out-05-gate-a.log: 135 bytes,  5 lines   (step 1 running)
+14:25:39Z  out-05-gate-a.log: 396 bytes, 15 lines   (step 2 running)
+```
+
+Before the fix that file was `0` bytes until the stage ended, and empty rather
+than truncated if the run were killed. Three independent confirmations now: a
+reviewer reading the code, a unit test, and a file growing during a real stage.
+
 ## What is not verified
 - **Stage 0's fidelity to the document.** `RUNBOOK.md` tells the reader to serve
   the preseed with `calango-serve-bootstrap`; `install.py` runs its own
