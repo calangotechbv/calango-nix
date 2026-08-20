@@ -648,7 +648,16 @@
         # Re-measure if the sandbox python ever moves major version.
         vm-harness-tests =
           pkgs.runCommand "vm-harness-tests"
-            { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            {
+              # cpio is here because install.py's guard is deliberately two
+              # implementations of one property: the appended archive is WRITTEN
+              # by cpio and READ BACK by a newc parser in Python, so a bug in
+              # one cannot hide inside the other. Verifying with `cpio -t`
+              # instead would remove the independence and the guard with it.
+              # Dropping cpio from this list does not weaken the check quietly:
+              # the two BuildExtraCpio tests fail with FileNotFoundError.
+              nativeBuildInputs = [ pkgs.python3 pkgs.cpio ];
+            } ''
               cp -r ${./test/vm} harness
               chmod -R +w harness
               cd harness
