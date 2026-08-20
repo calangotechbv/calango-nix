@@ -30,6 +30,15 @@ def build_parser():
     p = sub.add_parser("install", help="Stage 0: install from the generated preseed")
     p.set_defaults(func=cmd_install)
 
+    for name, help_text, handler in (
+            ("boot", "boot the installed machine, console on a unix socket", cmd_boot),
+            ("display", "boot it in a window, for a person", cmd_display),
+            ("run-all", "Gate A through Stage D against a booted machine", cmd_run_all),
+            ("final-pass", "fresh disk, Stage 0 through Stage D", cmd_final_pass),
+            ("stop", "SIGTERM every running qemu and wait for it to go", cmd_stop)):
+        p = sub.add_parser(name, help=help_text)
+        p.set_defaults(func=handler)
+
     return ap
 
 
@@ -52,6 +61,31 @@ def cmd_drive(cfg, args):
 def cmd_install(cfg, args):
     from calangovm import install
     return install.install(cfg)
+
+
+def cmd_boot(cfg, args):
+    from calangovm import passes
+    passes.boot(cfg)          # execs; never returns
+
+
+def cmd_display(cfg, args):
+    from calangovm import passes
+    passes.display(cfg)       # execs; never returns
+
+
+def cmd_run_all(cfg, args):
+    from calangovm import passes
+    return passes.run_all(cfg)
+
+
+def cmd_final_pass(cfg, args):
+    from calangovm import passes
+    return passes.final_pass(cfg)
+
+
+def cmd_stop(cfg, args):
+    from calangovm import passes
+    return passes.stop(cfg)
 
 
 def main(argv=None):
