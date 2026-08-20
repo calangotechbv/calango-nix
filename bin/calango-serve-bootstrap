@@ -222,7 +222,8 @@ def main():
     # process exits -- and this process does not exit, it serves. Measured: the
     # log held only "building .#calangoBootstrap" while the server was up,
     # answering requests, with the boot line the reader needs sitting in a
-    # buffer. Same trap as needing python3 -u for test/vm/drive.py.
+    # buffer. Same trap the VM harness met: a healthy run that prints
+    # nothing is indistinguishable from a hung one.
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
 
