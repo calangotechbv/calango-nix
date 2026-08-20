@@ -104,6 +104,13 @@ def terminate_running_vms(proc=Path("/proc"), timeout: float = 60.0) -> None:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # running_vm_pids is machine-wide on purpose, so it returns another
+            # user's qemu too -- suffer has qemu-system-gui installed and
+            # /etc/libvirt/secrets exists. `pkill -x` skipped those silently;
+            # os.kill raises. Without this, `vm stop` and final_pass's first
+            # step die with a traceback because a root qemu is running.
+            pass
     end = time.monotonic() + timeout
     while running_vm_pids(proc) and time.monotonic() < end:
         time.sleep(2.0)

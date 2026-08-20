@@ -185,9 +185,17 @@ each have removed the guard rather than fixed it.
 and Hyprland is running. That is the one question no part of this harness can
 answer, and it is what licensed the deletion of the shell version.
 
-It also exercised `display()`, the last of the three functions that cannot have
-a unit test. All three have now run against a real VM: `boot` and `final_pass`
-during the green pass, `display` here.
+It also exercised `display()`, one of the three functions that cannot have a
+unit test.
+
+**`boot()` is not among the exercised, and an earlier draft of this document
+said it was.** `final_pass` does not call `boot()`; it re-implements its body —
+`console_sock.unlink()` plus `spawn_qemu(cfg, BOOT_ARGS(cfg), out)` — omitting
+`boot()`'s own `require_no_running_vm`. So the green pass exercised that
+duplicated code, not the function. `boot()` has no unit test, no execution of
+its qemu path, and a duplicate that will drift from it: the whole-branch review
+found this and the correction is the point of recording it. Only its guard has
+run, refusing while the display VM held the disk.
 
 Two things done by hand around it are worth keeping:
 

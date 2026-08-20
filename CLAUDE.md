@@ -1,7 +1,7 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Nineteen specs are done and written up in
+standalone Home Manager. Twenty specs are done and written up in
 `docs/*results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
@@ -68,7 +68,7 @@ step-file edit fails `nix flake check` instead of the harness silently going on
 testing the old wording. It is now the only implementation of that assertion:
 the shell script that used to duplicate it, and that only ran when someone
 remembered to, is gone, and `./test/vm/vm final-pass` builds this check itself
-as its first step, before any qemu instance starts.
+before any qemu instance starts.
 
 `bar-title-slot` and `vm-harness-tests` are the two checks in this flake that
 *run* code rather than inspecting a built tree — `bar-title-slot` runs this

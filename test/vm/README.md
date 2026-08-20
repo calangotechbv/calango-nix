@@ -75,7 +75,7 @@ sudo apt update 2>&1 | tail -5
 `checks.vm-step-lines-verbatim` asserts every `#=` line appears **verbatim** in
 the rendered `RUNBOOK.md`. It is now the only implementation of that assertion
 — the shell version was a script nobody was obliged to run — and
-`./test/vm/vm final-pass` builds it as its very first step, before any qemu
+`./test/vm/vm final-pass` builds it before it starts any qemu
 instance starts, so a drifted step file fails in seconds rather than after
 Stage 0's several minutes. `nix flake check` runs the same check on its own,
 with no VM involved at all. Both of its failure branches are proven by
@@ -124,13 +124,13 @@ directly, not by a mirrored runbook line. So `calango-serve-bootstrap` and this
 harness's own server could disagree and nothing here would notice. Recorded,
 not closed.
 
-## Nine things not to undo
+## Ten things not to undo
 
 Each cost a debugging session. Two that used to live here are gone from the
 list entirely, not because the lesson stopped mattering but because it moved
 into the code where undoing it is no longer possible from a caller: `python3
--u` is now `vm`'s own `main()` line-buffering both streams once, and ending a
-wrapper with `exit "$rc"` is now every subcommand's return value becoming the
+-u` is now `vm`'s own `main()` line-buffering both streams once, and the
+internal `rc=$?` bookkeeping is now every subcommand's return value becoming the
 process's exit code directly, with no shell arithmetic — and no stray `echo` —
 in between.
 
@@ -190,6 +190,13 @@ in between.
   `setsid nohup ./test/vm/vm final-pass < /dev/null &` and confirm the new
   process's session id differs from the calling shell's; do not assume
   backgrounding alone detached it.
+
+- **End any wrapper around `vm final-pass` with the exit status you collected.**
+  This rule was nearly retired with `exit "$rc"`, and that was wrong: the hazard
+  lives in the CALLER's wrapper, which Python cannot reach. A wrapper ending
+  `echo "exit=$?"` once reported success for a failed pass, and
+  `./test/vm/vm final-pass | tee log; echo done` still loses the status today.
+  The recommended launch below is itself such a wrapper.
 
 ## What it cannot do
 

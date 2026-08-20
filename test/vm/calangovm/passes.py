@@ -81,7 +81,14 @@ def run_all(cfg: Config, drive=None, user: str | None = None) -> int:
         name = path.stem
         print(f"\n================ {name} ================")
         log = cfg.dir / f"out-{name}.log"
-        with log.open("w") as out:
+        # buffering=1. main()'s line_buffering covers sys.stdout and
+        # sys.stderr and does not reach this file, and this file is the one
+        # stream `python3 -u` was used for in run-all.sh -- it only ever ran
+        # drive.py in the redirected form. Block-buffered, `tail -f` on a stage
+        # log shows nothing for the twenty minutes Stage C takes, which is the
+        # exact "healthy run reads as a hung one" this harness keeps paying for,
+        # and a killed run leaves the log empty rather than truncated.
+        with log.open("w", buffering=1) as out:
             try:
                 rc = drive(cfg, path, user, out=out)
             except Exception as exc:
