@@ -197,6 +197,14 @@ its qemu path, and a duplicate that will drift from it: the whole-branch review
 found this and the correction is the point of recording it. Only its guard has
 run, refusing while the display VM held the disk.
 
+**Half of that is fixed and half is not, as of `1710b8f`.** The duplicate is
+gone — both paths share `_prepare_boot`, and `final_pass` calls the new
+`boot_detached`, so the drift cannot recur and the guard `final_pass` had
+dropped is back in the path the evidence comes from. `boot()` now has six unit
+tests. What is still true is the narrow part: `boot()`'s own `exec_qemu` has
+never run, because no pass invokes it, and no test can — a successful
+`execvpe` replaces the process running the test.
+
 Two things done by hand around it are worth keeping:
 
 - **The guest was shut down through its own console, not with `vm stop`.**
@@ -261,6 +269,75 @@ Sampling the stage log while its stage was still executing:
 Before the fix that file was `0` bytes until the stage ended, and empty rather
 than truncated if the run were killed. Three independent confirmations now: a
 reviewer reading the code, a unit test, and a file growing during a real stage.
+
+### The pass re-taken again, on the install fix
+
+`b791fdd` — `verdict()` and the unlinked serial log — GREEN on a fresh disk,
+14:42:48Z to 14:58:55Z, six stages, zero failures, Gate A reading `active` /
+**3** / **1** / **12**. Zero commits and zero modified files during it.
+
+That run was taken **because the unit tests cannot reach the plumbing**.
+`verdict()` is pure and six tests pin its ordering, but capturing
+`run_qemu`'s status and unlinking the serial log only execute against a real
+qemu, and Stage 0 is the one stage no test touches. The confirmation is in the
+log's own mtime: `install-serial.log` was written at 11:45:22 local by that
+run, so the file every marker was read out of was created by the install being
+diagnosed, which is the whole property.
+
+## Three review findings, fixed after the pass
+
+None of these could have been surfaced by a green run — one is a lost
+diagnostic, one is a duplicate that had already drifted, one is a guard that
+was never reached.
+
+**The request log had lost its timestamps.** `make_server` overrode
+`log_message` for no purpose but to drop `- - [%s]` from the base class's line,
+while `README.md` went on naming the timestamps as the evidence. They are the
+whole evidence: slirp presents the guest as `127.0.0.1`, exactly like the
+host's own probe, so the address separates nothing and only the arrival times
+tell the probe from the installer's fetch two minutes later. The lines go to
+stderr rather than to the `$D/http.log` the shell version wrote — deliberately:
+in a `final-pass` run they then interleave with the stage markers in one
+stream, in order, which is a stronger record of a sequence than a second file
+with its own clock.
+
+**`final_pass` re-implemented `boot()` instead of calling it,** and the copy had
+already drifted — it omitted `require_no_running_vm`. So the guard that refuses
+while another qemu holds the disk was in the path a person runs and missing
+from the path the evidence comes from. See the correction above.
+
+**`harness_dir` was computed three ways in three modules** —
+`parent.parent` in `install()` and in `steps_files()`, `parents[3]` in
+`find_repo()` — and only `find_repo`'s carried a guard. Unguarded, a
+`calangovm/` moved one level down gives `install()` a bare `FileNotFoundError`
+on `human-answers.cfg`: exit **3**, "the harness broke", for a tree that is
+merely laid out wrong.
+
+### Two things the mutation sweep found that the tests did not
+
+**A vacuous assertion inside a test written for a vacuity finding.** Deleting
+`require_no_running_vm` from `_prepare_boot` failed one test and spared the
+one named for it: `test_detached_refuses_while_another_vm_holds_the_disk` runs
+with `timeout=0`, so the socket check below raised a `Precondition` of its own
+and `assertRaises` stayed satisfied by the wrong exception. It asserts the
+message now. It was caught only because the mutation was run — reading the test
+does not show it.
+
+**An assertion that passed here and failed in the sandbox.**
+`assertEqual(harness.name, "vm")` is false inside `checks.vm-harness-tests`,
+which copies `test/vm` to `harness/`. That is the exact trap `find_repo`'s own
+docstring warns about, met by a test written to cover the function beside it.
+The property is asserted by content now: the two markers plus
+`calangovm/config.py`.
+
+118 tests, OK locally and in the sandbox. Six mutations, each after clearing
+`__pycache__`: the `harness_dir` guard (2 failures), `parents[1]` →
+`parents[2]` (11), the exact pre-fix log line (1), counting every `GET` (1),
+`_prepare_boot`'s guard (2), `boot_detached`'s socket check (1).
+
+**Not verified against a live VM.** `final_pass`'s boot step now goes through
+`boot_detached`, and that path has not run against qemu — a VM was holding the
+disk. The next `final-pass` is what closes it.
 
 ## What is not verified
 - **Stage 0's fidelity to the document.** `RUNBOOK.md` tells the reader to serve
