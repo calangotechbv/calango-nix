@@ -3,9 +3,24 @@
 
 Subcommands are added by the module that implements them; this file is
 argparse, dispatch and the exit-code mapping, and holds no logic of its own.
+
+Exit codes, which a wrapper may rely on:
+
+    0    green
+    1    a stage or a step failed -- the thing under test is broken
+    2    the harness did not run: a usage error, or a precondition such as
+         a VM already holding the disk, no ISO, or no nix-users group
+    3    the harness itself failed -- a bug in vm, not in what it tests
+    130  interrupted
+
+2 covers usage as well as preconditions on purpose. argparse exits 2 for a
+usage error by long convention and cannot be talked out of it, and from a
+caller's side the two are one case: nothing was attempted, so fix the
+invocation or the machine and run it again.
 """
 import argparse
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -106,6 +121,17 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130
+    except Exception:
+        # Anything unmapped used to leave a traceback and exit 1, which is the
+        # code for "a stage failed" -- so a bug in the harness and a defect in
+        # the thing under test were indistinguishable to a caller. That is the
+        # same conflation config.Precondition was introduced to end. The
+        # traceback still prints: this is a harness bug and someone has to read
+        # it.
+        traceback.print_exc()
+        print("vm: the harness itself failed -- this is a bug in vm, not a "
+              "failure of what it tests", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

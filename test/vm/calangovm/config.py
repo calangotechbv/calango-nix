@@ -82,6 +82,21 @@ def find_repo(start=None) -> Path:
     return repo
 
 
+def _port(value: str) -> int:
+    """A bad --port is a precondition, not a crash.
+
+    `int()` on a non-numeric value raised a ValueError that main() did not map,
+    so `vm --port abc config` exited 1 with a traceback -- the code the contract
+    reserves for "a stage failed". A caller could not tell a typo in its own
+    command line from the harness finding a real defect.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        raise Precondition(
+            f"{ENV['port']} / --port must be a number, not {value!r}") from None
+
+
 def resolve(overrides=None, environ=None, repo=None) -> Config:
     """flag, then environment, then default -- and an empty value is not a value.
 
@@ -103,7 +118,7 @@ def resolve(overrides=None, environ=None, repo=None) -> Config:
         iso=Path(pick("iso")).expanduser(),
         host=pick("host"),
         pw=pick("pw"),
-        port=int(pick("port")),
+        port=_port(pick("port")),
         repo=find_repo() if repo is None else repo,
     )
 

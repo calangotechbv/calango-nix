@@ -113,6 +113,29 @@ them changing what runs:
 to surface — that is how `code`'s question was found — and `calangovm.driver`'s
 `wrap()` forwards prompt-shaped lines to the console for the same reason.
 
+## Exit codes
+
+A wrapper may rely on these:
+
+| code | meaning |
+|---|---|
+| `0` | green |
+| `1` | a stage or a step failed — the thing under test is broken |
+| `2` | the harness did not run: a usage error, or a precondition (a VM already holds the disk, no ISO, no `nix-users` group) |
+| `3` | the harness itself failed — a bug in `vm`, not in what it tests |
+| `130` | interrupted |
+
+`2` covers usage as well as preconditions on purpose: argparse exits `2` for a
+usage error by long convention and cannot be talked out of it, and from a
+caller's side the two are one case — nothing was attempted.
+
+`3` exists because everything unmapped used to exit `1`, which is the code for
+"a stage failed". A bug in the harness and a real defect in the thing it tests
+were indistinguishable, which is the conflation `config.Precondition` was
+introduced to end. `calangovm/tests/test_entrypoint.py` holds all five, and is
+also the only thing in the tree that imports `vm` at all — `unittest discover`
+never looks at a file with no `.py` extension.
+
 ## What is not covered
 
 Stage 0 in this harness serves the preseed with its own `http.server`

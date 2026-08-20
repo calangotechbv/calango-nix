@@ -210,6 +210,39 @@ Two things done by hand around it are worth keeping:
   corruption. And `-display` is fixed at startup: there is no runtime attach
   unless the VM was started with VNC or SPICE, which `egl-headless` is not.
 
+## After the merge
+
+Two things landed after `4b410cf`, and both close something this document
+recorded as open.
+
+**The green pass was re-run against the fixed tree, by the user.** The pass
+above was taken before the whole-branch review's four blockers were fixed
+(`e84562e`), so it proved a tree that then changed. Neither fix could alter a
+pass or a fail — one is file buffering, one is a new exception branch — but the
+strongest form of the claim wanted a re-run, and it was deferred rather than
+skipped because the user's own desktop VM was sitting on the disk `final-pass`
+wipes. They ran it themselves afterwards and it passed.
+
+**The entry point's exit-code contract was fixed, and `vm` now has tests.** It
+was the branch's only stated behavioural promise and the one file in the tree
+with no test, no import and no syntax check, because `unittest discover` never
+looks at a file with no `.py` extension. Two real holes:
+
+- `vm --port abc config` exited `1` with a `ValueError` traceback — the code
+  reserved for "a stage failed" — so a typo in a caller's own command line was
+  indistinguishable from the harness finding a defect. A bad port is now a
+  `Precondition`, exit `2`, with a message naming the value.
+- **Every unmapped exception exited `1`.** A bug in the harness and a real
+  failure of the thing under test read identically. That is exactly the
+  conflation `Precondition` was introduced to end, left in place at the one
+  point where every code path converges. Unmapped exceptions now exit `3`, and
+  the traceback still prints, because a harness bug is someone's to read.
+
+`calangovm/tests/test_entrypoint.py` holds all five codes and imports `vm`,
+which is also the syntax check `bin/calango-serve-bootstrap` gets from its own
+builder. Both fixes were proven by mutation: restoring `return 1` in place of
+`return 3`, and restoring the bare `int()`, each fail exactly one test.
+
 ## What is not verified
 - **Stage 0's fidelity to the document.** `RUNBOOK.md` tells the reader to serve
   the preseed with `calango-serve-bootstrap`; `install.py` runs its own
