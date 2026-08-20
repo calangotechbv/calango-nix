@@ -179,14 +179,30 @@ sandbox had `python3` and not `cpio`, so both tests failed there while passing
 locally. Verifying with `cpio -t`, or skipping the tests in the sandbox, would
 each have removed the guard rather than fixed it.
 
-## What is not verified
+## The desktop, verified by a person
 
-- **The desktop.** Gate D's last two lines read `loginctl` and Hyprland's own
-  `/proc/<pid>/environ`, so they need a person logged in at tuigreet:
-  `./test/vm/vm display`. No harness answers this.
-- **`boot`, `display` and `final_pass` have no unit tests** and cannot have any —
-  they `exec` qemu or start a VM. `boot` and `final_pass` were exercised by the
-  green pass; `display` was not exercised by anything.
+`./test/vm/vm display` on the disk the green pass produced: the desktop came up
+and Hyprland is running. That is the one question no part of this harness can
+answer, and it is what licensed the deletion of the shell version.
+
+It also exercised `display()`, the last of the three functions that cannot have
+a unit test. All three have now run against a real VM: `boot` and `final_pass`
+during the green pass, `display` here.
+
+Two things done by hand around it are worth keeping:
+
+- **The guest was shut down through its own console, not with `vm stop`.**
+  `vm stop` sends SIGTERM to qemu, which flushes the host side but is a power cut
+  as far as the guest is concerned. `systemctl poweroff` over the serial console
+  gave `reboot: Power down`, which is what a machine that has just written a Nix
+  store deserves.
+- **`vm display` cannot attach to a running VM, and neither can qemu.**
+  `display()` refuses while anything holds the disk — correctly, since a second
+  qemu on one image fails with `Failed to get "write" lock`, which reads like
+  corruption. And `-display` is fixed at startup: there is no runtime attach
+  unless the VM was started with VNC or SPICE, which `egl-headless` is not.
+
+## What is not verified
 - **Stage 0's fidelity to the document.** `RUNBOOK.md` tells the reader to serve
   the preseed with `calango-serve-bootstrap`; `install.py` runs its own
   `http.server`. No check spans the difference, because `vm-step-lines-verbatim`
