@@ -38,6 +38,11 @@ class Console:
     def send(self, line: str) -> None:
         self.s.sendall((line + "\n").encode())
 
+    def interrupt(self) -> None:
+        """Ctrl-C. `send` appends a newline, which is the wrong thing here:
+        a newline at a continuation prompt continues the line."""
+        self.s.sendall(b"\x03")
+
     def expect(self, pattern: str, seconds: float = 120.0,
                poll: float = 3.0) -> str:
         end, acc, rx = time.monotonic() + seconds, "", re.compile(pattern)
@@ -46,6 +51,22 @@ class Console:
             if rx.search(acc):
                 return acc
         raise TimeoutError(f"{pattern} after {seconds}s; tail: {acc[-500:]!r}")
+
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+
+
+def at_continuation(tail: str) -> bool:
+    """Is the shell sitting at a PS2 continuation prompt?
+
+    bash's default PS2 is `> `. Matched on the LAST LINE being exactly `>`
+    rather than on the tail ending in `>`, because `RDY> ` -- the PS1 this
+    harness sets -- also ends in `> `, and because a step's own output can end
+    in `>` for its own reasons. The ANSI strip is needed for real terminals:
+    bracketed-paste leaves `\x1b[?2004h` immediately before the prompt.
+    """
+    lines = [l for l in ANSI.sub("", tail).splitlines() if l.strip()]
+    return bool(lines) and lines[-1].strip() == ">"
 
 
 def login(c: Console, user: str, pw: str, timeout: float = 420.0,
@@ -60,7 +81,7 @@ def login(c: Console, user: str, pw: str, timeout: float = 420.0,
     blind: in GRUB it boots the highlighted entry, at a login prompt it reprints
     it, and in a shell it prints the prompt again.
     """
-    acc, state = "", None
+    acc, state, interrupts = "", None, 0
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         acc += c.read(poll)
@@ -71,6 +92,22 @@ def login(c: Console, user: str, pw: str, timeout: float = 420.0,
         if re.search(r"(RDY> |\$ ?)$", tail):
             state = "shell"
             break
+        if at_continuation(tail) and interrupts < 3:
+            # An unbalanced quote in an earlier command leaves the shell at a
+            # continuation prompt, where a newline is answered with another
+            # continuation -- so the poke below would run for the whole timeout
+            # and then report "no prompt", which reads as a dead VM. Measured:
+            # one probe with a stray quote hung this function for its full 420s
+            # against a perfectly healthy machine. Ctrl-C is what leaves it.
+            #
+            # Bounded, and it falls through to the newline afterwards: if
+            # something else in the world ends its last line with a bare `>`,
+            # three interrupts is a cheap thing to have been wrong about,
+            # whereas retrying for ever would trade one hang for another.
+            c.interrupt()
+            interrupts += 1
+            acc = ""          # the prompt search restarts after the interrupt
+            continue
         c.send("")            # safe in GRUB, at a getty, and in a shell alike
     if state is None:
         raise TimeoutError(f"no prompt in {timeout}s; tail: {acc[-400:]!r}")

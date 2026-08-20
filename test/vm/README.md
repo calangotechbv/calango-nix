@@ -147,7 +147,7 @@ directly, not by a mirrored runbook line. So `calango-serve-bootstrap` and this
 harness's own server could disagree and nothing here would notice. Recorded,
 not closed.
 
-## Ten things not to undo
+## Eleven things not to undo
 
 Each cost a debugging session. Two that used to live here are gone from the
 list entirely, not because the lesson stopped mattering but because it moved
@@ -213,6 +213,15 @@ in between.
   `setsid nohup ./test/vm/vm final-pass < /dev/null &` and confirm the new
   process's session id differs from the calling shell's; do not assume
   backgrounding alone detached it.
+
+- **A newline does not leave a continuation prompt; Ctrl-C does.** An
+  unbalanced quote in an earlier command parks the shell at bash's PS2, where
+  every newline is answered with another continuation — so `login()`'s blind
+  poke ran for its full 420s and then reported "no prompt", which reads as a
+  dead VM against a perfectly healthy one. `login()` now sends Ctrl-C when the
+  last line is exactly `>`, at most three times before falling back. The
+  detector matches the last line rather than a suffix because `RDY> ` — this
+  harness's own PS1 — also ends in `> `.
 
 - **End any wrapper around `vm final-pass` with the exit status you collected.**
   This rule was nearly retired with `exit "$rc"`, and that was wrong: the hazard

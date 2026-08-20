@@ -141,3 +141,87 @@ class Login(unittest.TestCase):
         except OSError:
             pass
         self.assertIn(b"export CALANGO_PW='s3cr3t'", got)
+
+
+class AtContinuation(unittest.TestCase):
+    """`RDY> ` is this harness's own PS1 and ends in `> ` too, so the detector
+    has to discriminate rather than match a suffix."""
+
+    def test_a_bare_continuation_prompt(self):
+        self.assertTrue(console.at_continuation("> "))
+        self.assertTrue(console.at_continuation("a > b\n> "))
+
+    def test_bracketed_paste_before_it(self):
+        # A real terminal emits \x1b[?2004h immediately before the prompt.
+        self.assertTrue(console.at_continuation("\x1b[?2004h> "))
+
+    def test_the_harness_own_prompt_is_not_one(self):
+        self.assertFalse(console.at_continuation("RDY> "))
+
+    def test_a_shell_prompt_is_not_one(self):
+        self.assertFalse(console.at_continuation("user@calango-vm:~$ "))
+
+    def test_output_merely_ending_in_a_gt_is_not_one(self):
+        self.assertFalse(console.at_continuation("wrote a > b\nRDY> "))
+
+    def test_nothing_is_not_one(self):
+        self.assertFalse(console.at_continuation(""))
+
+
+class LoginAtContinuation(unittest.TestCase):
+    """An unbalanced quote in an earlier command leaves the shell at PS2, where
+    a newline is answered with another continuation. login() poked it for the
+    full 420s and then reported "no prompt", which reads as a dead VM."""
+
+    def test_it_interrupts_and_then_logs_in(self):
+        c, vm = pair()
+        seen = bytearray()
+
+        def guest():
+            vm.settimeout(5.0)
+            vm.sendall(b"> ")
+            while b"\x03" not in seen:
+                try:
+                    seen.extend(vm.recv(4096))
+                except OSError:
+                    return
+            vm.sendall(b"^C\nsomeone@calango-vm:~$ ")
+
+        t = threading.Thread(target=guest, daemon=True)
+        t.start()
+        console.login(c, "someone", "secret", timeout=20.0, poll=0.05)
+        t.join(10.0)
+        self.assertIn(b"\x03", seen, "login never sent Ctrl-C")
+        # The GRUB rule still holds: nothing but newlines and the interrupt
+        # reached the console before a prompt appeared.
+        before = bytes(seen).split(b"\x03")[0]
+        self.assertEqual(set(before) - {ord("\n")}, set(),
+                         f"login typed something before the interrupt: {before!r}")
+
+    def test_it_gives_up_rather_than_interrupting_for_ever(self):
+        # A guest that answers everything with a continuation must not turn one
+        # hang into another: the interrupts are bounded, then it falls back to
+        # the newline poke and times out with its usual message.
+        c, vm = pair()
+        seen = bytearray()
+        stop = threading.Event()
+
+        def guest():
+            vm.settimeout(0.05)
+            while not stop.is_set():
+                try:
+                    seen.extend(vm.recv(4096))
+                except OSError:
+                    pass
+                try:
+                    vm.sendall(b"> ")
+                except OSError:
+                    return
+
+        t = threading.Thread(target=guest, daemon=True)
+        t.start()
+        with self.assertRaises(TimeoutError):
+            console.login(c, "someone", "secret", timeout=1.5, poll=0.05)
+        stop.set(); t.join(2.0)
+        self.assertLessEqual(bytes(seen).count(b"\x03"), 3,
+                             "login kept interrupting without bound")
