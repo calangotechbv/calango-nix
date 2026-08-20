@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -63,3 +64,61 @@ class BootArgs(unittest.TestCase):
 
     def test_it_boots_from_the_disk_not_the_cdrom(self):
         self.assertIn("order=c", passes.BOOT_ARGS(CFG))
+
+
+class DriveRaises(unittest.TestCase):
+    """run-all.sh ran drive.py as a subprocess; run_all calls it in-process.
+
+    That boundary change is invisible until a live VM goes wrong, which is the
+    only time it matters. Without a handler the exception escapes the loop and
+    the FAIL line, the log tail and the summary are all lost.
+    """
+
+    def test_an_exception_is_reported_as_a_failed_stage(self):
+        def drive(cfg, path, user, out=None):
+            raise TimeoutError("no prompt in 420s; tail: 'grub> '")
+
+        with TemporaryDirectory() as d:
+            cfg = config.resolve(overrides={"dir": d}, environ={},
+                                 repo=Path("/nowhere/repo"))
+            rc = passes.run_all(cfg, drive=drive, user="someone")
+        self.assertEqual(rc, 1)
+
+    def test_the_exception_text_reaches_the_stage_log(self):
+        def drive(cfg, path, user, out=None):
+            raise ConnectionRefusedError("[Errno 111] Connection refused")
+
+        with TemporaryDirectory() as d:
+            cfg = config.resolve(overrides={"dir": d}, environ={},
+                                 repo=Path("/nowhere/repo"))
+            passes.run_all(cfg, drive=drive, user="someone")
+            logs = sorted(Path(d).glob("out-*.log"))
+            self.assertTrue(logs, "no stage log was written at all")
+            self.assertIn("ConnectionRefusedError", logs[0].read_text())
+
+    def test_it_still_stops_at_the_first_raising_stage(self):
+        calls = []
+
+        def drive(cfg, path, user, out=None):
+            calls.append(Path(path).name)
+            raise TimeoutError("boom")
+
+        with TemporaryDirectory() as d:
+            cfg = config.resolve(overrides={"dir": d}, environ={},
+                                 repo=Path("/nowhere/repo"))
+            passes.run_all(cfg, drive=drive, user="someone")
+        self.assertEqual(len(calls), 1, "run_all kept going after an exception")
+
+
+class Stop(unittest.TestCase):
+    def test_it_reports_when_nothing_is_running(self):
+        with mock.patch.object(passes.qemu, "running_vm_pids", return_value=[]), \
+             mock.patch.object(passes.qemu, "terminate_running_vms") as term:
+            self.assertEqual(passes.stop(CFG), 0)
+            term.assert_not_called()
+
+    def test_it_terminates_what_is_running(self):
+        with mock.patch.object(passes.qemu, "running_vm_pids", return_value=[7, 9]), \
+             mock.patch.object(passes.qemu, "terminate_running_vms") as term:
+            self.assertEqual(passes.stop(CFG), 0)
+            term.assert_called_once()

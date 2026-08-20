@@ -37,7 +37,7 @@ def display(cfg: Config) -> None:
 
     Log in with the account the preseed created and pick "Hyprland (Nix)" at
     tuigreet. This is the only way to answer Gate D's last two lines and the
-    only way to see whether the desktop is right: no harness can do either.
+    only way to see whether the desktop is right: no harness here can do either.
     """
     qemu.require_no_running_vm(cfg)
     store = bootstrap_path(cfg)
@@ -82,7 +82,19 @@ def run_all(cfg: Config, drive=None, user: str | None = None) -> int:
         print(f"\n================ {name} ================")
         log = cfg.dir / f"out-{name}.log"
         with log.open("w") as out:
-            rc = drive(cfg, path, user, out=out)
+            try:
+                rc = drive(cfg, path, user, out=out)
+            except Exception as exc:
+                # run-all.sh ran drive.py as a SUBPROCESS, so anything it raised
+                # arrived here as a nonzero exit and got the ordinary FAIL line,
+                # log tail and summary. Here drive() runs in-process, so without
+                # this the same conditions -- Console.connect against a qemu that
+                # has died, login's 420s TimeoutError when a stage left the VM at
+                # an unexpected prompt -- escape the loop as a raw traceback and
+                # take the diagnostic shape of this harness with them, at exactly
+                # the moment a live VM has gone wrong. Report it as a failure.
+                print(f"{type(exc).__name__}: {exc}", file=out)
+                rc = 1
         if rc == 0:
             print(f"PASS  {name}")
             passed += 1
