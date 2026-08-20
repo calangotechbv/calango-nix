@@ -217,6 +217,15 @@ def main():
     )
     args = ap.parse_args()
 
+    # Line-buffer stdout. Python block-buffers it whenever it is not a tty, so
+    # `calango-serve-bootstrap > log` or a pipe into tee shows NOTHING until the
+    # process exits -- and this process does not exit, it serves. Measured: the
+    # log held only "building .#calangoBootstrap" while the server was up,
+    # answering requests, with the boot line the reader needs sitting in a
+    # buffer. Same trap as needing python3 -u for test/vm/drive.py.
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+
     flake_dir = Path(args.flake).expanduser().resolve()
     if not (flake_dir / "flake.nix").is_file():
         die(f"no flake.nix in {flake_dir}", "pass --flake <dir>")
