@@ -50,6 +50,18 @@ B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 (cd "$B" && python3 -m http.server 8000)
 ```
 
+**On the machine you are reading this on, `calango-serve-bootstrap` does both**
+— it is in the profile, so it exists wherever a generation does. It adds the
+part these two commands leave to you: the address the new machine has to reach,
+printed as a whole boot line. `hostname -I` is not that answer on a machine with
+docker or libvirt, where it returns a handful of bridge addresses in the
+172.16/12 range with the useful one somewhere among them; the script asks the
+routing table instead, and brackets an IPv6 address so the line is a URL rather
+than an ambiguity. `--print-only` stops after printing.
+
+The two commands stay above it because a machine with no generation yet has no
+profile to find it in — which is the whole of Stage A's situation.
+
 Then boot the new machine from a Debian 13 netinst image and, at the boot menu,
 edit the kernel command line to add:
 

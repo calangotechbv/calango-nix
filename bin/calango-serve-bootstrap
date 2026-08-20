@@ -1,0 +1,277 @@
+#!@python3@
+"""Build .#calangoBootstrap and serve it, for RUNBOOK.md's Stage 0.
+
+Stage 0 tells the reader to run two commands on the machine they already have:
+
+    B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
+    (cd "$B" && python3 -m http.server 8000)
+
+and then to work out what `<this-machine>` is for the boot line. This does all
+of that, and prints the boot line with a real address in it.
+
+Three things it does that the two commands do not:
+
+  * it names the address the NEW machine has to reach. `python3 -m http.server`
+    binds every interface and says nothing about which one is useful, and
+    "check that before you boot the installer rather than after" is advice the
+    runbook gives without giving you the means.
+  * it refuses early when the shell has no `nix-users`, instead of letting `sg`
+    sit on a password prompt that reads like a hang.
+  * it prints the account name out of the rendered preseed, so the reader knows
+    which account the installer will create before it creates it.
+
+It is deliberately not a daemon and has no --daemonize. The server is
+unauthenticated http, on a LAN, for the minutes an install takes; something that
+outlives your terminal is the wrong shape for that.
+"""
+
+import argparse
+import functools
+import http.server
+import os
+import shutil
+import socket
+import socketserver
+import subprocess
+import sys
+from pathlib import Path
+
+FLAKE_ATTR = ".#calangoBootstrap"
+
+
+def die(msg, *rest):
+    print(f"calango-serve-bootstrap: {msg}", file=sys.stderr)
+    for line in rest:
+        print(f"  {line}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def check_nix_users():
+    """Fail loudly rather than hand `sg` a password prompt.
+
+    /nix/var/nix/daemon-socket/ is 0770 root:nix-users. A process whose
+    credentials lack the group fails with `getting status of
+    '/nix/var/nix/daemon-socket/socket': Permission denied`, which reads as a
+    broken Nix install -- and `sg` for a group you are not in asks for a
+    password, which reads as a hang. os.getgroups() is the credentials the
+    kernel will actually check.
+    """
+    try:
+        import grp
+
+        gid = grp.getgrnam("nix-users").gr_gid
+    except KeyError:
+        die(
+            "there is no nix-users group on this machine",
+            "nix-setup-systemd's postinst creates it; is nix installed?",
+        )
+    if gid not in os.getgroups():
+        die(
+            "this shell is not in the nix-users group",
+            "The group exists, so you were probably added after this login.",
+            "Log in again, or run this under: sg nix-users -c '...'",
+        )
+
+
+def build(flake_dir, attr=FLAKE_ATTR):
+    """Build the bootstrap package and return its store path.
+
+    Wrapped in `sg nix-users -c` because that is what the runbook prints and
+    what this project's convention is, even though check_nix_users has just
+    established the group is present: a plain `nix` here would work today and
+    stop working the first time someone runs this from a shell that predates
+    their usermod.
+    """
+    if shutil.which("sg") is None:
+        die("no sg on PATH", "It comes from Debian's passwd package.")
+    cmd = f"nix build --no-link --print-out-paths {attr}"
+    print(f"building {attr}", file=sys.stderr)
+    p = subprocess.run(
+        ["sg", "nix-users", "-c", cmd],
+        cwd=flake_dir,
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        die(
+            f"{attr} did not build",
+            *(p.stderr.strip().splitlines()[-6:] or ["(no output)"]),
+        )
+    # --print-out-paths writes one path per output; nix's own progress goes to
+    # stderr, so stdout is only paths. Take the last, which is $out.
+    paths = [ln for ln in p.stdout.split() if ln.startswith("/nix/store/")]
+    if not paths:
+        die(f"{attr} built but printed no store path", p.stdout.strip() or "(empty)")
+    return Path(paths[-1])
+
+
+def account_name(store):
+    """The account the installer will create, read out of the artifact.
+
+    The generated preseed answers `d-i passwd/username` from the flake's
+    home.username. Reading it here rather than guessing means this cannot
+    disagree with what the install actually does.
+    """
+    preseed = store / "preseed.cfg"
+    if not preseed.is_file():
+        return None
+    for line in preseed.read_text().splitlines():
+        if line.startswith("d-i passwd/username string "):
+            return line.split()[-1]
+    return None
+
+
+def primary_address():
+    """The address the kernel would use to leave this machine.
+
+    `hostname -I` was the first version of this and it is unusable here: on a
+    machine with docker or libvirt it returns nine bridge addresses in the
+    172.16/12 range, and the one useful LAN address is somewhere in the middle
+    of them. `ip route get` asks the routing table which source address an
+    off-net destination would use, which is the address a second machine on the
+    same network can reach.
+    """
+    if shutil.which("ip") is None:
+        return None
+    p = subprocess.run(
+        ["ip", "-4", "route", "get", "1.1.1.1"], capture_output=True, text=True
+    )
+    parts = p.stdout.split()
+    if "src" in parts:
+        return parts[parts.index("src") + 1]
+    return None
+
+
+def other_addresses(primary):
+    """Every other global address, so a reader on an odd network has options.
+
+    Bridge and container interfaces are dropped by name: an address on docker0
+    or virbr0 is reachable by something, but not by the machine booting an
+    installer next to you, and offering it as a boot line is worse than saying
+    nothing.
+    """
+    if shutil.which("ip") is None:
+        return []
+    skip = ("docker", "br-", "virbr", "veth", "lo")
+    p = subprocess.run(
+        ["ip", "-o", "addr", "show", "scope", "global"],
+        capture_output=True,
+        text=True,
+    )
+    out = []
+    for line in p.stdout.splitlines():
+        f = line.split()
+        if len(f) < 4:
+            continue
+        iface, addr = f[1], f[3].split("/")[0]
+        if iface.startswith(skip) or addr == primary:
+            continue
+        out.append((iface, addr))
+    return out
+
+
+def boot_line(addr, port):
+    """RFC 3986: a literal IPv6 address in a URL is bracketed.
+
+    Without this, an address like 2804:14c:24:431f::e367 renders as
+    http://2804:14c:24:431f::e367:8000/preseed.cfg -- which a reader would copy
+    into a boot line, and which names no host and no port anything can parse.
+    """
+    host = f"[{addr}]" if ":" in addr else addr
+    return f"auto=true url=http://{host}:{port}/preseed.cfg"
+
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    """One line per request, and the client address it came from.
+
+    Worth keeping rather than silencing: the installer's own fetch is the only
+    evidence Stage 0 works at all, and a run where nothing is logged means the
+    boot line's address was wrong.
+    """
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write(
+            "%s - %s\n" % (self.address_string(), fmt % args)
+        )
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Build .#calangoBootstrap and serve it for RUNBOOK.md's Stage 0."
+    )
+    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument(
+        "--bind",
+        default="0.0.0.0",
+        help="default every interface: a second machine has to reach this",
+    )
+    ap.add_argument(
+        "--flake",
+        default=".",
+        help="the flake directory (default: the current one)",
+    )
+    ap.add_argument(
+        "--print-only",
+        action="store_true",
+        help="build and print the store path and boot line, then stop",
+    )
+    args = ap.parse_args()
+
+    flake_dir = Path(args.flake).expanduser().resolve()
+    if not (flake_dir / "flake.nix").is_file():
+        die(f"no flake.nix in {flake_dir}", "pass --flake <dir>")
+
+    check_nix_users()
+    store = build(flake_dir)
+
+    print(f"serving   {store}")
+    for f in sorted(p.name for p in store.iterdir()):
+        print(f"          {f}")
+    who = account_name(store)
+    if who:
+        print(f"account   the installer will create {who!r}")
+
+    primary = primary_address()
+    others = other_addresses(primary)
+    print()
+    print("Add this to the installer's kernel command line:")
+    if primary:
+        print(f"    {boot_line(primary, args.port)}")
+    else:
+        print(f"    {boot_line('<this-machine>', args.port)}")
+        print("  (no route off this machine -- is the network up?)")
+    if others:
+        print()
+        print("  Other addresses this machine has, if that one is on the wrong")
+        print("  network:")
+        for iface, a in others:
+            print(f"    {iface:<12} {boot_line(a, args.port)}")
+    print()
+    print("No priority=critical: RUNBOOK.md's Stage 0 explains why, and tells")
+    print("you which prompts to answer by hand.")
+
+    if args.print_only:
+        return
+
+    print()
+    print("Unauthenticated http on a LAN. Stop it when the install finishes:")
+    print("it has nothing more to serve. Ctrl-C.")
+    print()
+
+    handler = functools.partial(QuietHandler, directory=str(store))
+
+    class Server(socketserver.TCPServer):
+        allow_reuse_address = True
+        address_family = socket.AF_INET
+
+    try:
+        with Server((args.bind, args.port), handler) as httpd:
+            httpd.serve_forever()
+    except OSError as e:
+        die(f"cannot listen on {args.bind}:{args.port}", str(e))
+    except KeyboardInterrupt:
+        print("\nstopped", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

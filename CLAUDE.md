@@ -515,6 +515,31 @@ Count explicitly in an interactive shell; test by condition in a builder; and in
 an activation hook, check `$-` in the shell that will really run the line before
 deciding what protects it.
 
+**A directory under `/nix/store` is not a store path, and `ls` cannot tell you
+which.** A failed build leaves its partial `$out` on disk, owned by a `nixbld`
+user. It looks exactly like a real output -- and if the build failed *because* a
+guard rejected the content, that debris is the rejected content, sitting where a
+reader will mistake it for the artifact. Measured while adding
+`bin/calango-serve-bootstrap`, whose builder syntax-checks the script: a
+deliberately broken version produced
+
+```sh
+ls -d /nix/store/*-calango-serve-bootstrap | tail -1        # picked the debris
+sg nix-users -c 'nix path-info /nix/store/yr81…-calango-serve-bootstrap'
+# error: path '/nix/store/yr81…-calango-serve-bootstrap' is not valid
+stat -c '%U' /nix/store/yr81…-calango-serve-bootstrap       # nixbld1, not root
+```
+
+and running *that* copy reported the SyntaxError the guard had already caught,
+which reads as the guard having failed to fire when it is the proof that it did.
+Never choose a store path by globbing or by `ls | tail -1`. Ask what actually
+references it:
+
+```sh
+P=$(sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations."isutton@suffer".activationPackage')
+sg nix-users -c "nix-store -qR $P" | /usr/bin/grep calango-serve-bootstrap
+```
+
 **`pgrep` on a Nix binary.** Nix wraps binaries, so the process name is
 `.fumon-wrapped` or `.Hyprland-wrapp` (truncated at 15 chars). `pgrep -x fumon`
 matches nothing in both the working and the broken state. Confirmed live in

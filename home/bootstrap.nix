@@ -358,6 +358,47 @@ let
           exit 1
         fi
       '';
+  # Stage 0's two commands, as one. The runbook keeps printing them explicitly
+  # because a reader on a machine with no generation yet has no profile to find
+  # this in -- but on the machine you already have, this is the same thing plus
+  # the address the NEW machine has to reach, which Stage 0 tells you to work
+  # out and does not help you find.
+  #
+  # Only the shebang is substituted. `sg nix-users -c 'nix build ...'` is left
+  # to the reader's PATH deliberately: the nix that should build this flake is
+  # the one talking to the daemon on that machine, not a second client pinned
+  # by this closure.
+  serveBootstrap = pkgs.runCommand "calango-serve-bootstrap" { } ''
+    mkdir -p "$out/bin"
+    cp ${./../bin/calango-serve-bootstrap} "$out/bin/calango-serve-bootstrap"
+    chmod u+w "$out/bin/calango-serve-bootstrap"
+
+    substituteInPlace "$out/bin/calango-serve-bootstrap" \
+      --replace-fail '@python3@' '${pkgs.python3}/bin/python3'
+
+    # --replace-fail catches a token the Nix side names and the script does
+    # not. This catches the other direction, the same guard home/slack.nix and
+    # home/apps.nix carry: a token the SCRIPT names and the Nix side forgot,
+    # which would otherwise ship a literal @foo@ into a shebang.
+    if grep -q '@[a-zA-Z0-9]*@' "$out/bin/calango-serve-bootstrap"; then
+      echo "unsubstituted token left in calango-serve-bootstrap:" >&2
+      grep -n '@[a-zA-Z0-9]*@' "$out/bin/calango-serve-bootstrap" >&2
+      exit 1
+    fi
+
+    # It is a python script, and python does not report a syntax error until
+    # someone runs it -- which for this script is the moment a second machine is
+    # already booting off a USB stick. ast.parse rather than py_compile: the
+    # latter writes a __pycache__ directory beside the file, and buildEnv links
+    # every bin/ entry into the profile, so that directory would land in
+    # ~/.nix-profile/bin.
+    ${pkgs.python3}/bin/python3 -c \
+      'import ast,sys; ast.parse(open(sys.argv[1]).read())' \
+      "$out/bin/calango-serve-bootstrap"
+
+    chmod 555 "$out/bin/calango-serve-bootstrap"
+  '';
+
 in
 {
   options.calango.bootstrap = {
@@ -525,6 +566,8 @@ in
       cp -r "$bootstrapTree" "$out"
       chmod -R u+w "$out"
     '';
+
+  config.home.packages = [ serveBootstrap ];
 
   config.assertions = [
     {
