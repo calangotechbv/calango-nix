@@ -26,12 +26,13 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` runs **seven** checks. Count them rather than quoting this
+`nix flake check` runs **eight** checks. Count them rather than quoting this
 line — the number was stale at three the moment `bar-title-slot` landed, the
 bare-Debian bootstrap branch moved it to five by adding `host-config-files`,
 the generated-preseed branch moved it to six by adding
-`preseed-package-list`, and the VM-harness build-time guard moved it again by
-adding `vm-step-lines-verbatim`:
+`preseed-package-list`, the VM-harness build-time guard moved it to seven by
+adding `vm-step-lines-verbatim`, and the VM-harness Python port moved it to
+eight by adding `vm-harness-tests`:
 
 ```sh
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -41,12 +42,12 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 looser version started lying.** `nix flake check` validates *every* flake
 output, not only `checks`, so it emits a `checking derivation` line for
 `packages.x86_64-linux.calangoDeb` and `packages.x86_64-linux.calangoBootstrap`
-as well. Measured with both packages and all seven checks in the tree:
+as well. Measured with both packages and all eight checks in the tree:
 
 ```sh
-… | grep -c '^checking derivation'          # 9   <- includes both packages
-… | grep -c '^checking derivation checks\.'  # 7   <- the checks
-… | grep -o 'running [0-9]* flake checks'   # running 7 flake checks
+… | grep -c '^checking derivation'          # 10  <- includes both packages
+… | grep -c '^checking derivation checks\.'  # 8   <- the checks
+… | grep -o 'running [0-9]* flake checks'   # running 8 flake checks
 ```
 
 The looser pattern disagreed with nix's own summary line and nothing warned
@@ -61,22 +62,36 @@ on reboot taking the evidence with it, a wrapper whose `echo` reported success
 for a failed run; `test/vm/README.md`'s own "Nine things not to undo" is where
 those live now. `test/vm/steps/*.txt` transcribe the runbook's commands by
 hand, each mirrored line carrying the runbook's own text above it as a `#= `
-line, and `test/vm/check-steps.sh` asserts every one appears verbatim in the
-rendered `RUNBOOK.md` -- but that script only runs when someone remembers to.
-`vm-step-lines-verbatim` is the same assertion again, at build time, so a
-runbook edit with no matching step-file edit fails `nix flake check` instead
-of the harness silently going on testing the old wording.
+line. `vm-step-lines-verbatim` asserts every one appears verbatim in the
+rendered `RUNBOOK.md`, at build time, so a runbook edit with no matching
+step-file edit fails `nix flake check` instead of the harness silently going on
+testing the old wording. It is now the only implementation of that assertion:
+the shell script that used to duplicate it, and that only ran when someone
+remembered to, is gone, and `./test/vm/vm final-pass` builds this check itself
+as its first step, before any qemu instance starts.
 
-`bar-title-slot` is unlike four of the other six: it *runs* this flake's QML
-under the pinned Qt with the offscreen platform, rather than inspecting a
-built tree. So the shell tree is now covered by a build-time guard as well, and
-a change to `quickshell/bar/TitleSlot.qml` belongs in the list below.
+`bar-title-slot` and `vm-harness-tests` are the two checks in this flake that
+*run* code rather than inspecting a built tree — `bar-title-slot` runs this
+flake's own QML under the pinned Qt with the offscreen platform, and
+`vm-harness-tests` runs the VM harness's own Python unit suite. Both are also
+the only two checks that declare a toolchain, which is the syntax needle
+rather than a remembered pair of names:
+
+```sh
+/usr/bin/grep -c 'nativeBuildInputs' flake.nix
+# 2  -- bar-title-slot (qt6.qtdeclarative) and vm-harness-tests (python3, cpio)
+```
+
+So the shell tree and the harness's own Python are both covered by a
+build-time guard, and a change to `quickshell/bar/TitleSlot.qml` belongs in the
+list below.
 
 Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
 `home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
 `home/apps.nix`, `quickshell/bar/TitleSlot.qml`, `bootstrap/greetd-config.toml`,
 `bootstrap/runbook.md.in`, `bootstrap/preseed.cfg.in`, `bootstrap/keys/`,
-`test/vm/steps/*.txt`, or the `required` list in `flake.nix`. The first of
+`test/vm/steps/*.txt`, `test/vm/calangovm/`, or the `required` list in
+`flake.nix`. The first of
 those is deliberately stated as *syntax* rather than as a list of modules: an
 earlier version of this passage named `home/portals.nix` and `home/uwsm.nix`,
 and `grep -l 'source =' home/*.nix` returns **ten** modules, so the named pair
@@ -85,7 +100,7 @@ for the property; do not trust a list of names, including this sentence's.
 
 Further build-time guards ride in `home.packages` rather than in `checks`, so
 they run on every generation build — strictly more often than
-`nix flake check` is invoked — and none of them appears in that count of seven.
+`nix flake check` is invoked — and none of them appears in that count of eight.
 Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
@@ -597,6 +612,30 @@ dpkg -V calango-desktop   → exit 0, and prints nothing
 So `if ! dpkg -V pkg; then` can never fire — the same shape as a check that
 cannot fail. Test the captured **output**, which is what `home/bootstrap.nix`'s
 drift hook does with `[ -n "$bad" ]`.
+
+**Python serves stale bytecode when a source file's size AND integer mtime are
+both unchanged, and `-B` does not prevent it.** A same-length edit made inside
+the same second as the file already on disk leaves `__pycache__`'s cached
+`.pyc` looking current by every signal `importlib` checks, so the interpreter
+imports the *old* code and never re-reads the file at all. Measured on
+`test/vm/calangovm` during the VM-harness Python port:
+
+```
+disk says "BBBB"; python imports        AAAA
+with -B:                                AAAA      <- -B only stops WRITING bytecode
+after rm -rf __pycache__:               BBBB
+```
+
+`-B` is the natural remedy and it is the wrong one: it stops the interpreter
+from *writing* a new `.pyc`, which says nothing about whether it *reads* the
+stale one already there. A scripted same-length mutation sweep reproduced this
+**20 times out of 20**, every run testing the code compiled before the first
+edit. This matters more than an ordinary trap: mutation is how every guard in
+this project is proven able to fail, so under this defect a sweep tests the
+*original* code every time, every mutation looks harmless, and the conclusion
+drawn is "these tests cannot fail" when the truth is the mutation never ran.
+Same shape as a `grep` returning 0 for a pattern it cannot express: the reading
+and "the property holds" are indistinguishable. Clear `__pycache__`, not `-B`.
 
 ---
 

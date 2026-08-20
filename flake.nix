@@ -577,13 +577,11 @@
 
         # test/vm/steps/*.txt transcribe RUNBOOK.md's commands by hand -- each
         # runbook command they mirror carries the runbook's own text above it
-        # as a `#= ` line (see test/vm/README.md). test/vm/check-steps.sh
-        # already asserts every `#=` line appears verbatim in the rendered
-        # RUNBOOK.md, but it is a script someone has to remember to run: a
-        # runbook edit with no matching step-file edit builds and switches
-        # cleanly and the harness goes on testing the old wording. This is the
-        # same assertion, at build time, so `nix flake check` catches the
-        # drift instead of a person having to.
+        # as a `#= ` line (see test/vm/README.md). Without a check, a runbook
+        # edit with no matching step-file edit builds and switches cleanly and
+        # the harness goes on testing the old wording. This is that check, at
+        # build time, so `nix flake check` catches the drift instead of a
+        # person having to remember to run one by hand.
         #
         # ${./test/vm/steps} is a source input the same way ${./hypr/hosts}
         # is above -- a Nix build cannot read a path it was never given, and
@@ -598,8 +596,9 @@
             fails=""
             while IFS= read -r line; do
               total=$((total + 1))
-              # -F: the runbook is full of $, ", * and \n, none of it a
-              # regex here -- same reasoning as check-steps.sh.
+              # -F: the runbook is full of $, ", * and \n, none of it meant
+              # as a regex here -- a literal match is what "appears verbatim"
+              # means.
               if ! grep -qF -- "$line" "$r"; then
                 missing=$((missing + 1))
                 fails="$fails
@@ -607,11 +606,10 @@
               fi
             done < <(sed -n 's/^#= //p' "$steps"/*.txt)
 
-            # The vacuity anchor check-steps.sh itself carries, reproduced
-            # here: with no '#=' lines the loop above runs zero times,
-            # $missing stays 0, and this would pass having asserted nothing --
-            # exactly what "the property holds" looks like for a check with
-            # nothing in it.
+            # The vacuity anchor: with no '#=' lines the loop above runs zero
+            # times, $missing stays 0, and this would pass having asserted
+            # nothing -- exactly what "the property holds" looks like for a
+            # check with nothing in it.
             if [ "$total" -eq 0 ]; then
               echo "no '#=' lines found under $steps -- this check asserted nothing." >&2
               exit 1
