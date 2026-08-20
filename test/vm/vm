@@ -27,6 +27,9 @@ def build_parser():
     p.add_argument("steps", help="path to a steps/*.txt file")
     p.set_defaults(func=cmd_drive)
 
+    p = sub.add_parser("install", help="Stage 0: install from the generated preseed")
+    p.set_defaults(func=cmd_install)
+
     return ap
 
 
@@ -44,6 +47,11 @@ def cmd_drive(cfg, args):
     from calangovm import driver
     store = config.bootstrap_path(cfg)
     return driver.drive(cfg, args.steps, config.username(store))
+
+
+def cmd_install(cfg, args):
+    from calangovm import install
+    return install.install(cfg)
 
 
 def main(argv=None):
