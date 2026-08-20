@@ -165,6 +165,21 @@ Scope {
               onSelect: node => AudioService.selectSource(node)
             }
 
+            // Between Input and Recording on purpose. It belongs under Input
+            // because it is about the microphone you just picked -- that is
+            // what feeds it -- and above Recording because it is emphatically
+            // not one of the applications listed there. Its capture stream is
+            // filtered out of that list for the same reason.
+            FilterSection {
+              Layout.fillWidth: true
+              theme: root.theme
+              font: root.font
+              node: AudioService.noiseCancelSource
+              from: AudioService.noiseCancelFrom
+              fromLabel: AudioService.noiseCancelFromLabel
+              isDefault: AudioService.noiseCancelIsDefault
+            }
+
             StreamSection {
               Layout.fillWidth: true
               theme: root.theme

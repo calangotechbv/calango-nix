@@ -17,6 +17,10 @@ Singleton {
   // Reading Pipewire.nodes.values from imperative JS gives an empty list.
   readonly property var allNodes: Pipewire.nodes ? Pipewire.nodes.values : []
 
+  // Same rule as allNodes above, and for the same reason: links has to be
+  // reached through a declarative binding, not read from imperative JS.
+  readonly property var allLinks: Pipewire.links ? Pipewire.links.values : []
+
   // Devices, not per-application streams. Chrome appears in nodes twice (a
   // playback stream and a capture stream) and must not show up in a device
   // picker -- isStream is what separates them.
@@ -32,7 +36,38 @@ Singleton {
   // discriminator: PwNodeType is a flags enum whose qmltypes ship no enumerator
   // names, so comparing against a constant would be guesswork.
   readonly property var sinks:   deviceNodes.filter(n => n.isSink  && n.audio)
-  readonly property var sources: deviceNodes.filter(n => !n.isSink && n.audio)
+
+  // The noise-canceling filter, found by the calango.role property that
+  // pipewire/50-noise-canceling-source.conf declares on both of its nodes --
+  // not by node.name, so that renaming a node cannot silently change what this
+  // panel shows. home/audio.nix's guard asserts both declarations exist.
+  function roleOf(node) {
+    const p = (node && node.properties) ? node.properties : ({});
+    return p["calango.role"] ? String(p["calango.role"]) : "";
+  }
+
+  // The filtered microphone. It is a real device and keeps its own volume, but
+  // it is deliberately NOT offered in `sources` below.
+  readonly property var noiseCancelSource:
+    deviceNodes.find(n => n.audio && roleOf(n) === "noise-cancel-source") ?? null
+
+  // The filter's capture side. This is plumbing, not an application: it holds
+  // the microphone for as long as the filter runs, so left in `recordStreams`
+  // it renders as a "Recording" row that never goes away.
+  readonly property var noiseCancelCapture:
+    streamNodes.find(n => roleOf(n) === "noise-cancel-capture") ?? null
+
+  // Input devices, minus the filtered source.
+  //
+  // Excluded because the filter FOLLOWS the default input: making it the
+  // default leaves WirePlumber deciding which microphone feeds it rather than
+  // the person looking at this panel. Keeping it out of this list means the
+  // list IS the choice of what gets noise-cancelled, and PipeWire persists that
+  // choice by itself -- `default.configured.audio.source`, which survives a
+  // reboot with a ranked fallback list. The filter appears in its own section
+  // instead, where its input is shown rather than guessed at.
+  readonly property var sources:
+    deviceNodes.filter(n => !n.isSink && n.audio && roleOf(n) !== "noise-cancel-source")
 
   // The other half of the node list: one stream per application that currently
   // holds the audio device. These come and go as apps start and stop playing.
@@ -49,7 +84,45 @@ Singleton {
   // than recording (verified: paplay -> isSink true, pw-record -> false). Video
   // streams -- a screen share carrying no audio -- have no .audio and fall out.
   readonly property var playbackStreams: streamNodes.filter(n => n.isSink  && n.audio)
-  readonly property var recordStreams:   streamNodes.filter(n => !n.isSink && n.audio)
+
+  // Recording applications, minus the noise-canceling filter's own capture
+  // side. Every other row in this section is an application that started
+  // recording and will stop; the filter's capture stream is held for the whole
+  // life of filter-chain.service, so it read as an app that never let go of the
+  // microphone. It is plumbing and belongs in the filter's own section.
+  readonly property var recordStreams:
+    streamNodes.filter(n => !n.isSink && n.audio && roleOf(n) !== "noise-cancel-capture")
+
+  // Which microphone is feeding the filter right now, read from the live graph
+  // rather than assumed from the default input -- the two can differ, and when
+  // they do this is the one that is true.
+  //
+  // Read-only by necessity, not by choice: Quickshell exposes PwLink.source and
+  // .target as PwNode pointers but both are isReadonly and PwLink is
+  // isCreatable: false, so the binding can see a link and cannot move one.
+  // Changing it means writing a pw-metadata pin, which was measured NOT to
+  // survive a filter-chain restart -- and X-Restart-Triggers restarts that unit
+  // on every switch that touches the audio config. So this reports, and the
+  // Input list above is what actually decides.
+  readonly property var noiseCancelFrom: {
+    const cap = noiseCancelCapture;
+    if (!cap) return null;
+    const link = allLinks.find(l => l && l.target && l.target.id === cap.id);
+    return link ? link.source : null;
+  }
+
+  // The label for that microphone, or an honest statement of what is going on
+  // when there is nothing to name. A filter with no input link is not an error
+  // -- a suspended node has no links at all -- so this does not shout.
+  readonly property string noiseCancelFromLabel:
+    noiseCancelFrom ? shortLabel(noiseCancelFrom) : "not connected"
+
+  // True when someone has made the filter the default input from outside this
+  // panel -- pactl, or a leftover setting. The panel cannot offer that choice
+  // any more, but it can still be IN that state, and then the Input list above
+  // shows no active row at all, which reads as a bug rather than as a setting.
+  readonly property bool noiseCancelIsDefault:
+    !!(noiseCancelSource && defaultSource && noiseCancelSource.id === defaultSource.id)
 
   // A stream's identity lives in its properties map, not in the name/description
   // fields the devices use -- PipeWire leaves description and nickname empty on
