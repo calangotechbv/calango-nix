@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from calangovm import config, install
 
 DATA = Path(__file__).resolve().parent / "data"
+HUMAN_ANSWERS = Path(__file__).resolve().parent.parent.parent / "human-answers.cfg"
 
 ANSWERS = (
     "# a comment line\n"
@@ -61,6 +62,39 @@ class CheckAnswers(unittest.TestCase):
                              "d-i passwd/user-password-again password stale", 1)
         with self.assertRaises(config.Precondition):
             install.check_answers(broken, "h", "s3cr3t")
+
+    def test_an_unrendered_real_file_against_the_defaults_is_a_precondition(self):
+        # human-answers.cfg's own placeholders ARE config.DEFAULTS' values, so
+        # under the default configuration an untouched file's six lines are
+        # byte-identical to the wanted ones. Part 1 (exact-line matching) alone
+        # cannot catch this -- it is the vacuity gap Part 2 (the marker check)
+        # exists to close. This is the case that passed before this fix.
+        text = HUMAN_ANSWERS.read_text()
+        with self.assertRaises(config.Precondition):
+            install.check_answers(text, "calango-vm", "rehearsal")
+
+    def test_an_unrendered_real_file_against_a_prefix_password_is_a_precondition(self):
+        # The harmful false pass: pw="reh" is a PREFIX of the unrendered
+        # placeholder "rehearsal". A substring count
+        # (rendered.count("password " + pw)) matched all four unrendered lines,
+        # the guard reported success, the installed machine got "rehearsal",
+        # and the driver -- which types "reh" -- could not log in.
+        text = HUMAN_ANSWERS.read_text()
+        with self.assertRaises(config.Precondition):
+            install.check_answers(text, "calango-vm", "reh")
+
+
+class HumanAnswersCfgMarkers(unittest.TestCase):
+    """check_answers' Part 2 relies on human-answers.cfg carrying the
+    CALANGO_VM_HOST / CALANGO_VM_PW markers on exactly the six substituted
+    lines. This anchors that count: without it, someone tidying a comment out
+    of that data file would silently weaken the guard, with nothing to say so.
+    """
+
+    def test_the_marker_counts_are_two_and_four(self):
+        text = HUMAN_ANSWERS.read_text()
+        self.assertEqual(text.count("# CALANGO_VM_HOST"), 2)
+        self.assertEqual(text.count("# CALANGO_VM_PW"), 4)
 
 
 class ReadNewc(unittest.TestCase):

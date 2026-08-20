@@ -58,16 +58,59 @@ def render_answers(text: str, host: str, pw: str) -> str:
     return "\n".join(rewrite(l) for l in text.splitlines()) + "\n"
 
 
+# The comment human-answers.cfg carries on every substituted line. Part 2 of
+# check_answers below relies on these tokens appearing on exactly the six
+# lines HOST_KEYS and PW_KEYS name, and nowhere else in the file --
+# test_install.py's HumanAnswersCfgMarkers anchors that count so a future edit
+# to the data file that drops a marker fails loudly instead of silently
+# weakening the guard.
+MARKERS = ("CALANGO_VM_HOST", "CALANGO_VM_PW")
+
+
 def check_answers(rendered: str, host: str, pw: str) -> None:
     """Prove the substitution took. A stale hostname installs a machine the
-    steps cannot find, and a stale password locks the driver out of it."""
+    steps cannot find, and a stale password locks the driver out of it.
+
+    Two checks, and neither alone is enough.
+
+    Part 1 compares whole LINES, not substrings. A substring count
+    (`rendered.count("password " + pw)`) passes on a completely unrendered
+    file whenever pw is a prefix of the placeholder -- pw="reh" against the
+    unrendered "password rehearsal" matches, the guard reports success, the
+    installed machine gets "rehearsal", and the driver -- which types "reh" --
+    cannot log in. render_answers() produces a line exactly equal to
+    `key + value` with the trailing comment discarded, so exact-line
+    membership is the right test and closes that.
+
+    Part 1 alone still has a vacuity gap: human-answers.cfg's own placeholders
+    ARE config.DEFAULTS' values ("calango-vm" / "rehearsal"), so under the
+    default configuration an untouched file's six lines are byte-identical to
+    the wanted ones and Part 1 passes for a reason that has nothing to do with
+    rendering having happened. Part 2 closes that: it asserts the
+    CALANGO_VM_HOST / CALANGO_VM_PW markers are gone from the rendered text.
+    They can only be gone if render_answers() actually ran a substitution over
+    those lines, whatever the target values are -- so this signal works even
+    when the target values equal the placeholders. This does couple the guard
+    to a comment convention in a data file this module does not own; that is a
+    deliberate trade, made safe by the marker-count anchor in
+    test_install.py described above.
+    """
+    lines = set(rendered.splitlines())
     for key in HOST_KEYS:
-        if key + host not in rendered:
-            raise Precondition(f"hostname substitution failed: no '{key}{host}'")
-    found = rendered.count("password " + pw)
-    if found != len(PW_KEYS):
-        raise Precondition(
-            f"password substitution failed: {found} of {len(PW_KEYS)} lines")
+        wanted = key + host
+        if wanted not in lines:
+            raise Precondition(
+                f"hostname substitution failed: no line '{wanted}' (key '{key}')")
+    for key in PW_KEYS:
+        wanted = key + pw
+        if wanted not in lines:
+            raise Precondition(
+                f"password substitution failed: no line '{wanted}' (key '{key}')")
+    for marker in MARKERS:
+        if marker in rendered:
+            raise Precondition(
+                f"substitution marker {marker} is still present in the rendered "
+                "text -- rendering did not happen")
 
 
 def read_newc(blob: bytes) -> list[tuple[str, int]]:
