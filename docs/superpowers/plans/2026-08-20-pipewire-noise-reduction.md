@@ -768,7 +768,14 @@ pactl list short sources | /usr/bin/grep effect_output.rnnoise
 
 Expected: one line, ending `float32le 1ch 48000Hz` and a state of `SUSPENDED` or `IDLE`. Mono is correct — the graph is mono by design, and a stereo device downmixes on the way in.
 
-- [ ] **Step 3: All eight controls are present and hold the configured values**
+- [ ] **Step 3: Every control name is present, and every value the config sets is live**
+
+This step's heading used to promise both and its command delivered only the
+first: it listed **names** and never read a **value**, so a config whose
+`"Open Threshold" = 0.04` had been silently ignored would have passed it. That
+is a declared scope wider than the mechanism — the same defect as spec 10's
+`gui-desktop-ids`, which claimed to cover ids it never searched for. The value
+half is now its own command below.
 
 ```bash
 pw-dump > /tmp/nr-dump.json
@@ -803,6 +810,51 @@ Neither number is the guard's **six**, which counts what the config *sets*.
 Three different questions, three different numbers; do not reconcile them.
 
 A missing name here means the config set a control PipeWire ignored — which the Task 2 guard should have caught at build time. If it did not, the guard has a hole and that is more important than this task. Nothing was missing: all nine predicted names are present, so the guard has no hole.
+
+Now read the values, which is the half the name list cannot answer:
+
+```bash
+pw-dump 2>/dev/null | python3 -c '
+import json, sys
+def walk(x, out):
+    if isinstance(x, dict):
+        for k, v in x.items():
+            if k == "params" and isinstance(v, list):
+                for i in range(0, len(v) - 1, 2):
+                    if isinstance(v[i], str) and (v[i].startswith("gate:") or v[i].startswith("rn:")):
+                        out.append((v[i], v[i+1]))
+            else:
+                walk(v, out)
+    elif isinstance(x, list):
+        for y in x:
+            walk(y, out)
+out = []
+walk(json.load(sys.stdin), out)
+for k, v in sorted(set(out)):
+    print(f"{k:35} {v}")
+'
+```
+
+Measured 2026-08-20, and every value the config sets is live:
+
+```
+gate:Attack (s)                     0.005
+gate:Close Threshold                0.03
+gate:Hold (s)                       0.05
+gate:Level                          0.0
+gate:Open Threshold                 0.04
+gate:Release (s)                    0.01
+rn:Placeholder                      1.7014117331926443e+38
+rn:Retroactive VAD Grace (ms)       100
+rn:VAD Grace Period (ms)            500
+rn:VAD Threshold (%)                50
+```
+
+`rn:Placeholder` reads `FLT_MAX`, which is what an unbound and unused port
+looks like. `gate:Level` reads `0.0` because the room was silent — and note
+that a broken reader would print `0.0` for every one of these, which is why
+this command prints the whole table rather than `gate:Level` alone. The other
+nine values being right is what proves the zero is a reading.
 
 - [ ] **Step 4: The loop guard is in place**
 
