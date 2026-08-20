@@ -372,6 +372,162 @@ let
   # against a search path no /nix/store entry will ever join -- with the
   # opposite fix, because here an absolute path is the thing that is refused.
   ladspaPath = "${pkgs.rnnoise-plugin}/lib/ladspa";
+
+  # Every name pipewire/50-noise-canceling-source.conf hands to a library,
+  # checked against that library, at build time.
+  #
+  # The names are read OUT OF THE FILE rather than written here. A list of
+  # "the six controls" typed into this derivation would go stale the first
+  # time someone edits the config, and would go on passing -- which is the
+  # exact failure CLAUDE.md's "enumerate by syntax, never by a remembered
+  # list" rule exists to prevent, and which produced ExecStart=fumon.
+  #
+  # This rides in home.packages rather than in flake.nix's checks so it runs on
+  # every generation build, which is strictly more often than anyone types
+  # `nix flake check`. Same choice as wrappedGuiApps and pulseaudioClients.
+  noiseCancelingGuard =
+    pkgs.runCommand "noise-canceling-source-guard"
+      {
+        conf = noiseCancelingSource;
+        rnnoiseDir = ladspaPath;
+        builtinSo = "${pkgs.pipewire}/lib/spa-0.2/filter-graph/libspa-filter-graph-plugin-builtin.so";
+      }
+      ''
+        if [ ! -e "$builtinSo" ]; then
+          echo "pipewire no longer ships its builtin filter-graph plugin at" >&2
+          echo "  $builtinSo" >&2
+          echo "That library is where the noisegate filter lives. Find where" >&2
+          echo "upstream moved it and update home/audio.nix's builtinSo." >&2
+          exit 1
+        fi
+
+        # A state machine over the config, not a list of names. `type = ladspa`
+        # and `type = builtin` select which library the names that follow must
+        # be found in; each node block states its type before its label and its
+        # controls, which is what makes one pass enough.
+        #
+        # A control KEY is quoted and sits left of the `=`. A quoted VALUE sits
+        # right of it, so the trailing `=` in the pattern is what tells the two
+        # apart -- node.description = "Noise Canceling source" must not be read
+        # as a control name.
+        awk '
+          # Comments first, and this rule is not optional. Without it the
+          # parser reads the prose in the config header: a dry run against an
+          # early draft emitted LABEL from a sentence that merely mentioned
+          # the word, with no node type attached, which lands in the orphan
+          # branch below and fails the build over a comment. Same species as
+          # the spec 11 appPath guard, which matched the very comment written
+          # to describe it.
+          #
+          # NOTE for anyone editing this awk program: it is inside a
+          # single-quoted shell string, so no apostrophe may appear anywhere
+          # in it, comments included. One apostrophe ends the string and the
+          # rest of the program becomes shell words.
+          /^[[:space:]]*#/ { next }
+          /type[[:space:]]*=[[:space:]]*ladspa/  { lib = "rnnoise"; next }
+          /type[[:space:]]*=[[:space:]]*builtin/ { lib = "builtin"; next }
+          match($0, /plugin[[:space:]]*=[[:space:]]*"[^"]+"/) {
+            s = substr($0, RSTART, RLENGTH)
+            sub(/plugin[[:space:]]*=[[:space:]]*"/, "", s); sub(/"$/, "", s)
+            print "PLUGIN " lib " " s; next
+          }
+          match($0, /label[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+/) {
+            s = substr($0, RSTART, RLENGTH)
+            sub(/label[[:space:]]*=[[:space:]]*/, "", s)
+            print "LABEL " lib " " s; next
+          }
+          match($0, /"[^"]+"[[:space:]]*=/) {
+            s = substr($0, RSTART, RLENGTH)
+            sub(/^"/, "", s); sub(/"[[:space:]]*=$/, "", s)
+            print "CONTROL " lib " " s
+          }
+        ' "$conf" > names.txt
+
+        labels=0
+        controls=0
+        plugins=0
+        bad=0
+
+        # Redirected from a file, never piped: a `while read` on the right of a
+        # pipe runs in a subshell and every counter below would be discarded.
+        while read -r kind lib name; do
+          case "$lib" in
+            rnnoise) so="$rnnoiseDir/librnnoise_ladspa.so" ;;
+            builtin) so="$builtinSo" ;;
+            *)
+              echo "home/audio.nix's guard read a $kind named '$name' that" >&2
+              echo "belongs to no filter node -- no 'type = ladspa' or" >&2
+              echo "'type = builtin' line preceded it in the config. Either a" >&2
+              echo "node lost its type, or a new node type was added and this" >&2
+              echo "guard has not been taught about it." >&2
+              exit 1
+              ;;
+          esac
+
+          case "$kind" in
+            PLUGIN)
+              plugins=$((plugins + 1))
+              # A plugin is a FILE, so this is an existence test rather than a
+              # content one -- and it is what makes the LADSPA_PATH drop-in
+              # honest: the directory it names must really hold this object.
+              if [ ! -e "$rnnoiseDir/$name.so" ]; then
+                echo "The config names the LADSPA plugin '$name', but" >&2
+                echo "  $rnnoiseDir/$name.so" >&2
+                echo "does not exist. pkgs.rnnoise-plugin has moved or renamed" >&2
+                echo "it. Note the config must NOT be changed to an absolute" >&2
+                echo "path -- pipewire refuses one; fix ladspaPath instead." >&2
+                bad=1
+              fi
+              ;;
+            LABEL)
+              labels=$((labels + 1))
+              # A condition, not a bare grep: this builder runs with errexit,
+              # and a grep that matches nothing exits 1.
+              if ! grep -qaF -e "$name" "$so"; then
+                echo "The config uses the filter label '$name', which does" >&2
+                echo "not appear in $so." >&2
+                echo "Upstream renamed or dropped it. The config's flags do" >&2
+                echo "NOT include nofail, so this would fail the unit at" >&2
+                echo "runtime rather than pass silently." >&2
+                bad=1
+              fi
+              ;;
+            CONTROL)
+              controls=$((controls + 1))
+              if ! grep -qaF -e "$name" "$so"; then
+                echo "The config sets the control '$name', which does not" >&2
+                echo "appear in $so." >&2
+                echo "A control pipewire does not know is ignored, so the" >&2
+                echo "filter would run at its default instead of the value" >&2
+                echo "the config asks for -- silently." >&2
+                bad=1
+              fi
+              ;;
+          esac
+        done < names.txt
+
+        # The vacuity anchor. Without it a config the parser cannot read at all
+        # -- a reformat, a renamed key, a file replaced by an empty one --
+        # produces zero names to check, zero failures, and a guard that reports
+        # success having asserted nothing. Same anchor gui-desktop-ids and
+        # no-pulseaudio-daemon carry.
+        if [ "$plugins" -eq 0 ] || [ "$labels" -eq 0 ] || [ "$controls" -eq 0 ]; then
+          echo "The guard parsed $plugins plugin(s), $labels label(s) and" >&2
+          echo "$controls control(s) out of" >&2
+          echo "  $conf" >&2
+          echo "and at least one of those is zero, so it checked nothing." >&2
+          echo "The config's syntax has changed under the parser above. Read" >&2
+          echo "the file and update the awk program, and do not delete this" >&2
+          echo "check -- it is the only thing standing between a reformat and" >&2
+          echo "a guard that passes vacuously for ever." >&2
+          exit 1
+        fi
+
+        [ "$bad" -eq 0 ] || exit 1
+
+        echo "ok: $plugins plugin, $labels labels, $controls controls checked"
+        mkdir -p "$out"
+      '';
 in
 {
   # pipewire brings pw-play, pw-dump, pw-top, pw-cli and the 14 bluez5 SPA
@@ -401,7 +557,7 @@ in
   # which resolves its own configuration through a compiled-in datadir and
   # PIPEWIRE_CONFIG_DIR, not XDG_DATA_DIRS (checked with strings on both
   # libraries) -- so pipewire needed no equivalent fix.
-  home.packages = [ pkgs.pipewire pkgs.wireplumber pulseaudioClients ];
+  home.packages = [ pkgs.pipewire pkgs.wireplumber pulseaudioClients noiseCancelingGuard ];
 
   # apt packages this audio stack needs Debian to keep. Nine of the ten fill
   # the compiled-in module directory of DEBIAN's libpipewire-0.3.so, which is a
