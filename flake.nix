@@ -631,6 +631,30 @@
             echo "ok  $total step line(s) all appear verbatim in RUNBOOK.md"
             touch "$out"
           '';
+
+        # The harness's own unit tests. No VM, no network, no kvm: everything
+        # under test is argv construction, string handling, a socketpair and a
+        # fake /proc tree.
+        #
+        # No vacuity anchor, and that is measured rather than assumed --
+        # `unittest discover` is the one guard shape in this flake that cannot
+        # pass having asserted nothing. Python 3.13.5:
+        #
+        #   empty directory              -> exit 5, "NO TESTS RAN"
+        #   a file with no test methods  -> exit 5, "NO TESTS RAN"
+        #   a missing start directory    -> exit 1, ImportError
+        #   an unimportable test module  -> exit 1, reported as a failing test
+        #
+        # Re-measure if the sandbox python ever moves major version.
+        vm-harness-tests =
+          pkgs.runCommand "vm-harness-tests"
+            { nativeBuildInputs = [ pkgs.python3 ]; } ''
+              cp -r ${./test/vm} harness
+              chmod -R +w harness
+              cd harness
+              python3 -m unittest discover -v
+              touch "$out"
+            '';
       };
     };
 }

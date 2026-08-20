@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""One entry point for the VM harness. See test/vm/README.md.
+
+Subcommands are added by the module that implements them; this file is
+argparse, dispatch and the exit-code mapping, and holds no logic of its own.
+"""
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from calangovm import config
+
+
+def build_parser():
+    ap = argparse.ArgumentParser(prog="vm", description="Drive RUNBOOK.md in qemu.")
+    for name in sorted(config.ENV):
+        ap.add_argument(f"--{name}", default=None,
+                        help=f"{config.ENV[name]} (default: {config.DEFAULTS[name]})")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("config", help="print the resolved configuration")
+    p.set_defaults(func=cmd_config)
+
+    return ap
+
+
+def cmd_config(cfg, args):
+    for field in ("dir", "iso", "host", "pw", "port", "repo"):
+        print(f"{field:<12} {getattr(cfg, field)}")
+    print(f"{'http_port':<12} {cfg.http_port}")
+    store = config.bootstrap_path(cfg)
+    print(f"{'bootstrap':<12} {store}")
+    print(f"{'account':<12} {config.username(store)}")
+    return 0
+
+
+def main(argv=None):
+    # Line-buffer both streams. Python block-buffers whenever the stream is not
+    # a tty, so `vm final-pass > log` or a pipe into tee shows nothing for
+    # minutes and a healthy run reads as a hung one. drive.py needed `python3 -u`
+    # from every caller for exactly this; now a caller cannot get it wrong.
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+
+    args = build_parser().parse_args(argv)
+    try:
+        cfg = config.resolve(overrides={name: getattr(args, name) for name in config.ENV})
+        return args.func(cfg, args)
+    except config.Precondition as exc:
+        print(f"vm: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
