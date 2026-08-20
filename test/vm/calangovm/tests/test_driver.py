@@ -1,4 +1,5 @@
 import io
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -47,6 +48,21 @@ class Command(unittest.TestCase):
                          '"isutton@calango-vm"')
 
 
+PROMPT_LINES = [
+    "Package configuration",
+    "Configuring code",
+    "      <Yes>                    <No>",
+    "Do you want to continue? [Y/n]",
+    "Install these packages without verification? [y/N]",
+    "Which display manager should manage the default session?",
+]
+ORDINARY_LINES = [
+    "Setting up nix-bin (2.24.9-1) ...",
+    "Reading package lists... Done",
+    "Preparing to unpack .../greetd_0.10.3-2_amd64.deb ...",
+]
+
+
 class Wrap(unittest.TestCase):
     def test_the_marker_reads_the_first_pipeline_status(self):
         # Not $? -- that is grep's status, and grep matches nothing on a healthy
@@ -66,6 +82,28 @@ class Wrap(unittest.TestCase):
         w = driver.wrap("true", 1)
         self.assertIn("Package configuration", w)
         self.assertIn("--line-buffered", w)
+
+    # PROMPT_PATTERN is consumed by `grep -aE` inside the guest, not by
+    # Python -- these two tests use Python's `re` as a proxy for that. That is
+    # sound only because every construct this pattern uses (`|`, `\[`, `\]`,
+    # `\?`, `$`) means the same thing in POSIX ERE and in Python's regex
+    # dialect. If a future alternative needs a construct where the two
+    # disagree, this proxy stops being valid and the disagreement needs to be
+    # resolved before trusting these tests again.
+    def test_every_kind_of_prompt_line_matches(self):
+        # One line per alternative in PROMPT_PATTERN, so deleting any one of
+        # them (as opposed to merely asserting the constant is embedded
+        # verbatim, which is vacuous -- true no matter what the constant says)
+        # fails exactly the line that alternative was for. See Step 6 of the
+        # fix-round report for the mutation that proves each of these.
+        rx = re.compile(driver.PROMPT_PATTERN)
+        for line in PROMPT_LINES:
+            self.assertRegex(line, rx, f"did not match: {line!r}")
+
+    def test_ordinary_build_output_never_matches(self):
+        rx = re.compile(driver.PROMPT_PATTERN)
+        for line in ORDINARY_LINES:
+            self.assertNotRegex(line, rx, f"falsely matched: {line!r}")
 
 
 class Drive(unittest.TestCase):
