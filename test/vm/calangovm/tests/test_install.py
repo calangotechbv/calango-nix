@@ -136,3 +136,49 @@ class BuildExtraCpio(unittest.TestCase):
                     install.build_extra_cpio("some text\n", Path(d))
             finally:
                 install.read_newc = real
+
+
+class Verdict(unittest.TestCase):
+    """Stage 0's outcome, decided in one place so it can be tested without qemu.
+
+    The ordering is the defect this exists for: the first port dropped
+    run_qemu's status and read the serial log regardless, so a qemu that never
+    started was reported by the fetch counter as "the installer never fetched
+    it" -- a networking diagnosis for an emulator that did not run.
+    """
+
+    def test_a_healthy_run(self):
+        code, message = install.verdict(0, "Finishing the installation", 2)
+        self.assertEqual(code, 0)
+        self.assertIn("Stage 0 OK", message)
+
+    def test_a_failed_install_step(self):
+        code, message = install.verdict(0, "…\nInstallation step failed\n…", 2)
+        self.assertEqual(code, 1)
+        self.assertIn("failed step", message)
+
+    def test_a_kernel_panic(self):
+        code, _ = install.verdict(
+            0, "Kernel panic - not syncing: Too many boot env vars", 2)
+        self.assertEqual(code, 1)
+
+    def test_one_fetch_means_the_installer_never_asked(self):
+        code, message = install.verdict(0, "", 1)
+        self.assertEqual(code, 1)
+        self.assertIn("never fetched", message)
+
+    def test_qemu_failing_is_a_precondition_not_a_stage_failure(self):
+        # qemu exits 0 for a guest that panics under -no-reboot, so a nonzero
+        # status here is the emulator itself failing: the harness did not run.
+        code, message = install.verdict(1, "", 0)
+        self.assertEqual(code, 2)
+        self.assertIn("qemu exited 1", message)
+
+    def test_qemu_failing_is_reported_before_the_fetch_count(self):
+        # The exact misdiagnosis. With qemu dead, the fetch count is 1 (the
+        # host probe only) and the serial log is empty or stale -- so every
+        # later check has a story to tell, and all of them are wrong.
+        code, message = install.verdict(1, "Installation step failed", 1)
+        self.assertEqual(code, 2, "a dead qemu was diagnosed as something else")
+        self.assertIn("qemu", message)
+        self.assertNotIn("fetch", message)

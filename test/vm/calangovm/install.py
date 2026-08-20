@@ -210,6 +210,38 @@ def make_server(store: Path, port: int, fetches: list) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
+def verdict(qemu_rc: int, serial_text: str, fetches: int) -> tuple[int, str]:
+    """What Stage 0's outcome was, decided in one place and testable without qemu.
+
+    The ORDER is the point. install.sh ran under `set -e`, so a qemu that failed
+    to start aborted the stage there and said so. The first port dropped
+    `run_qemu`'s status and went straight to the serial log, which meant a qemu
+    that never ran -- /dev/kvm busy, the disk locked, a bad argument -- was
+    diagnosed by the fetch counter as "the installer never fetched it", sending
+    someone after a networking problem that does not exist.
+
+    qemu's own status is therefore asked first: if the emulator did not run,
+    nothing downstream of it means anything. Note `-no-reboot` makes qemu exit 0
+    for a guest that panics, so a nonzero status here really is qemu itself
+    failing, which is why it maps to a precondition rather than to a stage
+    failure.
+    """
+    if qemu_rc != 0:
+        return 2, (f"qemu exited {qemu_rc} -- the installer never ran. Check "
+                   f"/dev/kvm, and that nothing else holds the disk image.")
+    if "Installation step failed" in serial_text or "Kernel panic" in serial_text:
+        return 1, "the installer stopped at a failed step"
+    # Two fetches are expected: the host probe, then the installer's. One means
+    # the installer never fetched it. The host cannot tell them apart by
+    # address -- slirp presents the guest as 127.0.0.1, the same as a local
+    # probe -- so the count is the whole evidence. install.sh only PRINTED this
+    # number; here it is an assertion.
+    if fetches < 2:
+        return 1, (f"{fetches} preseed fetch(es) logged; the installer never "
+                   "fetched it")
+    return 0, f"Stage 0 OK: {fetches} preseed fetches logged"
+
+
 def install(cfg: Config) -> int:
     qemu.require_no_running_vm(cfg)
     cfg.dir.mkdir(parents=True, exist_ok=True)
@@ -250,7 +282,13 @@ def install(cfg: Config) -> int:
         # 10.0.2.2 is the host as seen through qemu's user-mode networking.
         append = (f"auto=true url=http://10.0.2.2:{cfg.http_port}/preseed.cfg"
                   " console=ttyS0,115200n8 --- console=ttyS0,115200n8")
-        qemu.run_qemu(cfg, [
+        # Never diagnose this run from the previous run's log. qemu creates
+        # the file when it opens the serial device, so a qemu that dies before
+        # that -- a bad argument, a held disk -- leaves the old one in place,
+        # and every marker read out of it belongs to a different install.
+        serial.unlink(missing_ok=True)
+
+        rc = qemu.run_qemu(cfg, [
             "-kernel", str(vmlinuz), "-initrd", str(preseeded),
             "-append", append,
             "-display", "egl-headless,gl=on",
@@ -259,19 +297,18 @@ def install(cfg: Config) -> int:
     finally:
         httpd.shutdown()
 
-    text = serial.read_bytes().decode("utf-8", "replace")
-    if "Installation step failed" in text or "Kernel panic" in text:
-        print(f"STAGE 0 FAILED -- see {serial}", file=sys.stderr)
-        return 1
+    if rc == 0 and not serial.is_file():
+        raise Precondition(
+            f"qemu exited 0 but wrote no serial log at {serial}")
 
-    # Two fetches are expected: the host probe above, then the installer's. One
-    # means the installer never fetched it. The host cannot tell them apart by
-    # address -- slirp presents the guest as 127.0.0.1, the same as a local
-    # probe -- so the count is the whole evidence. install.sh only PRINTED this
-    # number; here it is an assertion.
-    if len(fetches) < 2:
-        print(f"STAGE 0 FAILED -- {len(fetches)} preseed fetch(es) logged; the "
-              "installer never fetched it", file=sys.stderr)
-        return 1
-    print(f"Stage 0 OK: {len(fetches)} preseed fetches logged")
+    text = serial.read_bytes().decode("utf-8", "replace") if serial.is_file() else ""
+    code, message = verdict(rc, text, len(fetches))
+    if code == 0:
+        print(message)
+        return 0
+    print(f"STAGE 0 FAILED -- {message}", file=sys.stderr)
+    print(f"  see {serial}", file=sys.stderr)
+    if code == 2:
+        raise Precondition(message)
+    return code
     return 0
