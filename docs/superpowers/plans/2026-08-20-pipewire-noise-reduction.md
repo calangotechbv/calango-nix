@@ -775,7 +775,8 @@ pw-dump > /tmp/nr-dump.json
 /usr/bin/grep -oE '"(rn|gate):[^"]*"' /tmp/nr-dump.json | sort -u
 ```
 
-Expected exactly nine lines: the eight controls plus `"gate:Level"`, which is a read-out rather than a control.
+Expected exactly **ten** lines. This step first said nine, and nine was wrong —
+measured, the list is:
 
 ```
 "gate:Attack (s)"
@@ -784,12 +785,24 @@ Expected exactly nine lines: the eight controls plus `"gate:Level"`, which is a 
 "gate:Level"
 "gate:Open Threshold"
 "gate:Release (s)"
+"rn:Placeholder"
 "rn:Retroactive VAD Grace (ms)"
 "rn:VAD Grace Period (ms)"
 "rn:VAD Threshold (%)"
 ```
 
-A missing name here means the config set a control PipeWire ignored — which the Task 2 guard should have caught at build time. If it did not, the guard has a hole and that is more important than this task.
+`"rn:Placeholder"` is the one this step did not predict. RNNoise exposes a
+control port of that name which the config never sets and which does nothing;
+`strings` finds the token once in `librnnoise_ladspa.so`. It is harmless, and
+the point of recording it is that the number was written down before anyone
+ran the command.
+
+So the arithmetic is: RNNoise exposes **four** names and `noisegate` exposes
+**six** (five controls plus `gate:Level`, a read-out rather than a control).
+Neither number is the guard's **six**, which counts what the config *sets*.
+Three different questions, three different numbers; do not reconcile them.
+
+A missing name here means the config set a control PipeWire ignored — which the Task 2 guard should have caught at build time. If it did not, the guard has a hole and that is more important than this task. Nothing was missing: all nine predicted names are present, so the guard has no hole.
 
 - [ ] **Step 4: The loop guard is in place**
 
