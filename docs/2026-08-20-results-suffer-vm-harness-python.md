@@ -335,9 +335,34 @@ The property is asserted by content now: the two markers plus
 `parents[2]` (11), the exact pre-fix log line (1), counting every `GET` (1),
 `_prepare_boot`'s guard (2), `boot_detached`'s socket check (1).
 
-**Not verified against a live VM.** `final_pass`'s boot step now goes through
-`boot_detached`, and that path has not run against qemu — a VM was holding the
-disk. The next `final-pass` is what closes it.
+### The pass on the fixed tree — and the timestamps, read back
+
+`5c9efa1` GREEN on a fresh disk, 16:54:02Z to 17:10:00Z — **15m58s**, six
+stages, zero failures, Gate A reading `active` / **3** / **1** / **12**. Zero
+commits and zero modified files during it.
+
+This one carries evidence the earlier passes could not produce, because the
+thing it proves had been deleted from the log:
+
+```
+127.0.0.1 - - [20/Aug/2026 13:54:04] "GET /preseed.cfg HTTP/1.1" 200 -
+127.0.0.1 - - [20/Aug/2026 13:54:29] "GET /preseed.cfg HTTP/1.1" 200 -
+```
+
+Twenty-five seconds apart: the host's own reachability probe, then the
+installer's fetch from inside the guest. The addresses are identical — slirp
+presents the guest as `127.0.0.1` — so before this fix those two lines differed
+in nothing at all, and the count was the entire record. A sequence is visible
+here now.
+
+`boot_detached` ran, which is the other fix's live half: it returned two seconds
+after qemu started (16:56:29Z → 16:56:31Z), the console socket having appeared,
+and every stage after it drove that console. The guard `final_pass`'s deleted
+copy had lacked is now in the path this evidence came from. `install-serial.log`
+carries this run's own mtime, 13:56:29 local, as the previous pass's did.
+
+**Still not executed: `boot()`'s own `exec_qemu`,** for the reason above — no
+pass invokes it and no test can.
 
 ## What is not verified
 - **Stage 0's fidelity to the document.** `RUNBOOK.md` tells the reader to serve
