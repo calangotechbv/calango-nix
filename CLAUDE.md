@@ -104,14 +104,18 @@ they run on every generation build — strictly more often than
 Enumerate them the same way, by syntax: `grep -n 'home.packages' home/*.nix`,
 then read what each list contains. An earlier version of this passage said
 "two", naming only `home/gui-apps.nix`'s `wrappedGuiApps` and
-`dbusActivatableGuiApps`; `home/audio.nix:385` also puts `pulseaudioClients`
-there, and *that derivation's own body* carries three `exit 1` guards — a
-number that needs its own command, because the file around it has nine:
+`dbusActivatableGuiApps`; `home/audio.nix:583` also puts `pulseaudioClients`
+there, and, as of spec 21, a sibling in the same list —
+`noiseCancelingGuard`, the build-time check that every LADSPA plugin and
+control name `pipewire/50-noise-canceling-source.conf` hands a library
+actually exists in it. *`pulseaudioClients`' own body* carries three `exit 1`
+guards — a number that needs its own command, because the file around it now
+has thirteen, not nine, the difference being `noiseCancelingGuard`'s own four:
 
 ```sh
-grep -c 'exit 1' home/audio.nix
-# 9   -- the whole file, a different thing
-sed -n "/pulseaudioClients = pkgs.runCommand/,/^  '';$/p" home/audio.nix | grep -c 'exit 1'
+/usr/bin/grep -c 'exit 1' home/audio.nix
+# 13  -- the whole file, a different thing
+sed -n "/pulseaudioClients = pkgs.runCommand/,/^  '';$/p" home/audio.nix | /usr/bin/grep -c 'exit 1'
 # 3   -- inside pulseaudioClients, which is what the claim is about
 ```
 
@@ -637,6 +641,68 @@ drawn is "these tests cannot fail" when the truth is the mutation never ran.
 Same shape as a `grep` returning 0 for a pattern it cannot express: the reading
 and "the property holds" are indistinguishable. Clear `__pycache__`, not `-B`.
 
+**A `plugin` field in a PipeWire filter-chain config is not a path.** PipeWire
+appends `.so` and looks the result up in a directory list, so an absolute
+/nix/store path is refused outright:
+
+    failed to load plugin '/nix/store/.../librnnoise_ladspa' in
+    '/usr/lib64/ladspa:/usr/lib/ladspa:/nix/store/...-pipewire-1.6.6/lib'
+
+None of those three is a directory this flake controls, so the search path
+itself must be set -- LADSPA_PATH, in the unit's own drop-in. That is the
+OPPOSITE of the fix for `ExecStart=fumon`, where an absolute path was the
+answer. LADSPA_PATH takes several directories and tries each in turn; the miss
+is harmless and logs at debug level. Met building spec 21's noise-canceling
+source.
+
+**A name-existence guard cannot detect a filter that loads, runs, and emits
+silence.** `home/audio.nix`'s `noiseCancelingGuard` checks that every plugin
+and control name `pipewire/50-noise-canceling-source.conf` hands a library
+actually exists in that library — and every name in spec 21's first shipped
+config did exist. The config still made the microphone permanently silent,
+because PipeWire's builtin `noisegate` loads its `Level` port as an INPUT
+control with a fixed, unwritable range:
+
+```
+using port 2 ('Level') as control 0 nan/0.000000/0.000000
+using port 3 ('Open Threshold') as control 1 0.040000/0.000000/1.000000
+loaded n_input:1 n_output:1 n_control:6 n_notify:0
+```
+
+`n_notify:0` means the plugin declares no output control at all, so `Level` —
+the value the gate compares against its threshold — can only ever read 0. Any
+Open Threshold above 0 holds the gate shut forever. Every name the guard
+checked resolved; the guard's declared scope (do these names exist) was
+narrower than the property anyone actually cared about (does audio come out).
+No automated check caught it, and the build was green throughout. **A person
+found it by listening.** The recording that started the investigation was
+5267500 bytes holding one distinct byte value, `0x00`, across 27.4 seconds.
+See spec 21's results document for the full trace.
+
+**Whole-file rms over raw interleaved samples is not a level, on this
+laptop.** Three reasons, all measured during spec 21's noise-canceling-source
+work: this machine's capture carries a DC offset around -11774 on the louder
+channel, and rms includes DC; `pw-record`'s first 100 ms block held a 22283
+startup transient that alone dominates a ten-second average; and a stereo
+capture is two interleaved channels, read as one flat array. The contradiction,
+same file:
+
+```
+mic-laptop-mic1.wav   whole-file rms: 8903
+mic-laptop-mic1.wav   per-100ms AC blocks, transient dropped: 54 to 400, median 179 (-45.2 dB)
+```
+
+The replacement: de-interleave, take the louder channel by AC energy, remove
+DC, rms per 100 ms block, drop the first three blocks, report percentiles in
+dB — what a gate's envelope detector actually sees. The flawed instrument
+produced a confident, twice-stated wrong conclusion: a working Bluetooth
+headset microphone was declared dead, in both Bluetooth audio profiles, and a
+card profile was switched back and forth chasing a fault that did not exist.
+Corrected, the same microphone reads a 20.7 dB median speech-to-room
+separation. Ask whether the number being read is what the downstream consumer
+— here, a gate's own envelope detector — actually sees, not a well-known
+summary statistic computed over the raw samples.
+
 ---
 
 ## Mechanisms that are not what they look like
@@ -671,11 +737,29 @@ store path.
 store copy (`home/portals.nix:213`) and `hyprland-portals.conf` (`:166`) is read
 by the frontend at startup, so editing that config restarts nothing and the
 change does not take effect. Unfixed on purpose: the clean shape is a drop-in
-carrying `X-Restart-Triggers`, and **whether sd-switch diffs drop-ins as well as
-fragments has not been measured here** — verify that before relying on it. The
-rest of the tree is clean: `night-light.service` names `quickshellConfig` in its
-own `ExecStart`, the audio drop-ins carry their store paths, and `home/foot.nix`
-and `home/lf.nix` back no unit.
+carrying `X-Restart-Triggers`. This passage used to say whether sd-switch diffs
+drop-ins as well as fragments **had not been measured here** — spec 21 measured
+it, on `filter-chain.service.d`:
+
+```
+T0 = Mon 2026-08-17 15:27:44 -03   baseline, three days old
+T1 = Thu 2026-08-20 15:19:54 -03   first switch (drop-in was new; restart expected either way)
+T2 = Thu 2026-08-20 15:19:54 -03   CONTROL: a switch changing nothing -> NO restart
+T3 = Thu 2026-08-20 15:20:30 -03   content-only change -> RESTART
+T4 = Thu 2026-08-20 15:21:31 -03   probe removed -> RESTART again
+```
+
+**Answer: sd-switch DOES diff drop-ins.** The control (T2 == T1, no restart for
+a no-op switch) is what makes this an answer rather than an observation;
+without it, "the timestamp moved" could just be what every switch does
+regardless of content. A fifth confirmation arrived later, from an unrelated
+switch: the unit restarted again at 16:21:03 when only the drop-in's content
+had changed. So a drop-in carrying `X-Restart-Triggers` is now a proven
+mechanism, and the fix for `xdg-desktop-portal.service` named above is exactly
+that shape — no longer blocked on an unmeasured question. The rest of the tree is
+clean: `night-light.service` names `quickshellConfig` in its own `ExecStart`,
+the audio drop-ins carry their store paths, and `home/foot.nix` and
+`home/lf.nix` back no unit.
 
 Note `NRestarts=0` after such a switch is not evidence against a restart —
 sd-switch stops and starts the unit, and a fresh start resets that counter.
