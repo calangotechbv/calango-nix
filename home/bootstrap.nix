@@ -411,6 +411,21 @@ in
       default = [ ];
       description = "Unix groups the desktop account must hold.";
     };
+    # Groups a CORP PACKAGE creates, so they cannot be added in Stage A.
+    #
+    # Split from `groups` rather than merged into it because the two are added
+    # at different stages and one usermod cannot serve both: Stage A runs
+    # `usermod -aG @groupsComma@` before Stage C installs anything, and
+    # docker-ce's postinst is what creates the docker group. A name put in
+    # `groups` instead fails Stage A on a machine that has never had docker.
+    #
+    # Same shape as aptSourcesTransient, which splits the sources by the stage
+    # that acts on them rather than by what they are.
+    groupsFromCorp = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      description = "Group -> which corp package creates it. Added in Stage C.";
+    };
     # The URL Stage B clones. HTTPS, not the ssh remote, and that is an ordering
     # fact rather than a preference: a bare machine has no ssh key and no agent,
     # and this project's keys live in 1Password's agent, which Stage C installs
@@ -465,6 +480,12 @@ in
     # unnecessary: `id` on the working account shows video, input and nix-users
     # and no render.
     groups = [ "nix-users" "video" "input" ];
+
+    # Added in Stage C, not Stage A, and the reason is an ordering fact rather
+    # than a preference. See the option's own comment above.
+    groupsFromCorp = {
+      docker = "docker-ce's postinst creates this group, so Stage A -- which runs before Stage C installs docker-ce -- cannot add it. Membership is write access to /var/run/docker.sock, which is srw-rw---- root:docker, and so is root-equivalent.";
+    };
 
     # SCAFFOLDING, not state. Named calango-bootstrap-* so they are unambiguous
     # to delete once the vendor packages own their own copies -- the same trick
@@ -621,6 +642,29 @@ in
       '';
     }
     {
+      # A name in both lists renders two usermod lines and hides which stage
+      # owns the group. Same shape as home/deb.nix's keep/ban disjointness.
+      #
+      # What this does NOT do: nothing at build time knows which groups a bare
+      # Debian machine has, so this cannot stop someone putting `docker` in
+      # `groups` alone -- which is the failure the split exists to prevent.
+      # ./test/vm/vm final-pass is the check for that.
+      assertion =
+        lib.intersectLists cfg.groups (builtins.attrNames cfg.groupsFromCorp) == [ ];
+      message = ''
+        calango.bootstrap.groups and calango.bootstrap.groupsFromCorp name the
+        same group:
+
+          groups         : ${lib.concatStringsSep " " cfg.groups}
+          groupsFromCorp : ${lib.concatStringsSep " " (builtins.attrNames cfg.groupsFromCorp)}
+
+        A group belongs to exactly one stage. Stage A adds `groups` before any
+        corp package exists; Stage C adds `groupsFromCorp` after. A name in
+        both renders two usermod lines and leaves it ambiguous which stage is
+        responsible.
+      '';
+    }
+    {
       # Vacuity anchor. An empty declaration makes the file check below compare
       # the live file against nothing and report agreement.
       assertion = cfg.greetdConfig != "";
@@ -756,7 +800,7 @@ in
         # this group list collides today, and that is not the reason to rely
         # on it.
         have=$(${pkgs.coreutils}/bin/id -nG | ${pkgs.coreutils}/bin/tr " " "\n")
-        for g in ${lib.concatStringsSep " " cfg.groups}; do
+        for g in ${lib.concatStringsSep " " (cfg.groups ++ builtins.attrNames cfg.groupsFromCorp)}; do
           if ! echo "$have" | "$G" -qx "$g"; then
             echo "bootstrap: not in group $g." >&2
             echo "  sudo usermod -aG $g ${config.home.username}   # next login" >&2
