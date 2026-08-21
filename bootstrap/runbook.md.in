@@ -354,21 +354,7 @@ sudo apt update
 
 @aptTransientTable@
 
-**Now add the group that only exists once its package is installed.** Stage A
-added the groups a fresh Debian machine already has. This one is created by a
-corp package's own `postinst`, so it could not have been added there — a
-`usermod` naming a group that does not exist fails, and Stage A would have
-stopped before installing anything.
-
-```sh
-sudo usermod -aG @groupsFromCorpComma@ <user>
-```
-
-@groupsFromCorpTable@
-
-The membership takes effect at the **next login**, so `docker ps` in this shell
-still fails with a permission error until then. `id -nG <user>` reads the new
-group immediately; `id -nG` alone reads the current session's, which is stale.
+@groupsFromCorpSection@
 
 **The other files stay, and deleting them would be a mistake.** Removing them
 leaves the package installed with no candidate version at all, the same position
@@ -496,12 +482,12 @@ dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop   # ii calan
 apt-get -s autoremove | grep -c '^Remv '                              # 0
 test -f /usr/share/wayland-sessions/hyprland-nix.desktop && echo present
 cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml" && echo greetd-ok
-id -nG <user> | tr ' ' '\n' | grep -cx @groupsFromCorpGrepArgs@       # @groupsFromCorpCount@
+@groupsFromCorpGateLine@
 ```
 
 The last line reads the group database rather than this shell's session, so it
-shows the membership the `usermod` above added even though `docker ps` will not
-work until the next login.
+shows the membership the Stage C `usermod` added, even though the login that
+makes it usable has not happened.
 
 ---
 

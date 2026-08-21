@@ -239,25 +239,55 @@ let
     "@groupsComma@" = lib.concatStringsSep "," cfg.groups;
     "@groupsGrepArgs@" = lib.concatStringsSep " " (map (g: "-e ${g}") cfg.groups);
     "@groupsCount@" = toString (builtins.length cfg.groups);
-    # Rendered into Stage C, not Stage A. An empty groupsFromCorp must produce
-    # NO usermod line at all: `usermod -aG  <user>` with an empty list fails,
-    # and it would fail on every machine rather than on a misconfigured one.
-    "@groupsFromCorpComma@" = lib.concatStringsSep "," (
-      builtins.attrNames cfg.groupsFromCorp
-    );
-    "@groupsFromCorpTable@" =
-      "| group | why it is added here and not in Stage A |\n|---|---|\n"
-      + reasonTable cfg.groupsFromCorp;
-    # Gate C's own check, the same shape Gate A uses for `groups`. Written as
-    # grep args rather than as a name so the gate cannot fall behind the
-    # declaration -- a gate naming `docker` by hand would keep passing after
-    # the option changed.
-    "@groupsFromCorpGrepArgs@" = lib.concatStringsSep " " (
-      map (g: "-e ${g}") (builtins.attrNames cfg.groupsFromCorp)
-    );
-    "@groupsFromCorpCount@" = toString (
-      builtins.length (builtins.attrNames cfg.groupsFromCorp)
-    );
+    # WHOLE BLOCKS, not the pieces to build them from, and that is the whole
+    # point of these two tokens.
+    #
+    # The first draft substituted a comma-joined list and a grep-args list
+    # separately, and an empty groupsFromCorp then rendered
+    #
+    #   sudo usermod -aG  <user>
+    #   id -nG <user> | tr ' ' '\n' | grep -cx        # 0
+    #
+    # -- two commands that FAIL rather than do nothing, on every machine
+    # rather than on a misconfigured one. Measured against a build with the
+    # set emptied. A piece-wise token cannot express "and if there is nothing,
+    # say nothing"; a block-wise one can, so the emptiness is decided here in
+    # Nix and never in the rendered markdown.
+    #
+    # Gate C's line is written as grep args rather than as a name so the gate
+    # cannot fall behind the declaration -- a gate naming `docker` by hand
+    # would keep passing after the option changed.
+    "@groupsFromCorpSection@" =
+      if cfg.groupsFromCorp == { } then
+        ""
+      else
+        ''
+          **Now add the group that only exists once its package is installed.**
+          Stage A added the groups a fresh Debian machine already has. This one is
+          created by a corp package's own `postinst`, so it could not have been
+          added there — a `usermod` naming a group that does not exist fails, and
+          Stage A would have stopped before installing anything.
+
+          ```sh
+          sudo usermod -aG ${lib.concatStringsSep "," (builtins.attrNames cfg.groupsFromCorp)} <user>
+          ```
+
+          | group | why it is added here and not in Stage A |
+          |---|---|
+          ${reasonTable cfg.groupsFromCorp}
+          The membership takes effect at the **next login**, so a command needing
+          it still fails with a permission error in this shell. `id -nG <user>`
+          reads the new group immediately, because it reads the group database
+          rather than this session; `id -nG` alone reads the session's, which is
+          stale.
+        '';
+    "@groupsFromCorpGateLine@" =
+      if cfg.groupsFromCorp == { } then
+        ""
+      else
+        "id -nG <user> | tr ' ' '\\n' | grep -cx ${
+          lib.concatStringsSep " " (map (g: "-e ${g}") (builtins.attrNames cfg.groupsFromCorp))
+        }   # ${toString (builtins.length (builtins.attrNames cfg.groupsFromCorp))}";
     "@repoUrl@" = cfg.repoUrl;
     "@aptTransientFiles@" = lib.concatStringsSep " " (
       builtins.attrNames cfg.aptSourcesTransient
