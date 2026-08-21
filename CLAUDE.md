@@ -1,11 +1,13 @@
 # calango-nix
 
 A Hyprland desktop on Debian 13 (`suffer`), migrating from apt to Nix +
-standalone Home Manager. Twenty specs are done and written up in
+standalone Home Manager. Twenty-two specs are done and written up in
 `docs/*results-suffer-*.md`, with every defect and its owner. Count
 that number, never increment it: `ls -1 docs/*results-suffer-*.md | wc -l` is
 the authority, and spec 10 landed here saying "Nine" because eight had been
-incremented once and spec 9 had never bumped it at all. Note the glob here was
+incremented once and spec 9 had never bumped it at all. It happened again,
+twice over: this sentence read "Twenty" while the authority read 22, because
+spec 21 did not bump it and spec 22 found it two behind. Run the command. Note the glob here was
 `docs/2026-08-1*-...` until spec 17 widened it: it happened to match every file
 so far and would have silently stopped on the 20th of any month, reporting a
 count that only looked stable. This
