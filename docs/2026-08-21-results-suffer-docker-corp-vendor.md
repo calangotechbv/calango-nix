@@ -170,22 +170,42 @@ reads as a missing binary and is a missing path.
 
 ## Open
 
-**`fresh-editor` is an orphan as of this install, and the decision was not
-taken.** 0.273 held it through `Depends`; 0.389 does not, because it left the
-keep set on 2026-08-19. It is still `ii 0.4.7-1`, it is `auto`, it has zero
-installed reverse dependencies, and `apt-get -s autoremove` proposes removing
-it:
+**`fresh-editor` is an orphan as of this install. The decision is taken —
+remove it — and the removal has NOT happened yet.** 0.273 held it through
+`Depends`; 0.389 does not, because it left the keep set on 2026-08-19. As of
+this writing it is still `ii 0.4.7-1`, still `auto`, with zero installed
+reverse dependencies:
 
 ```sh
 apt-get -s autoremove | grep '^Remv '
-# Remv fresh-editor [0.4.7-1]
+# Remv fresh-editor [0.4.7-1]        -- exactly one package, no cascade
+tail -4 /var/log/apt/history.log
+# Commandline: apt install …calango-desktop_0.389_all.deb
+# End-Date: 2026-08-21  14:33:24     -- and nothing after it
 ```
 
-Nothing removes it until someone runs `apt autoremove`. `sudo apt-mark manual
-fresh-editor` keeps it; doing nothing lets the next `autoremove` take it. This
-is exactly the shape CLAUDE.md's most expensive entry describes — an unmarked
-orphan goes at some later sweep, where the breakage gets attributed to whatever
-changed most recently. Recorded here rather than resolved silently.
+The outstanding command is `sudo apt autoremove`, which proposes that one
+package and nothing else. What to expect afterwards, stated in advance so it
+can be wrong: `fresh-editor` ships no conffiles and its only
+`/var/lib/dpkg/info/` entries are `.list` and `.md5sums` — no `postrm` — so by
+spec 15's finding it should go to **`un`, not `rc`**, leaving the `rc` count at
+**151**. It ships no systemd user unit either, so the `/etc/systemd/user`
+dangling census stays at `0`. Verify with:
+
+```sh
+dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' fresh-editor
+apt-get -s autoremove | grep -c '^Remv '                        # 0
+dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' | awk '$1=="rc"' | wc -l
+find /etc/systemd/user -xtype l | wc -l                         # 0
+```
+
+Note 151 rather than the 150 CLAUDE.md quotes: that figure has drifted since
+spec 15, which is the reason that entry says to count it.
+
+This whole item is the shape CLAUDE.md's most expensive entry describes — an
+unmarked orphan goes at some later sweep, where the breakage gets attributed to
+whatever changed most recently. It is written down here, with its decision and
+its pending state, rather than left to be discovered.
 
 **Gate D's last two lines still need a login at tuigreet.** The rehearsal's own
 closing line says so; a green `final-pass` means Stage 0 through Stage D, and
