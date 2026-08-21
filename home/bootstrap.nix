@@ -574,6 +574,17 @@ in
       "1password" = "https://downloads.1password.com/linux/debian/amd64 -- calango-bootstrap-1password.sources";
       "1password-cli" = "The same repository as 1password. These two share one, which is why there are four repositories and not five.";
       endpoint-verification = "https://packages.cloud.google.com/apt -- calango-bootstrap-google-cloud.sources. Corporate enrolment is a separate, human step.";
+      # Six names, not one. `apt install docker-ce` alone would pull the rest --
+      # docker-ce Depends containerd.io and docker-ce-cli, docker-ce-cli
+      # Recommends the two plugins -- but this list is also read by a person
+      # deciding what the machine is meant to have, and a Recommends is not a
+      # promise.
+      docker-ce = "https://download.docker.com/linux/debian -- calango-bootstrap-docker.sources. The daemon. dockerd runs from /usr/lib/systemd/system/docker.service, a system unit, so this can never move to Nix -- the bluez and rtkit reason.";
+      docker-ce-cli = "The same repository as docker-ce. The client; a Depends of docker-ce.";
+      "containerd.io" = "The same repository as docker-ce. The container runtime; a Depends of docker-ce.";
+      docker-buildx-plugin = "The same repository as docker-ce. Reaches the machine only as a Recommends of docker-ce-cli, which is why it is named here.";
+      docker-compose-plugin = "The same repository as docker-ce. Also only a Recommends of docker-ce-cli.";
+      docker-ce-rootless-extras = "The same repository as docker-ce. A Recommends of docker-ce, and auto on suffer. Named here because it is installed, not because rootless mode is configured -- it is not, and dockerd runs as a root system service.";
       slack-desktop = "NO repository. apt-cache policy shows one version-table entry, /var/lib/dpkg/status. Ask Slack's own feed for the version, as the block above does -- bin/slack-latest is a template in the clone and its substituted copy does not exist until Stage D.";
     };
   };

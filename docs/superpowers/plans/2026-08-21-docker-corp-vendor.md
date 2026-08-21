@@ -52,7 +52,7 @@
 - Consumes: the `stanza` function at `home/bootstrap.nix:88`, signature `{ uris, suites, key, components ? "main", architectures ? "amd64" }`, and `keyFile` at `:85`, which reads `bootstrap/keys/<name>.asc`.
 - Produces: a rendered file `etc/apt/sources.list.d/calango-bootstrap-docker.sources` inside `.#calangoBootstrap`, which Task 2's runbook text and Task 7's verification both depend on.
 
-- [ ] **Step 1: Run the existing source test and record the current number**
+- [x] **Step 1: Run the existing source test and record the current number**
 
 ```bash
 B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
@@ -61,7 +61,7 @@ B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 
 Expected: `validating 4 source(s)` and `all 4 source(s) verified`. This is the pre-change reading. Record it; Task 1 is done when it reads 5.
 
-- [ ] **Step 2: Fetch the key and record its fingerprint**
+- [x] **Step 2: Fetch the key and record its fingerprint**
 
 ```bash
 curl -fsSL https://download.docker.com/linux/debian/gpg -o bootstrap/keys/docker.asc
@@ -86,7 +86,7 @@ head -1 bootstrap/keys/docker.asc
 
 Expected: `-----BEGIN PGP PUBLIC KEY BLOCK-----`
 
-- [ ] **Step 3: Add the source entry**
+- [x] **Step 3: Add the source entry**
 
 In `home/bootstrap.nix`, inside `config.calango.bootstrap.aptSources`, after the `calango-bootstrap-google-cloud.sources` entry:
 
@@ -114,7 +114,7 @@ In `home/bootstrap.nix`, inside `config.calango.bootstrap.aptSources`, after the
       };
 ```
 
-- [ ] **Step 4: Track the new files, then build and run the test**
+- [x] **Step 4: Track the new files, then build and run the test**
 
 ```bash
 git add bootstrap/keys/docker.asc bootstrap/keys/docker.fpr
@@ -124,7 +124,7 @@ B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 
 Expected: `validating 5 source(s)`, a line `ok   calango-bootstrap-docker.sources`, and `all 5 source(s) verified`.
 
-- [ ] **Step 5: Read the rendered file and confirm the four fields**
+- [x] **Step 5: Read the rendered file and confirm the four fields**
 
 ```bash
 sed -n '1,6p' "$B/etc/apt/sources.list.d/calango-bootstrap-docker.sources"
@@ -141,14 +141,14 @@ Architectures: amd64
 Signed-By:
 ```
 
-- [ ] **Step 6: Commit, before the mutation**
+- [x] **Step 6: Commit, before the mutation**
 
 ```bash
 git add bootstrap/keys/docker.asc bootstrap/keys/docker.fpr home/bootstrap.nix
 git commit -m "bootstrap: docker's repository, declared as the fifth vendor source"
 ```
 
-- [ ] **Step 7: Prove the test can fail — mutate the suite**
+- [x] **Step 7: Prove the test can fail — mutate the suite**
 
 ```bash
 sed -i 's/suites = "trixie";/suites = "bookworm-nonesuch";/' home/bootstrap.nix
@@ -164,7 +164,7 @@ B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 
 Expected: `FAIL calango-bootstrap-docker.sources`, an apt log naming the missing release, and a non-zero exit.
 
-- [ ] **Step 8: Revert the mutation and confirm the revert**
+- [x] **Step 8: Revert the mutation and confirm the revert**
 
 ```bash
 git restore --worktree home/bootstrap.nix
@@ -248,11 +248,7 @@ sudo apt install -y 1password 1password-cli code containerd.io docker-buildx-plu
 
 The `#= ` line must match the runbook **verbatim**; the line below it is the harness's own version and carries `-y` and a `tail`.
 
-Raise the timeout above that block. It currently reads `#T 3000` before the debconf step and `#T 300` after the apt install; six more packages, about 386 MB, need more than 300 seconds on a slow link:
-
-```
-#T 900
-```
+**Change no timeout.** An earlier draft of this step said to raise the `#T 300` below the apt install, on the reading that it applied to the block above it. It does not: `test/vm/calangovm/driver.py:24-36` sets the timeout for every block **after** the directive, so `#T 3000` already governs this apt install and `#T 300` governs the `rm` that follows. 3000 seconds is ample for six more packages.
 
 - [ ] **Step 6: Build and confirm the check passes**
 
