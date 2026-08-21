@@ -506,6 +506,28 @@ in
         suites = "endpoint-verification";
         key = "google-cloud";
       };
+      # Docker's repository has no `stable` SUITE -- its suites are Debian
+      # codenames -- and `stable` is the COMPONENT. So these two fields read
+      # inverted against every other source here, and are not. A reader who
+      # "fixes" them gets a repository that does not exist.
+      #
+      # `trixie` is hard-coded because nothing in this flake declares a Debian
+      # release to derive it from; the release appears only in prose comments.
+      # The next Debian major edits this line. test/apt-sources.sh is what
+      # catches a stale one, and only when a person runs it.
+      #
+      # DURABLE, not transient. Measured 2026-08-21: no docker postinst writes
+      # a source file or a keyring, and none of the six packages ships a cron
+      # job -- the two ways a vendor recreates its own repository. So this file
+      # must never gain an aptSourcesTransient entry: deleting it would leave
+      # six installed packages with no candidate version, the position
+      # slack-desktop is in.
+      "calango-bootstrap-docker.sources" = stanza {
+        uris = "https://download.docker.com/linux/debian";
+        suites = "trixie";
+        components = "stable";
+        key = "docker";
+      };
     };
 
     # packages.base and calango.deb.keep answer DIFFERENT questions, which is
