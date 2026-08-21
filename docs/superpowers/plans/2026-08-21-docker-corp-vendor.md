@@ -795,18 +795,32 @@ B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 
 Expected: `all 5 source(s) verified`.
 
-- [ ] **Step 3: Answer the one unmeasured question**
+- [x] **Step 3: Answer the one unmeasured question — ANSWERED, and it needed no VM**
 
-The spec records that nobody has measured whether `usermod -aG a,b,nosuchgroup` adds `a` and `b` or refuses all three. Answer it in the VM, where a wrong answer costs nothing:
+The spec records that nobody had measured whether `usermod -aG a,b,nosuchgroup` adds `a` and `b` or refuses all three. It refuses all three. Measured 2026-08-21 against a scratch passwd/group tree, with no root and no real account touched:
 
 ```bash
-sudo groupadd -f probe1
-sudo usermod -aG probe1,nosuchgroup "$USER"; echo "exit=$?"
-id -nG "$USER" | tr ' ' '\n' | grep -cx probe1
-sudo groupdel probe1
+mkdir -p "$D/etc"
+printf 'probe:x:5000:5000::/home/probe:/bin/sh\n' > "$D/etc/passwd"
+printf 'probe:x:5000:\nalpha:x:5001:\nbeta:x:5002:\n'  > "$D/etc/group"
+printf 'probe:!:20000:0:99999:7:::\n'                  > "$D/etc/shadow"
+printf 'probe:!::\nalpha:!::\nbeta:!::\n'              > "$D/etc/gshadow"
+
+unshare -r /usr/sbin/usermod --root "$D" -aG alpha,beta,nosuchgroup probe
+# usermod: group 'nosuchgroup' does not exist        exit 6
+cat "$D/etc/group"
+# alpha:x:5001:      beta:x:5002:        <- neither gained the member
+
+# CONTROL, so the probe is not vacuous:
+unshare -r /usr/sbin/usermod --root "$D" -aG alpha,beta probe
+# exit 0
+cat "$D/etc/group"
+# alpha:x:5001:probe  beta:x:5002:probe
 ```
 
-Record both the exit status and the count. If the count is `1`, `usermod` applies what it can; if `0`, it refuses all. Write the answer into the results document and into the runbook's recovery wording if it differs from what the runbook implies.
+Two notes for anyone repeating it. `unshare -r usermod` fails with `No such file or directory`, exit 127, because `usermod` is in `/usr/sbin` and not on this user's `PATH` — that message reads as a missing binary and is a missing path. And the control is the half that makes this an answer: without it, "nothing was added" is equally consistent with the probe never having worked.
+
+The consequence is stronger than the spec assumed. `docker` in `groups` would leave Stage A having added **no group at all** — not `nix-users`, not `video`, not `input` — while the message names only `docker`. The measurement is recorded in the `groupsFromCorp` option's own comment.
 
 - [ ] **Step 4: The full VM rehearsal**
 

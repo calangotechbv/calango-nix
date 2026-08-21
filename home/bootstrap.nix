@@ -490,6 +490,24 @@ in
     #
     # Same shape as aptSourcesTransient, which splits the sources by the stage
     # that acts on them rather than by what they are.
+    #
+    # And the failure is ALL-OR-NOTHING, which is what makes this split
+    # necessary rather than tidy. usermod validates every name before it
+    # applies any of them. Measured 2026-08-21 against a scratch passwd/group
+    # tree, with `unshare -r usermod --root`, so no real account was touched:
+    #
+    #   usermod -aG alpha,beta,nosuchgroup probe
+    #   # usermod: group 'nosuchgroup' does not exist        exit 6
+    #   # etc/group afterwards: alpha and beta gained NOTHING
+    #
+    #   control, same command without the bogus name:
+    #   usermod -aG alpha,beta probe                          exit 0
+    #   # etc/group afterwards: alpha:x:5001:probe  beta:x:5002:probe
+    #
+    # So `docker` put in `groups` would leave Stage A having added no group at
+    # all -- not nix-users, not video, not input -- while the message names
+    # only docker. A partial application would at least be visible as a
+    # missing group; this is not.
     groupsFromCorp = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
