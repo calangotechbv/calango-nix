@@ -13,18 +13,32 @@
 #   DURABLE      /etc/greetd/config.toml, the group memberships. These must
 #                never drift, and the activation hook below watches them.
 #
-#   SCAFFOLDING  the apt sources in Task 2. They exist so that ONE apt install
-#                can succeed. Afterwards each vendor package writes its own
-#                copy from its own postinst -- Chrome's from cron -- so the
-#                files here COLLIDE with the vendor's own. That collision is an
-#                apt error rather than a warning -- two Signed-By values for one
-#                repository, an inline key here against a keyring path there --
-#                and apt then refuses to read the source list at all, so every
+#   TRANSIENT    SOME of the apt sources in Task 2 -- Chrome's and 1Password's.
+#                Each of those vendors writes its own copy from its own
+#                postinst, Chrome's from cron, naming a keyring under
+#                /usr/share/keyrings where the file here carries an inline key.
+#                apt treats one repository reached through two different
+#                Signed-By values as an ERROR rather than a duplicate warning,
+#                and then refuses to read the source list at all, so every
 #                later apt command fails. Measured on a bare Debian 13.6 in the
 #                spec 18 rehearsal, which is where this comment stopped saying
-#                "duplicate source apt warns about". The runbook deletes them
-#                immediately after the corp packages install, before anything
-#                else runs. Watching them forever would assert something false.
+#                "duplicate source apt warns about". The runbook deletes
+#                exactly those two, immediately after the corp packages
+#                install, before anything else runs.
+#
+#   DURABLE-BUT- the OTHER apt sources -- microsoft, google-cloud, docker.
+#   NOT-STATE    Nothing ever replaces them, so they stay: deleting one leaves
+#                its packages installed with no candidate version at all, the
+#                position slack-desktop is in. They are still not watched for
+#                drift, because they exist so apt can resolve a vendor rather
+#                than as a property of the machine -- watching them would
+#                assert something false.
+#
+# Which of the two a source is belongs in aptSourcesTransient, not in a
+# reader's memory of this comment. An earlier version of this passage said
+# "SCAFFOLDING" of all of them and said the runbook deleted them all, which was
+# true of two of the four and is now true of two of the five; the
+# aptSourcesTransient comment 400 lines below already contradicted it.
 { config, lib, pkgs, ... }:
 
 let

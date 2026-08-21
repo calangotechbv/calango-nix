@@ -1488,11 +1488,24 @@ for deliberate testing.
   is broken; what is given up is a build failure if a future nixpkgs bump drops
   the wrapper.
 - **`gcr4` cannot be removed either — it takes `gnome-keyring` with it.**
-  `apt-get -s remove gcr4` removes `gcr`, `gcr4`, `gnome-keyring`, `seahorse`,
-  `pinentry-gnome3` and `golang-docker-credential-helpers`; `gnome-keyring`
-  declares `Depends: gcr (>= 3.4)`. So `gcr-ssh-agent` can be **masked but
-  never uninstalled**, and a one-level `apt-cache rdepends` does not show this
-  — it reports only `gcr`, which looks discardable. Simulate the removal.
+  `gnome-keyring` declares `Depends: gcr (>= 3.4)`. So `gcr-ssh-agent` can be
+  **masked but never uninstalled**, and a one-level `apt-cache rdepends` does
+  not show this — it reports only `gcr`, which looks discardable. Simulate the
+  removal, and read the list rather than quoting this entry: it named `gcr`,
+  `gcr4`, `gnome-keyring`, `seahorse`, `pinentry-gnome3` and
+  `golang-docker-credential-helpers` for several specs, and both ends of that
+  list had drifted by 2026-08-21 — `seahorse` left apt in spec 13, and
+  `calango-desktop` joined, because the metapackage `Depends: gnome-keyring`.
+
+  ```sh
+  apt-get -s remove gcr4 | grep '^Remv '
+  # calango-desktop  golang-docker-credential-helpers  gnome-keyring
+  # pinentry-gnome3  gcr4  gcr                              -- measured 2026-08-21
+  ```
+
+  The metapackage in that list is the thing to notice: removing `gcr4` is now a
+  whole-keep-set operation by the route described further down, and nothing in
+  the command you typed says so.
 - **The ssh agent is `gcr-ssh-agent`; openssh's `ssh-agent.service` and
   `.socket` are masked in `home/services.nix`.** Debian enables both, and both
   set `SSH_AUTH_SOCK` from `ExecStartPost` with no ordering between them, so
@@ -1834,6 +1847,47 @@ for deliberate testing.
   pipewire's `data-loop.0` thread `SCHED_RR` priority 20 — measured under
   Nix's pipewire. It is `auto` and held by `calango-desktop`'s `Depends`, not
   by an `apt-mark` flag. Do not re-open this.
+- **`docker` cannot move to Nix either,** for that same architectural reason:
+  `dockerd` runs from `/usr/lib/systemd/system/docker.service` and
+  `containerd` from `/lib/systemd/system/containerd.service`, both *system*
+  units. None of the six docker packages ships a systemd **user** unit at all,
+  so the dangling `/etc/systemd/user/*.wants` residue trap does not apply to
+  them — a trap worth naming here precisely because every other apt removal in
+  this project has sprung it.
+
+  As of spec 22 docker is declared rather than merely present: a fifth vendor
+  source, six `packages.corp` entries, six `keep` entries, and the `docker`
+  group through `calango.bootstrap.groupsFromCorp` — a **second** group option,
+  because Stage A's `usermod` runs before `docker-ce`'s postinst creates that
+  group, so a name in `groups` would fail Stage A on a bare machine.
+
+  **`golang-docker-credential-helpers` is the member worth knowing about, and
+  it is not docker's.** It comes from `deb.debian.org/debian trixie/main`, so
+  it has a `keep` entry and deliberately no `packages.corp` entry — a `keep`
+  entry both installs and protects, because Stage D's metapackage install
+  resolves the new `Depends` from Debian's archive. It provides
+  `docker-credential-secretservice`, which `~/.docker/config.json` names as its
+  `credsStore` for a private registry, and:
+
+  ```sh
+  apt-cache rdepends --installed golang-docker-credential-helpers
+  # Reverse Depends:        <- empty; only the apt-mark flag held it
+  ```
+
+  Docker runs it as a subprocess during a login and never holds it open, so no
+  `/proc` walk and no `ps -eo args` union can see that it is needed **at any
+  instant** — the same species as `libpipewire-0.3-modules` above, and the
+  reason it is declared rather than left to a measurement. Its failure arrives
+  later, as a registry authentication error attributed to whatever changed most
+  recently.
+
+  Two things this declaration does not do. The suite in
+  `calango-bootstrap-docker.sources` is the codename `trixie`, hard-coded
+  because nothing in this flake declares a Debian release to derive it from, so
+  the next Debian major breaks it and only `test/apt-sources.sh` catches that —
+  when a person runs it. And `~/.docker/config.json` itself is owned by
+  nothing; the `keep` entry depends on a value in a file this flake does not
+  manage. See spec 22's "Future work: the unmanaged dotfiles".
 - `pulseaudio-utils` is gone; `pactl` comes from Nix through
   `home/audio.nix`'s `pulseaudioClients`, which withholds the daemon
   deliberately. Never add `pkgs.pulseaudio` to `home.packages` —
