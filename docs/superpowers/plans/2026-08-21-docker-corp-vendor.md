@@ -822,7 +822,37 @@ Two notes for anyone repeating it. `unshare -r usermod` fails with `No such file
 
 The consequence is stronger than the spec assumed. `docker` in `groups` would leave Stage A having added **no group at all** — not `nix-users`, not `video`, not `input` — while the message names only `docker`. The measurement is recorded in the `groupsFromCorp` option's own comment.
 
-- [ ] **Step 4: The full VM rehearsal — BLOCKED until this branch is on `origin/main`**
+- [x] **Step 4: The full VM rehearsal — GREEN, 2026-08-21**
+
+Run against `origin/main` at `3b742e3`, on a fresh disk, 16:24Z to 16:42Z:
+
+```
+================ 05-gate-a ================  PASS
+================ 10-stage-b ================  PASS
+================ 20-gate-b ================  PASS
+================ 30-stage-c ================  PASS
+================ 40-gate-c ================  PASS
+================ 50-stage-d ================  PASS
+---- 6 passed, 0 failed ----
+GREEN: Stage 0 through Stage D, one uninterrupted pass.
+FINAL_PASS_EXIT=0
+```
+
+Gate C's own output, including the new group line:
+
+```
+ii  calango-desktop
+0            <- apt-get -s autoremove | grep -c '^Remv '
+present
+greetd-ok
+1            <- id -nG <user> | tr ' ' '\n' | grep -cx -e docker
+```
+
+`0` from `autoremove` is the load-bearing one: all 28 `Depends` are satisfied on a machine that has never had docker, and nothing is orphaned.
+
+**One process note, recorded because it is the trap this harness documents.** The first launch used `setsid nohup ./test/vm/vm final-pass > log 2>&1 &`, which **discards the exit status** — the shape `test/vm/README.md`'s last "do not undo" entry says once reported success for a failed run. It was killed two minutes in and relaunched as `setsid nohup sh -c '…; rc=$?; echo "FINAL_PASS_EXIT=$rc" >> log; exit $rc'`. Detachment itself was correct both times: the harness ran as its own session leader, which is the rule that exists because a forty-minute run was once killed by a SIGTERM from `claude bg-spare`.
+
+The blocker that held this step, resolved by the merge at `3b742e3` and kept because the reasoning applies to every future rehearsal:
 
 `test/vm/steps/10-stage-b.txt:17` clones with no branch argument, so the VM gets whatever `origin/main` points at. Measured 2026-08-21:
 
@@ -845,9 +875,22 @@ ps -o pid,sid,cmd -p $!    # sid must differ from the calling shell's
 
 Expected: Gate D reached on a fresh disk. Read `test/vm/README.md` first — its "things not to undo" list is where this harness's paid-for rules live.
 
-- [ ] **Step 5: Confirm docker inside the VM**
+- [x] **Step 5: Confirm docker inside the VM — CONFIRMED from the pass logs, 2026-08-21**
 
-After the run, from inside the guest:
+Read out of `~/vm/calango-runbook/out-30-stage-c.log` rather than from a live guest, which carries the same evidence and does not need the VM kept alive:
+
+```
+30:  calango-bootstrap-docker.sources            <- the source installed
+63:  #= sudo apt install … containerd.io docker-buildx-plugin docker-ce
+     docker-ce-cli docker-ce-rootless-extras docker-compose-plugin …
+87:  calango-bootstrap-docker.sources            <- SURVIVED the transient rm
+117: isutton … nix-users docker                  <- id -nG after the usermod
+154: Setting up golang-docker-credential-helpers (0.6.4+ds1-1+b18) …
+```
+
+Line 87 is the one worth naming: the docker source is still listed *after* the step that deletes the two transient ones, which is decision 2 proven on a real machine rather than argued from a postinst. Line 154 is decision 4 proven: nothing named the credential helper in `packages.corp`, and the metapackage's `Depends` pulled it from Debian's archive.
+
+The equivalent live-guest commands, if a future run keeps the VM up:
 
 ```bash
 apt-cache policy docker-ce | head -4
@@ -855,7 +898,9 @@ id -nG | tr ' ' '\n' | grep -cx docker
 dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' docker-ce containerd.io golang-docker-credential-helpers
 ```
 
-Expected: the docker.com repository as the source, `1` for the group, and `ii` for all three. The credential helper proves the `keep`-only decision worked: nothing named it in `packages.corp`, and Stage D's metapackage install pulled it from Debian's archive.
+Expected: the docker.com repository as the source, `1` for the group, and `ii` for all three. The credential helper proves the `keep`-only decision worked: nothing named it in `packages.corp`, and the metapackage install pulled it from Debian's archive.
+
+**That install is the last step of Stage C, not Stage D.** This step said Stage D until the rehearsal disproved it — `test/vm/steps/30-stage-c.txt:64` is the line. The claim was reasoned from the stage names rather than read out of the step file.
 
 - [ ] **Step 6: On suffer — install the rebuilt package**
 

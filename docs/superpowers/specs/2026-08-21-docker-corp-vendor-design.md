@@ -321,10 +321,20 @@ Three consequences:
 disjoint -- docker appears in neither today -- so the existing assertions hold
 unchanged, as does `noStorePaths`.
 
-A `keep` entry both **installs and protects**: Stage D's
-`apt install ./calango-desktop_*.deb` resolves the new `Depends` from Debian's
-archive. That is why decision 4 needs no `packages.corp` entry and no third
-package list for the credential helper.
+A `keep` entry both **installs and protects**: the runbook's
+`apt install "$D"/calango-desktop_*.deb` resolves the new `Depends` from
+Debian's archive. That is why decision 4 needs no `packages.corp` entry and no
+third package list for the credential helper.
+
+That install is the **last step of Stage C**, not Stage D. This paragraph said
+Stage D until the rehearsal disproved it: `test/vm/steps/30-stage-c.txt:64` is
+the line, and Stage C's own pass log shows `Setting up
+golang-docker-credential-helpers` immediately before `Setting up
+calango-desktop`. The mechanism is exactly what decision 4 claimed — a `keep`
+entry installed a package no `packages.corp` entry named — and the stage it was
+attributed to was wrong. Worth recording rather than quietly fixing: the claim
+was reasoned from the stage names rather than read out of the step file, which
+is the shape this project keeps paying for.
 
 ### 4. The runbook, the harness, the tests
 
