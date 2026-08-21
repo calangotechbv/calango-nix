@@ -135,6 +135,21 @@ in
     # clean build once, in preflight.
     "1password-cli" = "Corp set, permanently apt. Pairs with the 1password desktop agent above.";
     endpoint-verification = "Corp set, permanently apt. A managed-device agent; there is no Nix equivalent and there should not be one.";
+
+    # Docker. Six from download.docker.com and one from Debian's own archive,
+    # which is why the seventh reads differently from the other six.
+    #
+    # Named individually rather than through docker-ce alone. apt would pull
+    # the rest -- docker-ce Depends containerd.io and docker-ce-cli, and
+    # docker-ce-cli Recommends both plugins -- but keep protects the names it
+    # holds and not the names those pull, and a Recommends is not a promise.
+    docker-ce = "Corp set, permanently apt. dockerd runs from /usr/lib/systemd/system/docker.service, a system unit, and standalone Home Manager writes only ~/.config/systemd/user -- the same architectural reason bluez and rtkit are permanent.";
+    docker-ce-cli = "Corp set, permanently apt. A Depends of docker-ce, named here because keep protects the names it holds and not the names those pull.";
+    "containerd.io" = "Corp set, permanently apt. The container runtime, a Depends of docker-ce.";
+    docker-buildx-plugin = "Corp set, permanently apt. Reaches the machine only as a Recommends of docker-ce-cli, so nothing would hold it if this entry did not.";
+    docker-compose-plugin = "Corp set, permanently apt. Also only a Recommends of docker-ce-cli.";
+    docker-ce-rootless-extras = "Corp set, permanently apt. A Recommends of docker-ce and auto before this entry, which promotes it to a Depends -- a strengthening nobody measured a need for. It is named because it is installed, not because rootless mode is configured; dockerd runs as a root system service.";
+    golang-docker-credential-helpers = "Debian's own archive, not docker.com. Provides docker-credential-secretservice, which ~/.docker/config.json names as its credsStore for a private registry. It has ZERO installed reverse dependencies, so only its apt-mark flag held it, and docker runs it as a subprocess during a login rather than holding it open -- so no /proc walk and no ps union can ever see that it is needed. Its failure arrives later as a registry authentication error.";
   };
 
   config.calango.deb.ban = {

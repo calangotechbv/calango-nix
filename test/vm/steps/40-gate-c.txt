@@ -1,14 +1,23 @@
 #T 600
 
-# Gate C's four lines, run as FOUR commands separated by `;`. Joining them with
+# Gate C's lines, run as SEPARATE commands separated by `;`. Joining them with
 # && aborts at line 2: `apt-get -s autoremove | grep -c '^Remv '` prints 0 and
 # EXITS 1, because that is what grep -c does when it counts nothing. RUNBOOK.md
 # says so out loud now; this harness is where it was met.
+#
+# The count of lines is deliberately not written in this comment either. It
+# said FOUR while the gate had five, for exactly one edit.
+#
+# The last line is the docker group, added by Stage C rather than Stage A
+# because docker-ce's own postinst is what creates it. It reads the group
+# database rather than this shell's session, so it sees the membership even
+# though the login that makes it usable has not happened.
 #= dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop
 #= apt-get -s autoremove | grep -c '^Remv '
 #= test -f /usr/share/wayland-sessions/hyprland-nix.desktop && echo present
 #= cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml" && echo greetd-ok
-cd ~/Projects/calango-nix; B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap' 2>/dev/null); dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop; apt-get -s autoremove | grep -c '^Remv ' ; test -f /usr/share/wayland-sessions/hyprland-nix.desktop && echo present ; cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml" && echo greetd-ok ; true
+#= id -nG <user> | tr ' ' '\n' | grep -cx -e docker
+cd ~/Projects/calango-nix; B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap' 2>/dev/null); dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' calango-desktop; apt-get -s autoremove | grep -c '^Remv ' ; test -f /usr/share/wayland-sessions/hyprland-nix.desktop && echo present ; cmp -s /etc/greetd/config.toml "$B/etc/greetd/config.toml" && echo greetd-ok ; id -nG @USER@ | tr ' ' '\n' | grep -cx -e docker ; true
 
 #T 300
 

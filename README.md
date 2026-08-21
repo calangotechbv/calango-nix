@@ -56,5 +56,13 @@ endpoint-verification, Slack, VS Code), the login path (greetd, tuigreet),
 PAM and the keyring, the system services, device-permission tools, the portal
 frontend, Mesa, and `nix-bin` itself.
 
+Every member of that vendor stack is declared, and until spec 22 `docker-ce`
+was the one that was not — this paragraph described the machine while reading
+as a declaration. `calango.bootstrap.packages.corp` names the package and its
+repository, `calango.bootstrap.aptSources` renders the source file, and
+`calango.deb.keep` puts it in `calango-desktop`'s `Depends`. Docker also brings
+`golang-docker-credential-helpers`, which comes from Debian's own archive
+rather than a vendor's and so has a `keep` entry and no `corp` entry.
+
 Slack is a standalone `.deb` with no repository behind it —
 `slack-latest` reports when it is behind upstream.

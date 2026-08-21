@@ -13,18 +13,32 @@
 #   DURABLE      /etc/greetd/config.toml, the group memberships. These must
 #                never drift, and the activation hook below watches them.
 #
-#   SCAFFOLDING  the apt sources in Task 2. They exist so that ONE apt install
-#                can succeed. Afterwards each vendor package writes its own
-#                copy from its own postinst -- Chrome's from cron -- so the
-#                files here COLLIDE with the vendor's own. That collision is an
-#                apt error rather than a warning -- two Signed-By values for one
-#                repository, an inline key here against a keyring path there --
-#                and apt then refuses to read the source list at all, so every
+#   TRANSIENT    SOME of the apt sources in Task 2 -- Chrome's and 1Password's.
+#                Each of those vendors writes its own copy from its own
+#                postinst, Chrome's from cron, naming a keyring under
+#                /usr/share/keyrings where the file here carries an inline key.
+#                apt treats one repository reached through two different
+#                Signed-By values as an ERROR rather than a duplicate warning,
+#                and then refuses to read the source list at all, so every
 #                later apt command fails. Measured on a bare Debian 13.6 in the
 #                spec 18 rehearsal, which is where this comment stopped saying
-#                "duplicate source apt warns about". The runbook deletes them
-#                immediately after the corp packages install, before anything
-#                else runs. Watching them forever would assert something false.
+#                "duplicate source apt warns about". The runbook deletes
+#                exactly those two, immediately after the corp packages
+#                install, before anything else runs.
+#
+#   DURABLE-BUT- the OTHER apt sources -- microsoft, google-cloud, docker.
+#   NOT-STATE    Nothing ever replaces them, so they stay: deleting one leaves
+#                its packages installed with no candidate version at all, the
+#                position slack-desktop is in. They are still not watched for
+#                drift, because they exist so apt can resolve a vendor rather
+#                than as a property of the machine -- watching them would
+#                assert something false.
+#
+# Which of the two a source is belongs in aptSourcesTransient, not in a
+# reader's memory of this comment. An earlier version of this passage said
+# "SCAFFOLDING" of all of them and said the runbook deleted them all, which was
+# true of two of the four and is now true of two of the five; the
+# aptSourcesTransient comment 400 lines below already contradicted it.
 { config, lib, pkgs, ... }:
 
 let
@@ -239,6 +253,55 @@ let
     "@groupsComma@" = lib.concatStringsSep "," cfg.groups;
     "@groupsGrepArgs@" = lib.concatStringsSep " " (map (g: "-e ${g}") cfg.groups);
     "@groupsCount@" = toString (builtins.length cfg.groups);
+    # WHOLE BLOCKS, not the pieces to build them from, and that is the whole
+    # point of these two tokens.
+    #
+    # The first draft substituted a comma-joined list and a grep-args list
+    # separately, and an empty groupsFromCorp then rendered
+    #
+    #   sudo usermod -aG  <user>
+    #   id -nG <user> | tr ' ' '\n' | grep -cx        # 0
+    #
+    # -- two commands that FAIL rather than do nothing, on every machine
+    # rather than on a misconfigured one. Measured against a build with the
+    # set emptied. A piece-wise token cannot express "and if there is nothing,
+    # say nothing"; a block-wise one can, so the emptiness is decided here in
+    # Nix and never in the rendered markdown.
+    #
+    # Gate C's line is written as grep args rather than as a name so the gate
+    # cannot fall behind the declaration -- a gate naming `docker` by hand
+    # would keep passing after the option changed.
+    "@groupsFromCorpSection@" =
+      if cfg.groupsFromCorp == { } then
+        ""
+      else
+        ''
+          **Now add the group that only exists once its package is installed.**
+          Stage A added the groups a fresh Debian machine already has. This one is
+          created by a corp package's own `postinst`, so it could not have been
+          added there — a `usermod` naming a group that does not exist fails, and
+          Stage A would have stopped before installing anything.
+
+          ```sh
+          sudo usermod -aG ${lib.concatStringsSep "," (builtins.attrNames cfg.groupsFromCorp)} <user>
+          ```
+
+          | group | why it is added here and not in Stage A |
+          |---|---|
+          ${reasonTable cfg.groupsFromCorp}
+          The membership takes effect at the **next login**, so a command needing
+          it still fails with a permission error in this shell. `id -nG <user>`
+          reads the new group immediately, because it reads the group database
+          rather than this session; `id -nG` alone reads the session's, which is
+          stale.
+        '';
+    "@groupsFromCorpGateLine@" =
+      if cfg.groupsFromCorp == { } then
+        ""
+      else
+        "id -nG <user> | tr ' ' '\\n' | grep -cx ${
+          lib.concatStringsSep " " (map (g: "-e ${g}") (builtins.attrNames cfg.groupsFromCorp))
+        }   # ${toString (builtins.length (builtins.attrNames cfg.groupsFromCorp))}";
     "@repoUrl@" = cfg.repoUrl;
     "@aptTransientFiles@" = lib.concatStringsSep " " (
       builtins.attrNames cfg.aptSourcesTransient
@@ -249,6 +312,12 @@ let
       lib.subtractLists (builtins.attrNames cfg.aptSourcesTransient) (
         builtins.attrNames cfg.aptSources
       )
+    );
+    # Generated rather than written, because the runbook's own prose said "Two
+    # of the four vendor packages" -- a count that was correct when written and
+    # goes stale on every vendor added. Docker is the vendor that made it stale.
+    "@aptTransientCount@" = toString (
+      builtins.length (builtins.attrNames cfg.aptSourcesTransient)
     );
     "@aptSourceCount@" = toString (
       builtins.length (builtins.attrNames cfg.aptSources)
@@ -411,6 +480,39 @@ in
       default = [ ];
       description = "Unix groups the desktop account must hold.";
     };
+    # Groups a CORP PACKAGE creates, so they cannot be added in Stage A.
+    #
+    # Split from `groups` rather than merged into it because the two are added
+    # at different stages and one usermod cannot serve both: Stage A runs
+    # `usermod -aG @groupsComma@` before Stage C installs anything, and
+    # docker-ce's postinst is what creates the docker group. A name put in
+    # `groups` instead fails Stage A on a machine that has never had docker.
+    #
+    # Same shape as aptSourcesTransient, which splits the sources by the stage
+    # that acts on them rather than by what they are.
+    #
+    # And the failure is ALL-OR-NOTHING, which is what makes this split
+    # necessary rather than tidy. usermod validates every name before it
+    # applies any of them. Measured 2026-08-21 against a scratch passwd/group
+    # tree, with `unshare -r usermod --root`, so no real account was touched:
+    #
+    #   usermod -aG alpha,beta,nosuchgroup probe
+    #   # usermod: group 'nosuchgroup' does not exist        exit 6
+    #   # etc/group afterwards: alpha and beta gained NOTHING
+    #
+    #   control, same command without the bogus name:
+    #   usermod -aG alpha,beta probe                          exit 0
+    #   # etc/group afterwards: alpha:x:5001:probe  beta:x:5002:probe
+    #
+    # So `docker` put in `groups` would leave Stage A having added no group at
+    # all -- not nix-users, not video, not input -- while the message names
+    # only docker. A partial application would at least be visible as a
+    # missing group; this is not.
+    groupsFromCorp = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      description = "Group -> which corp package creates it. Added in Stage C.";
+    };
     # The URL Stage B clones. HTTPS, not the ssh remote, and that is an ordering
     # fact rather than a preference: a bare machine has no ssh key and no agent,
     # and this project's keys live in 1Password's agent, which Stage C installs
@@ -466,6 +568,12 @@ in
     # and no render.
     groups = [ "nix-users" "video" "input" ];
 
+    # Added in Stage C, not Stage A, and the reason is an ordering fact rather
+    # than a preference. See the option's own comment above.
+    groupsFromCorp = {
+      docker = "docker-ce's postinst creates this group, so Stage A -- which runs before Stage C installs docker-ce -- cannot add it. Membership is write access to /var/run/docker.sock, which is srw-rw---- root:docker, and so is root-equivalent.";
+    };
+
     # SCAFFOLDING, not state. Named calango-bootstrap-* so they are unambiguous
     # to delete once the vendor packages own their own copies -- the same trick
     # home/syncthing.nix used to sidestep a conffile handover.
@@ -505,6 +613,28 @@ in
         uris = "https://packages.cloud.google.com/apt";
         suites = "endpoint-verification";
         key = "google-cloud";
+      };
+      # Docker's repository has no `stable` SUITE -- its suites are Debian
+      # codenames -- and `stable` is the COMPONENT. So these two fields read
+      # inverted against every other source here, and are not. A reader who
+      # "fixes" them gets a repository that does not exist.
+      #
+      # `trixie` is hard-coded because nothing in this flake declares a Debian
+      # release to derive it from; the release appears only in prose comments.
+      # The next Debian major edits this line. test/apt-sources.sh is what
+      # catches a stale one, and only when a person runs it.
+      #
+      # DURABLE, not transient. Measured 2026-08-21: no docker postinst writes
+      # a source file or a keyring, and none of the six packages ships a cron
+      # job -- the two ways a vendor recreates its own repository. So this file
+      # must never gain an aptSourcesTransient entry: deleting it would leave
+      # six installed packages with no candidate version, the position
+      # slack-desktop is in.
+      "calango-bootstrap-docker.sources" = stanza {
+        uris = "https://download.docker.com/linux/debian";
+        suites = "trixie";
+        components = "stable";
+        key = "docker";
       };
     };
 
@@ -552,6 +682,17 @@ in
       "1password" = "https://downloads.1password.com/linux/debian/amd64 -- calango-bootstrap-1password.sources";
       "1password-cli" = "The same repository as 1password. These two share one, which is why there are four repositories and not five.";
       endpoint-verification = "https://packages.cloud.google.com/apt -- calango-bootstrap-google-cloud.sources. Corporate enrolment is a separate, human step.";
+      # Six names, not one. `apt install docker-ce` alone would pull the rest --
+      # docker-ce Depends containerd.io and docker-ce-cli, docker-ce-cli
+      # Recommends the two plugins -- but this list is also read by a person
+      # deciding what the machine is meant to have, and a Recommends is not a
+      # promise.
+      docker-ce = "https://download.docker.com/linux/debian -- calango-bootstrap-docker.sources. The daemon. dockerd runs from /usr/lib/systemd/system/docker.service, a system unit, so this can never move to Nix -- the bluez and rtkit reason.";
+      docker-ce-cli = "The same repository as docker-ce. The client; a Depends of docker-ce.";
+      "containerd.io" = "The same repository as docker-ce. The container runtime; a Depends of docker-ce.";
+      docker-buildx-plugin = "The same repository as docker-ce. Reaches the machine only as a Recommends of docker-ce-cli, which is why it is named here.";
+      docker-compose-plugin = "The same repository as docker-ce. Also only a Recommends of docker-ce-cli.";
+      docker-ce-rootless-extras = "The same repository as docker-ce. A Recommends of docker-ce, and auto on suffer. Named here because it is installed, not because rootless mode is configured -- it is not, and dockerd runs as a root system service.";
       slack-desktop = "NO repository. apt-cache policy shows one version-table entry, /var/lib/dpkg/status. Ask Slack's own feed for the version, as the block above does -- bin/slack-latest is a template in the clone and its substituted copy does not exist until Stage D.";
     };
   };
@@ -585,6 +726,29 @@ in
 
         The runbook derives its deletion command from that list, so a name
         matching nothing leaves a colliding source in place.
+      '';
+    }
+    {
+      # A name in both lists renders two usermod lines and hides which stage
+      # owns the group. Same shape as home/deb.nix's keep/ban disjointness.
+      #
+      # What this does NOT do: nothing at build time knows which groups a bare
+      # Debian machine has, so this cannot stop someone putting `docker` in
+      # `groups` alone -- which is the failure the split exists to prevent.
+      # ./test/vm/vm final-pass is the check for that.
+      assertion =
+        lib.intersectLists cfg.groups (builtins.attrNames cfg.groupsFromCorp) == [ ];
+      message = ''
+        calango.bootstrap.groups and calango.bootstrap.groupsFromCorp name the
+        same group:
+
+          groups         : ${lib.concatStringsSep " " cfg.groups}
+          groupsFromCorp : ${lib.concatStringsSep " " (builtins.attrNames cfg.groupsFromCorp)}
+
+        A group belongs to exactly one stage. Stage A adds `groups` before any
+        corp package exists; Stage C adds `groupsFromCorp` after. A name in
+        both renders two usermod lines and leaves it ambiguous which stage is
+        responsible.
       '';
     }
     {
@@ -723,7 +887,7 @@ in
         # this group list collides today, and that is not the reason to rely
         # on it.
         have=$(${pkgs.coreutils}/bin/id -nG | ${pkgs.coreutils}/bin/tr " " "\n")
-        for g in ${lib.concatStringsSep " " cfg.groups}; do
+        for g in ${lib.concatStringsSep " " (cfg.groups ++ builtins.attrNames cfg.groupsFromCorp)}; do
           if ! echo "$have" | "$G" -qx "$g"; then
             echo "bootstrap: not in group $g." >&2
             echo "  sudo usermod -aG $g ${config.home.username}   # next login" >&2
