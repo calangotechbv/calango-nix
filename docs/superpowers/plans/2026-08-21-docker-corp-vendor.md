@@ -186,7 +186,7 @@ Expected: `1` then `0`. Do **not** pass `--staged`: that restores from HEAD.
 - Consumes: Task 1's `calango-bootstrap-docker.sources`, named in each reason string.
 - Produces: `@corpRepoPackagesOneLine@` gains six names, which Task 4's runbook and this task's step file both mirror. `corpFileOnlyNames` at `home/bootstrap.nix:199` filters on the literal prefix `NO repository`; none of these reasons starts with it, so all six land on the repo-backed side.
 
-- [ ] **Step 1: Record the counts before the change**
+- [x] **Step 1: Record the counts before the change**
 
 ```bash
 sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.calango.bootstrap.packages.corp' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
@@ -194,7 +194,7 @@ sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.ca
 
 Expected: `6`.
 
-- [ ] **Step 2: Add the six entries**
+- [x] **Step 2: Add the six entries**
 
 In `home/bootstrap.nix`, inside `config.calango.bootstrap.packages.corp`:
 
@@ -212,7 +212,7 @@ In `home/bootstrap.nix`, inside `config.calango.bootstrap.packages.corp`:
       docker-ce-rootless-extras = "The same repository as docker-ce. A Recommends of docker-ce, and auto on suffer. Named here because it is installed, not because rootless mode is configured -- it is not, and dockerd runs as a root system service.";
 ```
 
-- [ ] **Step 3: Build, and watch `vm-step-lines-verbatim` fail**
+- [x] **Step 3: Build, and watch `vm-step-lines-verbatim` fail**
 
 ```bash
 sg nix-users -c 'nix flake check' 2>&1 | tail -20
@@ -220,7 +220,7 @@ sg nix-users -c 'nix flake check' 2>&1 | tail -20
 
 Expected: a failure from `vm-step-lines-verbatim`, naming the line in `test/vm/steps/30-stage-c.txt` that no longer appears in the rendered `RUNBOOK.md`. **This is the failing test for this task**, not an obstacle: the check exists so a runbook change with no matching step-file change cannot pass silently.
 
-- [ ] **Step 4: Read the generated line out of the rendered runbook**
+- [x] **Step 4: Read the generated line out of the rendered runbook**
 
 Do not hand-write the package list. Copy it from what the flake actually renders:
 
@@ -237,7 +237,7 @@ sudo apt install 1password 1password-cli code containerd.io docker-buildx-plugin
 
 That ordering is `attrNames`' byte order, and it is a prediction — take the rendered text as the authority if the two disagree.
 
-- [ ] **Step 5: Update the two mirrored lines in the step file**
+- [x] **Step 5: Update the two mirrored lines in the step file**
 
 `test/vm/steps/30-stage-c.txt`, replacing the current lines 34 and 35:
 
@@ -250,7 +250,7 @@ The `#= ` line must match the runbook **verbatim**; the line below it is the har
 
 **Change no timeout.** An earlier draft of this step said to raise the `#T 300` below the apt install, on the reading that it applied to the block above it. It does not: `test/vm/calangovm/driver.py:24-36` sets the timeout for every block **after** the directive, so `#T 3000` already governs this apt install and `#T 300` governs the `rm` that follows. 3000 seconds is ample for six more packages.
 
-- [ ] **Step 6: Build and confirm the check passes**
+- [x] **Step 6: Build and confirm the check passes**
 
 ```bash
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -258,7 +258,7 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 
 Expected: the same number this flake had before this task — read it, do not quote it. No new check is added here.
 
-- [ ] **Step 7: Confirm the counts moved**
+- [x] **Step 7: Confirm the counts moved**
 
 ```bash
 sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.calango.bootstrap.packages.corp' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
@@ -267,7 +267,7 @@ sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.ca
 
 Expected: `12` for the first. The second is a sanity reading, not an assertion.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add home/bootstrap.nix test/vm/steps/30-stage-c.txt
@@ -285,7 +285,7 @@ git commit -m "bootstrap: the six docker packages, and the step file that mirror
 - Consumes: `cfg.groups`, already a `listOf str`.
 - Produces: `cfg.groupsFromCorp`, an `attrsOf str` mapping a group name to why a corp package owns it. Task 4's runbook substitutions read `builtins.attrNames cfg.groupsFromCorp`.
 
-- [ ] **Step 1: Declare the option**
+- [x] **Step 1: Declare the option**
 
 In `home/bootstrap.nix`, immediately after the `groups` option:
 
@@ -307,7 +307,7 @@ In `home/bootstrap.nix`, immediately after the `groups` option:
     };
 ```
 
-- [ ] **Step 2: Set its value**
+- [x] **Step 2: Set its value**
 
 In `config.calango.bootstrap`, immediately after `groups = [ ... ];`:
 
@@ -317,7 +317,7 @@ In `config.calango.bootstrap`, immediately after `groups = [ ... ];`:
     };
 ```
 
-- [ ] **Step 3: Write the failing test — add the assertion, then break it**
+- [x] **Step 3: Write the failing test — add the assertion, then break it**
 
 Add to `config.assertions`, after the `aptSourcesTransient` consistency assertion:
 
@@ -347,7 +347,7 @@ Add to `config.assertions`, after the `aptSourcesTransient` consistency assertio
     }
 ```
 
-- [ ] **Step 4: Prove the assertion can fire**
+- [x] **Step 4: Prove the assertion can fire**
 
 ```bash
 sed -i 's/groups = \[ "nix-users" "video" "input" \];/groups = [ "nix-users" "video" "input" "docker" ];/' home/bootstrap.nix
@@ -362,7 +362,7 @@ sg nix-users -c 'nix build --no-link .#homeConfigurations."isutton@suffer".activ
 
 Expected: the evaluation fails with the message above, listing `docker` in both lines.
 
-- [ ] **Step 5: Revert and confirm**
+- [x] **Step 5: Revert and confirm**
 
 **Do not use `git restore` here.** `home/bootstrap.nix` holds unstaged work from steps 1-3, and restoring the worktree copy discards it. Revert only the mutation:
 
@@ -374,7 +374,7 @@ sed -i 's/groups = \[ "nix-users" "video" "input" "docker" \];/groups = [ "nix-u
 
 Expected: `0` then `1`. This is why the global constraints say to commit real work before mutating: had steps 1-3 been committed, `git restore --worktree` would have been safe.
 
-- [ ] **Step 6: Widen the drift hook**
+- [x] **Step 6: Widen the drift hook**
 
 At `home/bootstrap.nix:726`, the loop currently reads:
 
@@ -390,7 +390,7 @@ Replace with:
 
 This is the whole reason the group is declared in the module rather than written into runbook prose: suffer gets told when the membership goes away. The loop's existing `grep -qx` whole-line match is unchanged and remains correct.
 
-- [ ] **Step 7: Prove the hook reports the new group**
+- [x] **Step 7: Prove the hook reports the new group**
 
 `isutton` is already in `docker`, so the hook is silent for the real value. Mutate the value to a group nobody holds:
 
@@ -408,7 +408,7 @@ A=$(sg nix-users -c 'nix build --no-link --print-out-paths .#homeConfigurations.
 
 Expected: `1` — the group name reaches the generated activation script, which is the property. Running `activate` is not required and would switch the generation.
 
-- [ ] **Step 8: Revert the mutation and confirm**
+- [x] **Step 8: Revert the mutation and confirm**
 
 ```bash
 sed -i 's/^      dockernosuchgroup = "docker-ce/      docker = "docker-ce/' home/bootstrap.nix
@@ -418,7 +418,7 @@ sed -i 's/^      dockernosuchgroup = "docker-ce/      docker = "docker-ce/' home
 
 Expected: `0` then `1`.
 
-- [ ] **Step 9: Confirm the assertion count moved**
+- [x] **Step 9: Confirm the assertion count moved**
 
 ```bash
 /usr/bin/grep -c '^      assertion =' home/bootstrap.nix
@@ -426,7 +426,7 @@ Expected: `0` then `1`.
 
 Expected: `7`, where it read `6` before this task. A bare `grep -c 'assertion'` over the same file reads more, because it also matches comments and the binding itself.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add home/bootstrap.nix
@@ -446,7 +446,7 @@ git commit -m "bootstrap: groupsFromCorp, for a group a corp package creates"
 - Consumes: `cfg.groupsFromCorp` from Task 3, `cfg.aptSourcesTransient` and `cfg.aptSources` already present, and `reasonTable` at `home/bootstrap.nix:182`.
 - Produces: three new tokens — `@groupsFromCorpComma@`, `@groupsFromCorpTable@`, `@aptTransientCount@`. `requireTokenIn` asserts every token of the set appears in the template, so a token added here and forgotten in the template fails the build.
 
-- [ ] **Step 1: Write the failing test — add the tokens before the template uses them**
+- [x] **Step 1: Write the failing test — add the tokens before the template uses them**
 
 In `home/bootstrap.nix`'s `substitutions`, after the `@groupsCount@` entry:
 
@@ -473,7 +473,7 @@ and beside the other apt tokens:
     );
 ```
 
-- [ ] **Step 2: Build and watch `requireTokenIn` fail**
+- [x] **Step 2: Build and watch `requireTokenIn` fail**
 
 ```bash
 sg nix-users -c 'nix build --no-link .#calangoBootstrap' 2>&1 | tail -8
@@ -481,7 +481,7 @@ sg nix-users -c 'nix build --no-link .#calangoBootstrap' 2>&1 | tail -8
 
 Expected: an evaluation failure naming `bootstrap/runbook.md.in` and one of the three new tokens as absent from the template. **This is the failing test for this task.**
 
-- [ ] **Step 3: Add the Stage C `usermod` block to the template**
+- [x] **Step 3: Add the Stage C `usermod` block to the template**
 
 In `bootstrap/runbook.md.in`, after the `sudo apt update` fence that follows the source deletion (currently around line 351) and before the "The other files stay" paragraph:
 
@@ -503,7 +503,7 @@ still fails with a permission error until then. `id -nG <user>` reads the new
 group immediately; `id -nG` alone reads the current session's, which is stale.
 ````
 
-- [ ] **Step 4: Make the hard-coded count generated**
+- [x] **Step 4: Make the hard-coded count generated**
 
 In the same file, the paragraph beginning "**Now delete the two colliding source files**" currently reads:
 
@@ -522,7 +522,7 @@ Check the surrounding sentence still reads correctly after substitution — it r
 
 Leave the sentence lower down that reads "Measured: after all four were deleted" **unchanged**. That records a measurement taken on a particular machine on a particular day, and rewriting it would make the record claim something nobody measured.
 
-- [ ] **Step 5: Build and confirm the render**
+- [x] **Step 5: Build and confirm the render**
 
 ```bash
 D=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
@@ -532,7 +532,7 @@ D=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 
 Expected: one hit each. If `usermod -aG ,` or `usermod -aG <user>` with nothing between appears, the empty-set case has leaked — stop and fix it.
 
-- [ ] **Step 6: Mirror the new line in the step file**
+- [x] **Step 6: Mirror the new line in the step file**
 
 Add to `test/vm/steps/30-stage-c.txt`, after the `sudo apt update` block:
 
@@ -545,7 +545,7 @@ echo "$CALANGO_PW" | command sudo -S -p '' usermod -aG docker "$USER" && id -nG 
 
 The `#= ` line must be the runbook's own text verbatim, `<user>` placeholder included. The line below is the harness's version: it substitutes the real account and prints the resulting group list, so the pass log carries the evidence rather than only an exit status.
 
-- [ ] **Step 7: Run the full check**
+- [x] **Step 7: Run the full check**
 
 ```bash
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -553,14 +553,14 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 
 Expected: the count read in Task 2, unchanged, and no failure.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add home/bootstrap.nix bootstrap/runbook.md.in test/vm/steps/30-stage-c.txt
 git commit -m "runbook: add the docker group in Stage C, where it exists"
 ```
 
-- [ ] **Step 9: Prove the empty-set case is handled**
+- [x] **Step 9: Prove the empty-set case is handled**
 
 Replace the whole `groupsFromCorp` value block in `home/bootstrap.nix` with the empty form:
 
@@ -583,7 +583,7 @@ D=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
 
 Expected: **no hit**. A hit means the template renders a `usermod` with an empty group list, which would fail Stage C on every machine. If the render is wrong, the Stage C block needs a conditional in the module rather than an unconditional token — build the whole block in Nix and substitute one token for it.
 
-- [ ] **Step 10: Revert and confirm**
+- [x] **Step 10: Revert and confirm**
 
 ```bash
 git restore --worktree home/bootstrap.nix
@@ -603,7 +603,7 @@ Expected: `1`. The work of this task is committed, so `git restore --worktree` i
 - Consumes: nothing from earlier tasks. `keep` is an option `home/deb.nix` declares and three modules contribute to — `home/deb.nix`, `home/audio.nix:683` and `home/slack.nix:58`.
 - Produces: seven names in `calango-desktop`'s `Depends`, which Task 7's verification reads out of the built `.deb`.
 
-- [ ] **Step 1: Record the count before the change**
+- [x] **Step 1: Record the count before the change**
 
 ```bash
 sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.calango.deb.keep' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
@@ -611,7 +611,7 @@ sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.ca
 
 Expected: `21`.
 
-- [ ] **Step 2: Add the seven entries**
+- [x] **Step 2: Add the seven entries**
 
 In `home/deb.nix`, inside `config.calango.deb.keep`, after the `endpoint-verification` entry. Note the comment above `1password-cli` in that file: no reason string may contain the literal Nix store path prefix, because `noStorePaths` greps the rendered manifest. None of these do.
 
@@ -625,7 +625,7 @@ In `home/deb.nix`, inside `config.calango.deb.keep`, after the `endpoint-verific
     golang-docker-credential-helpers = "Debian's own archive, not docker.com. Provides docker-credential-secretservice, which ~/.docker/config.json names as its credsStore for a private registry. It has ZERO installed reverse dependencies, so only its apt-mark flag held it, and docker runs it as a subprocess during a login rather than holding it open -- so no /proc walk and no ps union can ever see that it is needed. Its failure arrives later as a registry authentication error.";
 ```
 
-- [ ] **Step 3: Build and confirm the count**
+- [x] **Step 3: Build and confirm the count**
 
 ```bash
 sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.calango.deb.keep' | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d)); print(" ".join(sorted(k for k in d if "docker" in k or "containerd" in k)))'
@@ -633,7 +633,7 @@ sg nix-users -c 'nix eval --json .#homeConfigurations."isutton@suffer".config.ca
 
 Expected: `28`, then the seven names.
 
-- [ ] **Step 4: Confirm the guards still pass**
+- [x] **Step 4: Confirm the guards still pass**
 
 ```bash
 sg nix-users -c 'nix build --no-link .#calangoDeb'
@@ -643,14 +643,14 @@ D=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoDeb')
 
 Expected: a clean build — which means `noStorePaths` passed and both `deb.nix` assertions held — and `28`.
 
-- [ ] **Step 5: Commit, before the mutation**
+- [x] **Step 5: Commit, before the mutation**
 
 ```bash
 git add home/deb.nix
 git commit -m "deb: hold docker and its credential helper by Depends, not by a flag"
 ```
 
-- [ ] **Step 6: Prove `noStorePaths` still guards these reasons**
+- [x] **Step 6: Prove `noStorePaths` still guards these reasons**
 
 ```bash
 sed -i 's|Debian.s own archive, not docker.com.|Debian archive. See /nix/store for nothing.|' home/deb.nix
@@ -665,7 +665,7 @@ sg nix-users -c 'nix build --no-link .#calangoDeb' 2>&1 | tail -6
 
 Expected: the build fails, naming the store-path needle. This is the guard the file's own comment says cost a clean build once.
 
-- [ ] **Step 7: Revert and confirm**
+- [x] **Step 7: Revert and confirm**
 
 ```bash
 git restore --worktree home/deb.nix
@@ -686,7 +686,7 @@ Expected: `0` then `1`.
 
 **Interfaces:** none. This task changes no behaviour and no test.
 
-- [ ] **Step 1: Correct the module header**
+- [x] **Step 1: Correct the module header**
 
 `home/bootstrap.nix`'s header says the apt sources are `SCAFFOLDING`, that "afterwards each vendor package writes its own copy from its own postinst", and that "the runbook deletes them immediately after the corp packages install". That was true of two of the four and never of the other two — the `aptSourcesTransient` comment 400 lines below already contradicts it, and docker makes it two of five. Replace the `SCAFFOLDING` paragraph with:
 
@@ -713,7 +713,7 @@ Expected: `0` then `1`.
 
 Keep the `DURABLE` entry above it, which describes `/etc/greetd/config.toml` and the group memberships, unchanged.
 
-- [ ] **Step 2: Correct README.md line 54**
+- [x] **Step 2: Correct README.md line 54**
 
 It currently reads, under "What apt still owns":
 
@@ -730,7 +730,7 @@ names the package and its repository, `calango.bootstrap.aptSources` renders the
 source file, and `calango.deb.keep` puts it in `calango-desktop`'s `Depends`.
 ```
 
-- [ ] **Step 3: Add the standing fact to CLAUDE.md**
+- [x] **Step 3: Add the standing fact to CLAUDE.md**
 
 In the "Standing facts about this machine" section, beside the `bluez` and `rtkit` entries:
 
@@ -754,7 +754,7 @@ In the "Standing facts about this machine" section, beside the `bluez` and `rtki
   left to a measurement.
 ```
 
-- [ ] **Step 4: Confirm nothing else in CLAUDE.md now contradicts**
+- [x] **Step 4: Confirm nothing else in CLAUDE.md now contradicts**
 
 ```bash
 /usr/bin/grep -n 'docker' CLAUDE.md
@@ -762,7 +762,7 @@ In the "Standing facts about this machine" section, beside the `bluez` and `rtki
 
 Read every hit. The one at the `gcr4` entry mentions `golang-docker-credential-helpers` as a package `apt-get -s remove gcr4` would take with it; that is still true and needs no edit.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add home/bootstrap.nix README.md CLAUDE.md
@@ -777,7 +777,7 @@ git commit -m "docs: docker is declared now, and the sources comment says which 
 
 **Interfaces:** consumes everything above.
 
-- [ ] **Step 1: The full offline check**
+- [x] **Step 1: The full offline check**
 
 ```bash
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -786,7 +786,7 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -o 'running [0-9]* flake checks'
 
 Expected: the two agree. Read the number; do not compare it against any figure in `CLAUDE.md`.
 
-- [ ] **Step 2: The five sources, against their real repositories**
+- [x] **Step 2: The five sources, against their real repositories**
 
 ```bash
 B=$(sg nix-users -c 'nix build --no-link --print-out-paths .#calangoBootstrap')
@@ -822,10 +822,25 @@ Two notes for anyone repeating it. `unshare -r usermod` fails with `No such file
 
 The consequence is stronger than the spec assumed. `docker` in `groups` would leave Stage A having added **no group at all** — not `nix-users`, not `video`, not `input` — while the message names only `docker`. The measurement is recorded in the `groupsFromCorp` option's own comment.
 
-- [ ] **Step 4: The full VM rehearsal**
+- [ ] **Step 4: The full VM rehearsal — BLOCKED until this branch is on `origin/main`**
+
+`test/vm/steps/10-stage-b.txt:17` clones with no branch argument, so the VM gets whatever `origin/main` points at. Measured 2026-08-21:
 
 ```bash
-./test/vm/vm final-pass
+git ls-remote --heads origin | grep -E 'main|docker-corp'
+# 4ce3761…  refs/heads/main                          <- origin
+# 18e685c…  refs/heads/worktree-docker-corp-vendor   <- this work
+git rev-parse main
+# 14b3e1a…  <- LOCAL main, 14 commits ahead of origin
+```
+
+So a run started now rehearses a tree with neither this work nor the local spec 21 commits, and Gate C's docker line does not exist in it. `test/vm/README.md` says as much — "only `vm final-pass` on a fresh disk, against the *pushed* document, tells you the sequence works". Merge and push first, or the run tests the wrong document and passes.
+
+**And do not start it from a managed background shell.** `test/vm/README.md`'s "things not to undo" list records a forty-minute run killed mid-way by `qemu-system-x86_64: terminating on signal 15 from pid … (claude bg-spare)`. Launch it as that list prescribes and confirm the session id really changed:
+
+```bash
+setsid nohup ./test/vm/vm final-pass < /dev/null &
+ps -o pid,sid,cmd -p $!    # sid must differ from the calling shell's
 ```
 
 Expected: Gate D reached on a fresh disk. Read `test/vm/README.md` first — its "things not to undo" list is where this harness's paid-for rules live.
