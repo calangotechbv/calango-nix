@@ -239,6 +239,25 @@ let
     "@groupsComma@" = lib.concatStringsSep "," cfg.groups;
     "@groupsGrepArgs@" = lib.concatStringsSep " " (map (g: "-e ${g}") cfg.groups);
     "@groupsCount@" = toString (builtins.length cfg.groups);
+    # Rendered into Stage C, not Stage A. An empty groupsFromCorp must produce
+    # NO usermod line at all: `usermod -aG  <user>` with an empty list fails,
+    # and it would fail on every machine rather than on a misconfigured one.
+    "@groupsFromCorpComma@" = lib.concatStringsSep "," (
+      builtins.attrNames cfg.groupsFromCorp
+    );
+    "@groupsFromCorpTable@" =
+      "| group | why it is added here and not in Stage A |\n|---|---|\n"
+      + reasonTable cfg.groupsFromCorp;
+    # Gate C's own check, the same shape Gate A uses for `groups`. Written as
+    # grep args rather than as a name so the gate cannot fall behind the
+    # declaration -- a gate naming `docker` by hand would keep passing after
+    # the option changed.
+    "@groupsFromCorpGrepArgs@" = lib.concatStringsSep " " (
+      map (g: "-e ${g}") (builtins.attrNames cfg.groupsFromCorp)
+    );
+    "@groupsFromCorpCount@" = toString (
+      builtins.length (builtins.attrNames cfg.groupsFromCorp)
+    );
     "@repoUrl@" = cfg.repoUrl;
     "@aptTransientFiles@" = lib.concatStringsSep " " (
       builtins.attrNames cfg.aptSourcesTransient
@@ -249,6 +268,12 @@ let
       lib.subtractLists (builtins.attrNames cfg.aptSourcesTransient) (
         builtins.attrNames cfg.aptSources
       )
+    );
+    # Generated rather than written, because the runbook's own prose said "Two
+    # of the four vendor packages" -- a count that was correct when written and
+    # goes stale on every vendor added. Docker is the vendor that made it stale.
+    "@aptTransientCount@" = toString (
+      builtins.length (builtins.attrNames cfg.aptSourcesTransient)
     );
     "@aptSourceCount@" = toString (
       builtins.length (builtins.attrNames cfg.aptSources)

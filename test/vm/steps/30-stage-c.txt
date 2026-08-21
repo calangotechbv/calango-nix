@@ -44,6 +44,14 @@ cd /etc/apt/sources.list.d && sudo rm -f calango-bootstrap-1password.sources cal
 #= sudo apt update
 sudo apt update 2>&1 | tail -5
 
+#T 60
+
+#= sudo usermod -aG docker <user>
+# The runbook's own line names <user>; this one substitutes the account and
+# then prints the resulting group list, so the pass log carries the evidence
+# rather than only an exit status. The membership is not live in this shell.
+sudo usermod -aG docker @USER@ && id -nG @USER@
+
 #T 1500
 
 #= curl -fsSLO "https://downloads.slack-edge.com/desktop-releases/linux/x64/$V/slack-desktop-$V-amd64.deb"
