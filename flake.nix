@@ -219,22 +219,48 @@
         # none, which is a broken login, and the only other check that walks
         # home-files, no-dangling-home-files below, would say nothing: it
         # reports links that point nowhere, not names that are absent.
-        hypr-config-linked =
-          pkgs.runCommand "hypr-config-linked" { } ''
-            link=${suffer.activationPackage}/home-files/.config/hypr/hyprland.lua
-            if [ ! -e "$link" ]; then
-              echo "home-files carries no .config/hypr/hyprland.lua." >&2
-              echo "home/session.nix names that path in the --config" >&2
-              echo "argument, so a generation without it cannot" >&2
-              echo "start a session." >&2
+        # home/session.nix's --config names ~/.config/hypr/hyprland.lua, and
+        # home/hyprland.nix puts a real file there through activation rather
+        # than an xdg.configFile symlink -- Hyprland canonicalises --config at
+        # startup (main.cpp:126-132), so a symlink is resolved away and the
+        # session is pinned to a store path for its whole life. That file is
+        # therefore load-bearing for the LOGIN, not for a feature: with nothing
+        # at that path the compositor starts with no config at all.
+        #
+        # Because it is written by activation rather than shipped in the
+        # manifest, no-dangling-home-files cannot see it and neither can a check
+        # that walks home-files -- which is what this check used to do, under
+        # the name hypr-config-linked. So it reads the activation script's own
+        # text, the same shape as home/default.nix's nixglSingleSource.
+        hypr-config-copied =
+          pkgs.runCommand "hypr-config-copied" { } ''
+            cfg=${suffer.config.calango.hyprConfig}/hyprland.lua
+            if [ ! -f "$cfg" ]; then
+              echo "the hypr-config derivation carries no hyprland.lua." >&2
               exit 1
             fi
 
-            if ! grep -q "hl.config" "$link"; then
-              echo "$link exists but does not look like the hyprland config" >&2
+            if ! grep -q "hl.config" "$cfg"; then
+              echo "$cfg exists but does not look like the hyprland config" >&2
               echo "(no hl.config call in it)." >&2
               exit 1
             fi
+
+            # Two needles, because either one alone passes for a wrong reason.
+            # The destination alone would match any generation that merely
+            # mentions the path; the source store path alone would match a hook
+            # that copied this config somewhere else entirely.
+            act=${suffer.activationPackage}/activate
+            for needle in "$cfg" "/hypr/hyprland.lua"; do
+              if ! grep -qF "$needle" "$act"; then
+                echo "the activation script does not name '$needle'." >&2
+                echo "home/session.nix's --config points at" >&2
+                echo "~/.config/hypr/hyprland.lua and nothing else writes" >&2
+                echo "it, so a generation without that copy step cannot" >&2
+                echo "start a session." >&2
+                exit 1
+              fi
+            done
             touch "$out"
           '';
 

@@ -118,13 +118,20 @@ let
   # already closed. --force-nixgl, letting start-hyprland do it and
   # dropping the flake's nixgl input entirely, is the tidier end state but
   # is unproven here and deliberately not taken now.
-  # --config names a path under $XDG_CONFIG_HOME, not the store path it points
-  # at. Hyprland re-opens that path on every reload and never canonicalises it,
-  # so a switch that re-points the symlink is enough to make `hyprctl reload`
-  # load the new generation -- with the store path here, it could not, because a
-  # store path's contents cannot change. home/hyprland.nix owns the link and
-  # explains the mechanism; flake.nix's hypr-config-linked asserts it exists,
-  # because a missing link here is a broken login rather than a broken feature.
+  # --config names a path under $XDG_CONFIG_HOME, and home/hyprland.nix writes a
+  # real FILE there rather than a store symlink. Both halves are needed and the
+  # reason is not obvious: Hyprland canonicalises this argument once at startup
+  # (main.cpp:126-132, v0.55.4), so a symlink is resolved away and the session is
+  # pinned to whatever store path it pointed at then -- measured, and unreachable
+  # by any number of `hyprctl reload`s. Naming a real file makes canonical() a
+  # no-op, so the path survives a switch and the reload loads the new generation.
+  #
+  # An earlier version of this comment said the argument is "never canonicalised"
+  # and concluded a symlink was enough. It cited Jeremy.cpp:29-30, which only
+  # returns the string main.cpp already resolved. home/hyprland.nix carries the
+  # full trace; flake.nix's hypr-config-copied asserts the activation script
+  # really writes this path, because nothing here is a broken feature -- with no
+  # file at this path the compositor starts with no config and the login breaks.
   hyprland-nixgl = pkgs.writeShellScriptBin "hyprland-nixgl" ''
     export PATH=${compositorPath}''${PATH:+:$PATH}
     exec ${nixgl.bin} \

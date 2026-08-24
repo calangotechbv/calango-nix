@@ -118,31 +118,79 @@ in
 
   config.calango.hyprConfig = hyprConfig;
 
-  # The compositor reaches its config through THIS name rather than through the
-  # store path, and the indirection is the whole point of the entry.
+  # The compositor reaches its config through THIS name, and what sits here is a
+  # real FILE rather than a symlink into the store. That is not a style choice.
+  # A symlink cannot work, and the version of this comment that said it could
+  # stood here for a whole spec while being false.
   #
-  # Hyprland keeps the --config argument verbatim -- it is never canonicalised
-  # (Jeremy.cpp:29-30, v0.55.4) -- and re-opens that same path on every reload:
+  # Hyprland CANONICALISES the --config argument once, at startup:
+  #
+  #     const auto ABS_PATH = std::filesystem::canonical(configPath);
+  #     if (!std::filesystem::is_regular_file(ABS_PATH)) { throw ... }
+  #     configPath = ABS_PATH;
+  #     -- main.cpp:126-132, v0.55.4
+  #
+  # std::filesystem::canonical resolves every symlink hop, so naming a symlink
+  # here buys exactly nothing: the link is followed ONCE and the store path it
+  # happened to point at in that instant is what every later reload re-reads --
   #
   #     m_mainConfigPath = Supplementary::Jeremy::getMainConfigPath()->path;
   #     luaL_loadfile(m_lua, m_mainConfigPath.c_str());
   #     -- ConfigManager.cpp:385,424
   #
-  # A store path is immutable, so a session launched with one can never reload
-  # into a new generation: `hyprctl reload` re-reads the same bytes, and the
-  # only way to pick up a config change was a fresh login. Home Manager rewrites
-  # this symlink on every switch, so the same path now yields the new file.
+  # -- and a store path's contents cannot change. The one apparent escape hatch
+  # is closed too: Jeremy.cpp:48-54 re-runs getCfgPath() when needsPathRecheck
+  # is set, but that returns m_explicitConfigPath, the already-canonicalised
+  # string, so a recheck yields the same store path. Nothing at runtime can
+  # redirect it.
   #
-  # home/session.nix's launcher names this path. The two belong together: if the
-  # link is missing the compositor starts with no config at all, which is a
-  # broken login rather than a degraded desktop, so flake.nix's
-  # hypr-config-linked asserts the generation carries it.
-  config.xdg.configFile."hypr/hyprland.lua".source = "${hyprConfig}/hyprland.lua";
+  # Measured 2026-08-24 rather than reasoned. A session started at 16:57 stayed
+  # pinned to generation 67's config for the rest of its life: a switch at 17:25
+  # repointed the link, four `hyprctl reload`s followed, and the compositor
+  # still had generation 67's single 3-finger gesture and neither of the new
+  # file's two. Note /proc/<pid>/cmdline CANNOT detect this -- it still prints
+  # the symlink path, because main.cpp rewrites a local variable and never argv,
+  # so reading cmdline looks like confirmation that the setup is sound.
+  #
+  # A real file makes canonical() a no-op: it resolves to itself, the path never
+  # moves, and each switch replaces the contents underneath it. install-then-
+  # rename rather than a truncating copy, because the compositor may
+  # luaL_loadfile this path at any moment -- a rename is atomic, where a partial
+  # write is a config that fails to parse.
+  #
+  # Ordered after linkGeneration deliberately, and that ordering is load-bearing
+  # rather than tidy. This path WAS an xdg.configFile entry, so Home Manager's
+  # file manifest carries it in the PREVIOUS generation, and linkGeneration
+  # deletes what it no longer manages -- a copy written before it would be
+  # removed moments later, on exactly one switch, the upgrade one. The entries
+  # happen to run linkGeneration before hyprlandReload today, but only this
+  # entryBetween makes that a guarantee instead of a coincidence.
+  #
+  # home/session.nix's launcher names this path. The two belong together: with
+  # no file here the compositor starts with no config at all, which is a broken
+  # login rather than a degraded desktop, so flake.nix's hypr-config-copied
+  # asserts that the activation script really writes it.
+  config.home.activation.hyprlandConfig =
+    lib.hm.dag.entryBetween [ "hyprlandReload" ] [ "linkGeneration" ] ''
+      run ${pkgs.coreutils}/bin/mkdir -p ${config.xdg.configHome}/hypr
+      run ${pkgs.coreutils}/bin/install -m 0644 \
+        ${hyprConfig}/hyprland.lua \
+        ${config.xdg.configHome}/hypr/.hyprland.lua.next
+      run ${pkgs.coreutils}/bin/mv -f \
+        ${config.xdg.configHome}/hypr/.hyprland.lua.next \
+        ${config.xdg.configHome}/hypr/hyprland.lua
+    '';
 
   # And make a switch enough on its own. The compositor is not a systemd unit
   # here, so sd-switch cannot restart it and nothing else notices the config
   # changed -- the same shape as the sd-switch trap in CLAUDE.md, where a
   # service goes on serving a store path that no longer has a symlink.
+  #
+  # This hook does nothing useful without the copy above, and did nothing useful
+  # for the whole time the config was a symlink: the reload re-read the store
+  # path canonical() had captured at login, so every switch paid Hyprland's
+  # whole Lua state -- CLAUDE.md records that a reload discards every runtime
+  # global and every hl.on handler -- and loaded the same bytes back.
   #
   # Guarded on HYPRLAND_INSTANCE_SIGNATURE so it does nothing when the switch
   # runs from a TTY, which is what this project's own advice recommends for a
