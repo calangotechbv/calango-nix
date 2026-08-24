@@ -632,9 +632,11 @@ hl.config({
         -- makes the focused column fully visible, and 0 centers the focused
         -- column on every focus change. This config wants neither on its own:
         -- see lookAheadColumn further down, which builds "show the column you
-        -- are heading towards" out of the fit behaviour. That construction
-        -- needs 1, because under 0 every step of it centers and the look-ahead
-        -- is erased.
+        -- are heading towards" out of the fit behaviour, and centers by hand in
+        -- the one case where there is nothing to show. That construction needs
+        -- 1, because under 0 every step of it centers and the look-ahead is
+        -- erased -- centering has to be the exception the helper asks for, not
+        -- the rule the option applies.
         --
         -- Read the history before changing this back. 0 was tried first, to get
         -- niri's `center-focused-column = "on-overflow"`, and it does not mean
@@ -935,9 +937,16 @@ end)
 --     x=    22 right=   746  FULLY VISIBLE  <- the look-ahead
 --     x=   760 right=  1479  FULLY VISIBLE  <- focus
 --
--- Where the two do not fit together, the return step clamps onto the target and
--- the look-ahead stays clipped, which is the fallback you want. At the end of
--- the tape both dispatches are no-ops.
+-- Where the two do not fit together there is nothing useful to scroll to, so
+-- the focused column is centered instead -- the one case this config asks for
+-- centering, and the reason `center` is dispatched at the end. Measured on a
+-- 0.49 column beside a 0.86 one, 1.35 of the screen between them:
+--
+--     clamped (no center):  margins left  27, right 790
+--     centered:             margins left 408, right 408
+--
+-- At the end of the tape both dispatches are no-ops and nothing is centered:
+-- there is no neighbour that failed to fit, so the condition never arises.
 --
 -- Two details that are load-bearing:
 --
@@ -954,6 +963,17 @@ end)
 -- All three dispatches run inside one callback, so no intermediate focus is
 -- ever composited -- the property cycleStack's dwindle branch below already
 -- relies on.
+-- The layout works in logical pixels and monitor.width is physical, so the
+-- scale divides. There is no reserved area in the Lua monitor object, which is
+-- why this is a width rather than a usable width: the bar reserves 32 px at the
+-- top and nothing at the sides, so horizontally the two agree. A future bar on
+-- the left or right would make this over-estimate.
+local function monitorWidth()
+    local m = hl.get_active_monitor()
+    if not m or not m.width or not m.scale or m.scale == 0 then return nil end
+    return m.width / m.scale
+end
+
 local function lookAheadColumn(dir)
     local ws = hl.get_active_workspace()
     if not ws or ws.tiled_layout ~= "scrolling" then return end
@@ -965,7 +985,28 @@ local function lookAheadColumn(dir)
     if not target then return end
 
     hl.dispatch(hl.dsp.focus({ direction = dir }))
+    local ahead = hl.get_active_window()
     hl.dispatch(hl.dsp.focus({ window = target }))
+
+    -- Same window means the tape ended and both dispatches were no-ops.
+    if not ahead or ahead.address == target.address then return end
+
+    local width = monitorWidth()
+    if not width then return end
+
+    -- The gap between two adjacent columns is fixed by the layout, so reading it
+    -- from the live boxes is safe even mid-animation: both columns carry the
+    -- same camera offset, and the difference between them does not move.
+    local gap
+    if dir == "left" then
+        gap = target.at.x - (ahead.at.x + ahead.size.x)
+    else
+        gap = ahead.at.x - (target.at.x + target.size.x)
+    end
+
+    if target.size.x + ahead.size.x + gap > width then
+        hl.dispatch(hl.dsp.layout("center"))
+    end
 end
 
 -- Directional focus, with the look-ahead on the two horizontal directions. Up
