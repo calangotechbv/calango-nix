@@ -940,10 +940,34 @@ end)
 -- ordinary move -- the column ahead rather than the one you came from. That is
 -- a different feature, and it is in this file's history rather than in it.
 --
--- Two things this deliberately does not do. It never centers at the end of the
--- tape, where no neighbour failed to fit. And it leaves the vertical directions
--- alone: a column's windows are stacked inside it, so there is no second column
--- to make room for.
+-- It leaves the vertical directions alone: a column's windows are stacked
+-- inside it, so there is no second column to make room for. And a column with
+-- no neighbour at all -- one column on the whole workspace -- is left where it
+-- is, since nothing failed to share the screen with it.
+--
+-- THE FIRST COLUMN OF AN OVERFLOWING TAPE CANNOT BE CENTERED, and that is the
+-- compositor rather than this code. Centering it needs empty space before the
+-- tape, which is a negative camera offset, and Hyprland resets one:
+--
+--     // if the offset is negative but we already extended and fit method is
+--     // not center, reset offset to 0
+--     if (maxExtent > usablePrimary && m_offset < 0.0 && *PFITMETHOD != 0)
+--         m_offset = 0.0;
+--     -- ScrollTapeController.cpp:228-231, v0.55.4
+--
+-- Measured with Hyprland's own `center` message and nothing of ours involved,
+-- on a 1278 px column and a 1536 px monitor:
+--
+--     first column, center dispatched:  x= 22, margins  22 / 236  (unmoved)
+--     last  column, center dispatched:  x=132, margins 132 / 127  (centered)
+--
+-- The clamp is one-sided, which is why the last column centers and the first
+-- does not. Setting focus_fit_method to 0 for the one dispatch does work --
+-- x=127, margins 127/132 -- and does not survive: the next recalculation puts
+-- it back at x=22, so a zero-width resize is enough to undo it. The dispatch
+-- below is therefore left in place and simply does nothing at that end, rather
+-- than being wrapped in a flip that would center the column and then let it
+-- jump back on an unrelated event.
 
 -- The layout works in logical pixels and monitor.width is physical, so the
 -- scale divides. There is no reserved area in the Lua monitor object, which is
@@ -1025,7 +1049,18 @@ local function centerIfCrowded(dir)
     local f = focusedColumn()
     if not f then return end
 
-    local neighbour = (dir == "left") and f.left or f.right
+    -- The column you are heading towards decides -- except at the end of the
+    -- tape, where there is none, and the column behind you is the only one this
+    -- column has to share the screen with. Without that fallback the last
+    -- column on the tape was the one place the rule never fired, which is
+    -- exactly where a wide column looks worst: pinned to the edge with a sliver
+    -- of its only neighbour beside it.
+    local neighbour
+    if dir == "left" then
+        neighbour = f.left or f.right
+    else
+        neighbour = f.right or f.left
+    end
     if not neighbour then return end
 
     if not fitsBeside(f.target, neighbour, f.width) then
