@@ -628,74 +628,48 @@ hl.config({
     scrolling = {
         fullscreen_on_one_column = true,
 
-        -- Center the focused column, but only when the columns do not all fit
-        -- -- niri's `center-focused-column = "on-overflow"`. Hyprland has no
-        -- option spelled that way, and READ THIS TOGETHER WITH column_width
-        -- BELOW: this value on its own does NOT produce that behaviour. It
-        -- means "always center the focused column", and the conditional half
-        -- comes from the widths, for the reason set out below.
+        -- 1 (Hyprland's default) scrolls the camera the LEAST amount that
+        -- makes the focused column fully visible, and 0 centers the focused
+        -- column on every focus change. This config wants neither on its own:
+        -- see lookAheadColumn further down, which builds "show the column you
+        -- are heading towards" out of the fit behaviour. That construction
+        -- needs 1, because under 0 every step of it centers and the look-ahead
+        -- is erased.
         --
-        -- 0 picks centerCol over fitCol on every focus change
-        -- (ScrollingAlgorithm.cpp:403-413, v0.55.4; 1, the default, scrolls the
-        -- least amount that makes the column fully visible, so the column snaps
-        -- to whichever edge it came from). The camera then overrides that when
-        -- the whole tape fits the viewport, centering the tape rather than the
-        -- focused column:
+        -- Read the history before changing this back. 0 was tried first, to get
+        -- niri's `center-focused-column = "on-overflow"`, and it does not mean
+        -- what it looks like. It means "always center", and the conditional
+        -- half comes from the camera, which centers the whole tape when the
+        -- tape fits:
         --
         --     // if the content fits in viewport, center it
         --     if (maxExtent < usablePrimary)
         --         m_offset = std::round((maxExtent - usablePrimary) / 2.0);
-        --     -- ScrollTapeController.cpp:222-224
+        --     -- ScrollTapeController.cpp:222-224, v0.55.4
         --
-        -- calculateCameraOffset runs after centerCol and assigns m_offset
-        -- outright, so it wins where it applies. `<` is strict, and that word
-        -- is the entire trap: with the stock 0.5 width, two columns are exactly
-        -- as wide as the screen, the test is false, and a two-terminal
-        -- workspace centers the focused terminal with the other one hanging
-        -- half off the edge. This was written claiming the option alone gave
-        -- on-overflow centering, and a person found the two-terminal case an
-        -- hour later.
-        --
-        -- Two things this does NOT change. A column wider than the screen is
-        -- centered at either setting (fitStrip's lo > hi branch,
-        -- ScrollTapeController.cpp:229-233). And a column that is already fully
-        -- visible is left alone when focus moved by pointer rather than by
-        -- keyboard -- the `input != INPUT_MODE_HARD` early return at
-        -- ScrollingAlgorithm.cpp:662-663 -- so clicking a visible window does
-        -- not recenter the tape under the cursor.
-        focus_fit_method = 0,
-
-        -- 0.49 rather than 0.5, and the preset list re-spelled to match. This
-        -- looks like a cosmetic nudge and is the whole reason the setting above
-        -- behaves as described: the camera's fit test is a STRICT <, and two
-        -- 0.5 columns are EQUAL to the usable width, not smaller. Measured on
-        -- eDP-1 (1536 logical px) with focus_fit_method = 0 and two terminals:
+        -- `<` is strict, and with the stock 0.5 width two columns are EXACTLY
+        -- as wide as the screen, so the test is false and a two-terminal
+        -- workspace centered the focused terminal with the other one hanging
+        -- half off the edge:
         --
         --     x= -352 w=739 right= 387   <- half off the left edge
         --     x=  401 w=739 right=1140   <- focused, centered
         --
-        -- 2 x 768 = 1536, so `maxExtent < usablePrimary` reads 1536 < 1536,
-        -- which is false, the tape is never centered as a whole, and centerCol
-        -- centers the focused column with the neighbour hanging off the screen.
-        -- At 0.49 the same two columns measure 0.98 of the width and sit
-        -- centered as a pair, both fully visible (x=37..761 and 775..1499),
-        -- while a third column overflows and the focused one centers again.
-        --
-        -- The presets need the same treatment or SUPER+SHIFT+= walks straight
-        -- back into the equality case. The pair that has to change is 0.667,
-        -- because 0.333 + 0.667 is not merely equal but slightly OVER:
-        --
-        --     0.333 * 1536 + 0.667 * 1536 = 1536.0000000000002
-        --
-        -- so that combination overflows by 2e-13 px and centers. 0.66 keeps
-        -- every combination that fits strictly under the width: 0.49 + 0.49 =
-        -- 0.98, 0.333 + 0.66 = 0.993, 0.333 x 3 = 0.999, and 0.66 + 0.49 =
-        -- 1.15 overflows, which is the case that SHOULD center.
-        --
-        -- Hyprland has no option for "center on overflow" -- this pair of
-        -- values is what produces it. If a future release relaxes that
-        -- comparison to <=, the widths stop being load-bearing and 0.5 can come
-        -- back. Nothing warns when that happens.
+        -- centerCol lives at ScrollingAlgorithm.cpp:403-413 and fitCol beside
+        -- it. Neither is reachable from a dispatcher: `center` is the only
+        -- layout message that touches the camera alone, every `fit` mode
+        -- resizes columns, and `move <px>` scrolls but then focuses whatever
+        -- lands in the middle. Focus is the camera control here.
+        focus_fit_method = 1,
+
+        -- The widths are a preference now, not a mechanism. They were chosen
+        -- while focus_fit_method was 0, to keep every combination that fits
+        -- strictly UNDER the monitor width, since at equality the camera stops
+        -- centering the tape. Under 1 that only decides whether a tape which
+        -- fits sits centered with a small margin (0.49: x=37..761 and
+        -- 775..1499 on a 1536 px monitor) or edge to edge (0.5). Kept for the
+        -- margin. 0.667 is spelled 0.66 for the same reason: 0.333 * 1536 +
+        -- 0.667 * 1536 = 1536.0000000000002, which is over, not equal.
         column_width           = 0.49,
         explicit_column_widths = "0.333, 0.49, 0.66, 1.0",
     },
@@ -939,6 +913,71 @@ end)
 -- backwards as table keys are all accepted and silently ignored, and every
 -- positional form -- cycle_next("prev"), cycle_next({"prev","tiled"}) -- is a
 -- no-op. Only the layout messages walk backwards.
+-- Look-ahead scrolling: after focus moves along the tape, show the column you
+-- are heading TOWARDS rather than the one you came from.
+--
+-- Hyprland scrolls the camera the least amount that makes the newly focused
+-- column fully visible, so the column that ends up beside it is the one you
+-- just left. Measured on four columns, moving focus left:
+--
+--     x=  -706 right=    13  clipped        <- where you are going
+--     x=    27 right=   746  FULLY VISIBLE  <- focus
+--     x=   760 right=  1484  FULLY VISIBLE  <- where you came from
+--
+-- There is no camera dispatcher to fix that with. `center` centers the focused
+-- column, every `fit` mode resizes columns rather than scrolling, and
+-- `move <px>` does scroll but then focuses whatever lands in the middle
+-- (ScrollingAlgorithm.cpp:1445-1452, v0.55.4). Focus is the only camera
+-- control, so the way to scroll one column further is to focus one column
+-- further and come back. The return step costs nothing: fitCol only clamps the
+-- offset, and the target is visible by then. Same four columns:
+--
+--     x=    22 right=   746  FULLY VISIBLE  <- the look-ahead
+--     x=   760 right=  1479  FULLY VISIBLE  <- focus
+--
+-- Where the two do not fit together, the return step clamps onto the target and
+-- the look-ahead stays clipped, which is the fallback you want. At the end of
+-- the tape both dispatches are no-ops.
+--
+-- Two details that are load-bearing:
+--
+--   * The look-ahead uses the SPATIAL dispatcher, never `focus l`/`focus r`.
+--     The layout message wraps at the ends (scrolling:wrap_focus is on by
+--     default), and a wrapping look-ahead would scroll the camera to the far
+--     end of the tape and back for nothing. Spatial focus stops instead.
+--
+--   * Focus returns by window, not by the opposite direction. A column can hold
+--     a stack, and the spatial dispatcher picks its neighbour by vertical
+--     overlap, so coming back by direction can land on a different window of
+--     the same column.
+--
+-- All three dispatches run inside one callback, so no intermediate focus is
+-- ever composited -- the property cycleStack's dwindle branch below already
+-- relies on.
+local function lookAheadColumn(dir)
+    local ws = hl.get_active_workspace()
+    if not ws or ws.tiled_layout ~= "scrolling" then return end
+
+    -- `move +col` on the last column scrolls to the end and focuses nothing
+    -- (ScrollingAlgorithm.cpp:1397-1403), so this is a real case, not defensive
+    -- padding.
+    local target = hl.get_active_window()
+    if not target then return end
+
+    hl.dispatch(hl.dsp.focus({ direction = dir }))
+    hl.dispatch(hl.dsp.focus({ window = target }))
+end
+
+-- Directional focus, with the look-ahead on the two horizontal directions. Up
+-- and down move inside a column's stack, where there is nothing to scroll
+-- towards, so they pass straight through.
+local function focusColumn(dir)
+    return function()
+        hl.dispatch(hl.dsp.focus({ direction = dir }))
+        if dir == "left" or dir == "right" then lookAheadColumn(dir) end
+    end
+end
+
 local function cycleStack(dir)
     return function()
         local ws = hl.get_active_workspace()
@@ -949,6 +988,11 @@ local function cycleStack(dir)
         -- which is the same thing and a real inverse -- no walk-forward needed.
         if ws.tiled_layout == "scrolling" then
             hl.dispatch(hl.dsp.layout(dir == "prev" and "focus l" or "focus r"))
+            -- The look-ahead survives the wrap without a special case. Walking
+            -- off the left end lands on the rightmost column, and the next
+            -- press still walks left, so leftwards is still the direction you
+            -- are heading.
+            lookAheadColumn(dir == "prev" and "left" or "right")
             return
         end
 
@@ -997,11 +1041,25 @@ local function scrollingMsg(msg)
     end
 end
 
--- Scroll the viewport one column each way, leaving focus where it is. (To move
--- focus instead, SUPER+H/L already work here -- directional focus is spatial and
--- needs no layout message -- and SUPER+[ / ] wrap around the ends.)
-hl.bind(mainMod .. " + comma",  scrollingMsg("move -col"))
-hl.bind(mainMod .. " + period", scrollingMsg("move +col"))
+-- Move focus one column each way, carrying the camera with it.
+--
+-- This comment used to say the two keys scrolled the viewport and left focus
+-- where it was. They do not: `move -col` focuses the previous column and warps
+-- the cursor into it (ScrollingAlgorithm.cpp:1414-1439), and a measurement
+-- shows the focused window's address changing on every press. They differ from
+-- SUPER+H/L only in being column-wise rather than spatial, and in the warp.
+local function scrollColumn(msg, dir)
+    return function()
+        local ws = hl.get_active_workspace()
+        if not ws or ws.tiled_layout ~= "scrolling" then return end
+
+        hl.dispatch(hl.dsp.layout(msg))
+        lookAheadColumn(dir)
+    end
+end
+
+hl.bind(mainMod .. " + comma",  scrollColumn("move -col", "left"))
+hl.bind(mainMod .. " + period", scrollColumn("move +col", "right"))
 
 -- Move the focused column along the tape. Wraps at both ends by default
 -- (scrolling:wrap_swapcol), so a column can be sent from one end to the other.
@@ -1038,18 +1096,19 @@ hl.bind(mainMod .. " + SHIFT + G", scrollingMsg("fit_into_view"))
 hl.bind(mainMod .. " + I", scrollingMsg("consume"))
 hl.bind(mainMod .. " + O", scrollingMsg("expel"))
 
--- Move focus with mainMod + arrow keys
-hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
-hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
-hl.bind(mainMod .. " + up",    hl.dsp.focus({ direction = "up" }))
-hl.bind(mainMod .. " + down",  hl.dsp.focus({ direction = "down" }))
+-- Move focus with mainMod + arrow keys. focusColumn rather than the dispatcher
+-- straight: on a scrolling workspace the horizontal two carry the look-ahead.
+hl.bind(mainMod .. " + left",  focusColumn("left"))
+hl.bind(mainMod .. " + right", focusColumn("right"))
+hl.bind(mainMod .. " + up",    focusColumn("up"))
+hl.bind(mainMod .. " + down",  focusColumn("down"))
 
 -- Same thing, vim-style. Note these do nothing on the monocle workspace, where
 -- every window occupies the same box -- use the bracket binds above there.
-hl.bind(mainMod .. " + H", hl.dsp.focus({ direction = "left" }))
-hl.bind(mainMod .. " + J", hl.dsp.focus({ direction = "down" }))
-hl.bind(mainMod .. " + K", hl.dsp.focus({ direction = "up" }))
-hl.bind(mainMod .. " + L", hl.dsp.focus({ direction = "right" }))
+hl.bind(mainMod .. " + H", focusColumn("left"))
+hl.bind(mainMod .. " + J", focusColumn("down"))
+hl.bind(mainMod .. " + K", focusColumn("up"))
+hl.bind(mainMod .. " + L", focusColumn("right"))
 
 -- Move the active window in a direction. Same monocle caveat as above: with
 -- every window in the same box there is nowhere to move it to.
