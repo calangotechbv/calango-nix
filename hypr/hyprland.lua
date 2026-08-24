@@ -1199,6 +1199,39 @@ local lastWs, lastIdx = nil, nil
 -- as a plain integer (LuaEventHandler.cpp:95-100), so the name lives here.
 local FOCUS_REASON_FFM = 1
 
+-- Where the pointer was the last time the rule ran, and the whole of what
+-- separates a hover from the cascade it used to start.
+--
+-- The loop: the rule reaches the camera through `colresize +0`, that scrolls
+-- the tape, the scroll slides a DIFFERENT window under the pointer,
+-- follow_mouse focuses it, and the rule runs again. Measured 2026-08-24 at 6 to
+-- 12 ms per turn -- faster than this machine's 16.7 ms frame, so it is
+-- invisible on screen and only the event socket sees it -- two or three columns
+-- walked per hover.
+--
+-- Every turn after the first re-focuses with a STATIONARY pointer, because
+-- nothing moved it; the layout moved underneath it. A deliberate hover always
+-- moves the pointer first. So "did the pointer move" is not a heuristic for the
+-- difference, it IS the difference, and it needs no timer and no debounce.
+--
+-- 0.5 px is margin, not tuning: during a cascade the pointer does not move at
+-- all, and a real hover crosses tens of pixels.
+local lastCursor = nil
+
+local function pointerMoved()
+    local p = hl.get_cursor_pos()
+    -- No reading: say it moved. A rule that runs when it should not is the
+    -- behaviour this file had all along; one that silently stops running is a
+    -- feature that looks broken with nothing to point at.
+    if not p then return true end
+
+    local moved = not lastCursor
+        or math.abs(p.x - lastCursor.x) > 0.5
+        or math.abs(p.y - lastCursor.y) > 0.5
+    lastCursor = p
+    return moved
+end
+
 hl.on("window.active", function(_, reason)
     local f = focusedColumn()
     if not f then
@@ -1216,12 +1249,23 @@ hl.on("window.active", function(_, reason)
     end
     lastWs, lastIdx = f.ws, f.idx
 
-    -- Tracked above and then dropped: the index has to stay current or the
-    -- direction on the NEXT keybind is measured from the column you were on
-    -- before the hover, and points the wrong way. `centered` is deliberately
-    -- left alone -- the rule moved no camera here, so what it believes about
-    -- the camera is still true.
-    if reason == FOCUS_REASON_FFM then return end
+    -- The index is tracked above whatever happens next, because a return below
+    -- still has to leave it current: otherwise the direction on the NEXT
+    -- keybind is measured from the column you were on before the hover, and
+    -- points the wrong way. `centered` is deliberately left alone on the return
+    -- -- the rule moved no camera there, so what it believes is still true.
+    --
+    -- The else branch is not symmetry for its own sake. Without it, a KEYBIND
+    -- focus that scrolls the camera can land a window under a pointer that
+    -- never moved; the FFM that follows would then compare against a position
+    -- from some earlier hover, find a difference, and let one turn of the
+    -- cascade through. Every path that reaches the rule leaves lastCursor at
+    -- where the pointer is now.
+    if reason == FOCUS_REASON_FFM then
+        if not pointerMoved() then return end
+    else
+        lastCursor = hl.get_cursor_pos()
+    end
 
     applyCameraRule(dir)
 end)
