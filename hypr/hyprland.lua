@@ -627,6 +627,36 @@ hl.config({
 hl.config({
     scrolling = {
         fullscreen_on_one_column = true,
+
+        -- Center the focused column, but only when the columns do not all fit.
+        -- That is niri's `center-focused-column = "on-overflow"`, and Hyprland
+        -- has no option spelled that way: focus_fit_method takes 0 or 1 and
+        -- nothing else. The conditional half comes from somewhere other than
+        -- this option, which is why 0 is not simply "always centered".
+        --
+        -- 0 picks centerCol over fitCol on every focus change
+        -- (ScrollingAlgorithm.cpp:403-413, v0.55.4; 1, the default, scrolls the
+        -- least amount that makes the column fully visible, so the column snaps
+        -- to whichever edge it came from). The camera then overrides that
+        -- whenever the whole tape fits the viewport, centering the tape as a
+        -- whole rather than the focused column:
+        --
+        --     // if the content fits in viewport, center it
+        --     if (maxExtent < usablePrimary)
+        --         m_offset = std::round((maxExtent - usablePrimary) / 2.0);
+        --     -- ScrollTapeController.cpp:222-224
+        --
+        -- calculateCameraOffset runs after centerCol and assigns m_offset
+        -- outright, so it wins. Hence the two behaviours from one value.
+        --
+        -- Two things this does NOT change. A column wider than the screen is
+        -- centered at either setting (fitStrip's lo > hi branch,
+        -- ScrollTapeController.cpp:229-233). And a column that is already fully
+        -- visible is left alone when focus moved by pointer rather than by
+        -- keyboard -- the `input != INPUT_MODE_HARD` early return at
+        -- ScrollingAlgorithm.cpp:662-663 -- so clicking a visible window does
+        -- not recenter the tape under the cursor.
+        focus_fit_method = 0,
     },
 })
 
