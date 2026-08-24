@@ -118,6 +118,46 @@ in
 
   config.calango.hyprConfig = hyprConfig;
 
+  # The compositor reaches its config through THIS name rather than through the
+  # store path, and the indirection is the whole point of the entry.
+  #
+  # Hyprland keeps the --config argument verbatim -- it is never canonicalised
+  # (Jeremy.cpp:29-30, v0.55.4) -- and re-opens that same path on every reload:
+  #
+  #     m_mainConfigPath = Supplementary::Jeremy::getMainConfigPath()->path;
+  #     luaL_loadfile(m_lua, m_mainConfigPath.c_str());
+  #     -- ConfigManager.cpp:385,424
+  #
+  # A store path is immutable, so a session launched with one can never reload
+  # into a new generation: `hyprctl reload` re-reads the same bytes, and the
+  # only way to pick up a config change was a fresh login. Home Manager rewrites
+  # this symlink on every switch, so the same path now yields the new file.
+  #
+  # home/session.nix's launcher names this path. The two belong together: if the
+  # link is missing the compositor starts with no config at all, which is a
+  # broken login rather than a degraded desktop, so flake.nix's
+  # hypr-config-linked asserts the generation carries it.
+  config.xdg.configFile."hypr/hyprland.lua".source = "${hyprConfig}/hyprland.lua";
+
+  # And make a switch enough on its own. The compositor is not a systemd unit
+  # here, so sd-switch cannot restart it and nothing else notices the config
+  # changed -- the same shape as the sd-switch trap in CLAUDE.md, where a
+  # service goes on serving a store path that no longer has a symlink.
+  #
+  # Guarded on HYPRLAND_INSTANCE_SIGNATURE so it does nothing when the switch
+  # runs from a TTY, which is what this project's own advice recommends for a
+  # switch that may restart the session. The body runs in a child shell, which
+  # does NOT inherit the activation script's -e (see CLAUDE.md), so the exits
+  # below are the control flow rather than failures.
+  config.home.activation.hyprlandReload =
+    lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run ${pkgs.bash}/bin/sh -c '
+        [ -n "''${HYPRLAND_INSTANCE_SIGNATURE:-}" ] || exit 0
+        ${pkgs.hyprland}/bin/hyprctl reload >/dev/null 2>&1 || exit 0
+        echo "hyprland: reloaded the config of the running session" >&2
+      ' || true
+    '';
+
   # The only thing Home Manager may own under the state directory. Anything
   # more would become a read-only store symlink, and quickshell writes all
   # four of these files at runtime.

@@ -213,6 +213,31 @@
       # layout change, or a typo here -- would leave $dangling empty and
       # this check would pass vacuously instead of failing loudly.
       checks.${system} = {
+        # home/session.nix launches the compositor with
+        # --config $XDG_CONFIG_HOME/hypr/hyprland.lua, so that link is not a
+        # convenience -- it is the config. Without it the compositor starts with
+        # none, which is a broken login, and the only other check that walks
+        # home-files, no-dangling-home-files below, would say nothing: it
+        # reports links that point nowhere, not names that are absent.
+        hypr-config-linked =
+          pkgs.runCommand "hypr-config-linked" { } ''
+            link=${suffer.activationPackage}/home-files/.config/hypr/hyprland.lua
+            if [ ! -e "$link" ]; then
+              echo "home-files carries no .config/hypr/hyprland.lua." >&2
+              echo "home/session.nix names that path in the --config" >&2
+              echo "argument, so a generation without it cannot" >&2
+              echo "start a session." >&2
+              exit 1
+            fi
+
+            if ! grep -q "hl.config" "$link"; then
+              echo "$link exists but does not look like the hyprland config" >&2
+              echo "(no hl.config call in it)." >&2
+              exit 1
+            fi
+            touch "$out"
+          '';
+
         no-dangling-home-files =
           pkgs.runCommand "portal-stack-no-dangling-home-files" { } ''
             dir=${suffer.activationPackage}/home-files

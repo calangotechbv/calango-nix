@@ -28,13 +28,14 @@ sg nix-users -c 'nix build ...'
 which reads as a broken Nix install. A fresh login also picks the group up, but
 `sg` is the convention here and is always correct.
 
-`nix flake check` runs **eight** checks. Count them rather than quoting this
+`nix flake check` runs **nine** checks. Count them rather than quoting this
 line — the number was stale at three the moment `bar-title-slot` landed, the
 bare-Debian bootstrap branch moved it to five by adding `host-config-files`,
 the generated-preseed branch moved it to six by adding
 `preseed-package-list`, the VM-harness build-time guard moved it to seven by
-adding `vm-step-lines-verbatim`, and the VM-harness Python port moved it to
-eight by adding `vm-harness-tests`:
+adding `vm-step-lines-verbatim`, the VM-harness Python port moved it to
+eight by adding `vm-harness-tests`, and the stable hyprland config path moved
+it to nine by adding `hypr-config-linked`:
 
 ```sh
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -44,12 +45,12 @@ sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
 looser version started lying.** `nix flake check` validates *every* flake
 output, not only `checks`, so it emits a `checking derivation` line for
 `packages.x86_64-linux.calangoDeb` and `packages.x86_64-linux.calangoBootstrap`
-as well. Measured with both packages and all eight checks in the tree:
+as well. Measured with both packages and all nine checks in the tree:
 
 ```sh
-… | grep -c '^checking derivation'          # 10  <- includes both packages
-… | grep -c '^checking derivation checks\.'  # 8   <- the checks
-… | grep -o 'running [0-9]* flake checks'   # running 8 flake checks
+… | grep -c '^checking derivation'          # 11  <- includes both packages
+… | grep -c '^checking derivation checks\.'  # 9   <- the checks
+… | grep -o 'running [0-9]* flake checks'   # running 9 flake checks
 ```
 
 The looser pattern disagreed with nix's own summary line and nothing warned
@@ -93,8 +94,8 @@ Run it after touching a `source =` anywhere under `home/`, `guiPackages` in
 `home/gui-apps.nix`, the `applications/` `xdg.dataFile` entries in
 `home/apps.nix`, `quickshell/bar/TitleSlot.qml`, `bootstrap/greetd-config.toml`,
 `bootstrap/runbook.md.in`, `bootstrap/preseed.cfg.in`, `bootstrap/keys/`,
-`test/vm/steps/*.txt`, `test/vm/calangovm/`, or the `required` list in
-`flake.nix`. The first of
+`test/vm/steps/*.txt`, `test/vm/calangovm/`, `hypr/hyprland.lua`, or the
+`required` list in `flake.nix`. The first of
 those is deliberately stated as *syntax* rather than as a list of modules: an
 earlier version of this passage named `home/portals.nix` and `home/uwsm.nix`,
 and `grep -l 'source =' home/*.nix` returns **ten** modules, so the named pair
@@ -1612,6 +1613,26 @@ for deliberate testing.
   `/etc/cron.daily/google-chrome` exists and points somewhere, which is a real
   command whose output does not support "identical script" — that conclusion
   needed the target read, not just resolved.
+- **The compositor reads its config through `~/.config/hypr/hyprland.lua`, not
+  through a store path, and that is deliberate.** Hyprland keeps the `--config`
+  argument verbatim -- never canonicalised (`Jeremy.cpp:29-30`) -- and re-opens
+  that same path on every reload (`ConfigManager.cpp:385,424`). A session
+  launched with a store path therefore can NEVER reload into a new generation:
+  the path is immutable, so `hyprctl reload` re-reads the same bytes and only a
+  fresh login picks up a change. `home/hyprland.nix` owns the name as an
+  `xdg.configFile` symlink and `home/session.nix` names it in the launcher, so
+  a switch re-points the link and a reload loads the new generation. The link is
+  therefore load-bearing for the login itself, which is why `hypr-config-linked`
+  asserts the generation carries it -- `no-dangling-home-files` cannot: it
+  reports links that point nowhere, not names that are absent.
+
+  A switch also runs `hyprctl reload` itself, from
+  `home/hyprland.nix`'s `hyprlandReload` activation hook, guarded on
+  `HYPRLAND_INSTANCE_SIGNATURE` so a switch from a TTY does nothing. Note what
+  a reload costs: it resets Hyprland's whole Lua state. Measured on 2026-08-24 —
+  every global and every `hl.on` handler registered at runtime was gone
+  afterwards. That is harmless for config-declared handlers, which the reload
+  re-registers, and total for anything added live with `hyprctl eval`.
 - **A previous Home Manager generation is not a recovery path.** It lacks the
   uwsm session units, both portal backends, the portal frontend, the portal
   config and the font baseline. Recovery is fix-forward:

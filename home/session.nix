@@ -118,11 +118,18 @@ let
   # already closed. --force-nixgl, letting start-hyprland do it and
   # dropping the flake's nixgl input entirely, is the tidier end state but
   # is unproven here and deliberately not taken now.
+  # --config names a path under $XDG_CONFIG_HOME, not the store path it points
+  # at. Hyprland re-opens that path on every reload and never canonicalises it,
+  # so a switch that re-points the symlink is enough to make `hyprctl reload`
+  # load the new generation -- with the store path here, it could not, because a
+  # store path's contents cannot change. home/hyprland.nix owns the link and
+  # explains the mechanism; flake.nix's hypr-config-linked asserts it exists,
+  # because a missing link here is a broken login rather than a broken feature.
   hyprland-nixgl = pkgs.writeShellScriptBin "hyprland-nixgl" ''
     export PATH=${compositorPath}''${PATH:+:$PATH}
     exec ${nixgl.bin} \
       ${pkgs.hyprland}/bin/start-hyprland --no-nixgl -- \
-      --config ${config.calango.hyprConfig}/hyprland.lua "$@"
+      --config ${config.xdg.configHome}/hypr/hyprland.lua "$@"
   '';
 
   # uwsm resolves a compositor by desktop entry, and hyprland's own
