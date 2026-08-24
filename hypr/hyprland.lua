@@ -742,10 +742,51 @@ hl.config({
     },
 })
 
+-- Three fingers scroll the tape; four switch workspaces. The scrolling layout
+-- is the thing this machine actually navigates, so it gets the cheaper gesture.
+--
+-- `scroll_move` moves the tape 1:1 against the viewport width while the fingers
+-- are down, then projects the release velocity and snaps to a column
+-- (ScrollMoveGesture.cpp). It reads the layout once at swipe start and does
+-- nothing at all off a scrolling workspace, so it needs no gating of its own --
+-- unlike every layout message further down, which has to be wrapped in
+-- scrollingMsg to avoid an error per press.
+--
+-- Two spellings exist and only one works here. The Lua config takes
+-- `scroll_move` (LuaBindingsConfigRules.cpp:856); the legacy hyprlang keyword
+-- takes `scrollMove` (ConfigManager.cpp:1989). This flake is on the Lua config,
+-- where `hyprctl keyword` refuses outright -- "keyword can't work with
+-- non-legacy parsers. Use eval." -- so the legacy name never applies. It is
+-- named here only because a search will find it and it looks like an
+-- alternative.
+--
+-- The finger counts must differ. addGesture refuses a second gesture on the
+-- same finger count and axis rather than replacing it, with "Gesture will be
+-- overshadowed by a previous gesture" (TrackpadGestures.cpp:58-91). That
+-- refusal is also the way to test a live gesture: adding it twice and getting
+-- the error proves the first add registered, where a silent `ok` proves only
+-- that nothing objected.
+--
+-- Known interaction, measured 2026-08-24 rather than predicted, and NOT fixed
+-- by adding these two lines. A swipe slides the tape under a stationary cursor,
+-- follow_mouse focuses whatever passes beneath it, and the camera rule below
+-- reacts to that focus by scrolling the tape again -- which puts a different
+-- window under the cursor. The loop runs at event-loop speed, not frame speed,
+-- so it is invisible: on a 60 Hz panel (16.7 ms per frame) one swipe produced
+-- three focus changes 6 to 12 ms apart. The control was follow_mouse = 0, where
+-- the same gestures gave 25 focus events with a MINIMUM gap of 640 ms and not
+-- one below a frame. The camera rule's FFM gate is what breaks that loop; these
+-- gestures are only what exposed it.
 hl.gesture({
     fingers = 3,
     direction = "horizontal",
-    action = "workspace"
+    action = "scroll_move",
+})
+
+hl.gesture({
+    fingers = 4,
+    direction = "horizontal",
+    action = "workspace",
 })
 
 -- Example per-device config
