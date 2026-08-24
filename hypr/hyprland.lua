@@ -1116,10 +1116,36 @@ local function applyCameraRule(dir)
     applying = false
 end
 
--- Every focus change runs the rule, whatever caused it -- a keybind, a mouse
--- click, a window closing and handing focus on. The binds below are therefore
--- plain dispatchers again: they do not call the rule, they cause the event that
--- does.
+-- Nearly every focus change runs the rule -- a keybind, a window closing and
+-- handing focus on. The binds below are therefore plain dispatchers again: they
+-- do not call the rule, they cause the event that does.
+--
+-- The one exception is focus that follows the mouse, and it is an exception
+-- because Hyprland already decides that case for itself, more carefully than
+-- this rule can. CScrollingAlgorithm registers its own window.active listener
+-- (ScrollingAlgorithm.cpp:589) and classifies the reason: FOCUS_REASON_FFM is
+-- absent from isHardInputFocusReason (FocusState.cpp:310-313), so a hover
+-- arrives at focusOnInput as INPUT_MODE_SOFT, and that path refuses to move the
+-- camera three separate ways (ScrollingAlgorithm.cpp:630-671) -- below
+-- scrolling:follow_min_visible of the target on screen, a click whose target is
+-- not under the cursor, and any column that is already fully visible.
+--
+-- This rule reaches the camera by a route that has none of those tests.
+-- `colresize +0` ends in a CScopeGuard calling centerOrFitCol unconditionally
+-- (ScrollingAlgorithm.cpp:1475-1480), so hovering a 163 px sliver of a
+-- neighbour scrolled the whole tape to it, where upstream would have required
+-- 0.4 * 1536 = 614 px before following. Standing down here is therefore not the
+-- same as suppressing the hover: upstream's listener still runs, so
+-- follow_min_visible governs it instead of nothing at all.
+--
+-- Scoped to FFM deliberately, and the near miss is worth recording. The
+-- touchpad scroll_move gesture ends by focusing the column it landed on, and
+-- which reason that carries depends on a setting: with
+-- gestures:scrolling:move_snap_to_grid on (the default) it goes through
+-- focusColumn -> focusTargetUpdate and arrives as FOCUS_REASON_DESKTOP_STATE_CHANGE
+-- (ScrollingAlgorithm.cpp:2044), which IS hard; only with snapping off does it
+-- use FOCUS_REASON_FFM directly (ScrollMoveGesture.cpp:133). So this gate does
+-- not quiet the rule after a snapped swipe, and must not be assumed to.
 --
 -- The direction is remembered rather than passed, because an event carries
 -- none. Column INDEX rather than x: x is a position on the tape and moves with
@@ -1128,7 +1154,11 @@ end
 -- went.
 local lastWs, lastIdx = nil, nil
 
-hl.on("window.active", function()
+-- Desktop::eFocusReason, FocusState.hpp:9-28. The event hands the reason to Lua
+-- as a plain integer (LuaEventHandler.cpp:95-100), so the name lives here.
+local FOCUS_REASON_FFM = 1
+
+hl.on("window.active", function(_, reason)
     local f = focusedColumn()
     if not f then
         lastWs, lastIdx = nil, nil
@@ -1144,6 +1174,13 @@ hl.on("window.active", function()
         end
     end
     lastWs, lastIdx = f.ws, f.idx
+
+    -- Tracked above and then dropped: the index has to stay current or the
+    -- direction on the NEXT keybind is measured from the column you were on
+    -- before the hover, and points the wrong way. `centered` is deliberately
+    -- left alone -- the rule moved no camera here, so what it believes about
+    -- the camera is still true.
+    if reason == FOCUS_REASON_FFM then return end
 
     applyCameraRule(dir)
 end)
