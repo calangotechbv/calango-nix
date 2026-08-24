@@ -630,12 +630,11 @@ hl.config({
 
         -- 1 (Hyprland's default) scrolls the camera the LEAST amount that
         -- makes the focused column fully visible, and 0 centers the focused
-        -- column on every focus change. This config wants 1 plus an exception:
-        -- see centerIfCrowded further down, which centers by hand in the one
-        -- case that reads badly under the fit behaviour -- a focused column
-        -- pinned to an edge beside a neighbour too wide to share the screen
-        -- with it. Centering has to be that exception rather than the rule the
-        -- option applies, which is what 0 would make it.
+        -- column on every focus change. Neither is left in charge here: this
+        -- is the STARTING value only, and applyCameraRule further down sets it
+        -- to 0 or 1 per event, from the geometry. 1 is the right value to start
+        -- from because it is the ordinary case -- a column that can share the
+        -- screen with its neighbour.
         --
         -- Read the history before changing this back. 0 was tried first, to get
         -- niri's `center-focused-column = "on-overflow"`, and it does not mean
@@ -914,60 +913,38 @@ end)
 -- backwards as table keys are all accepted and silently ignored, and every
 -- positional form -- cycle_next("prev"), cycle_next({"prev","tiled"}) -- is a
 -- no-op. Only the layout messages walk backwards.
--- Center the focused column when it and the column beyond it cannot share the
--- screen.
+-- Center the focused column when it cannot share the screen with the column
+-- beside it, and leave Hyprland's own behaviour alone the rest of the time.
 --
--- Hyprland scrolls the camera the least amount that makes the newly focused
--- column fully visible, which pins it against whichever edge it entered from.
--- That is fine while two columns fit together -- you get the one you came from
--- and the one you are on -- and it reads badly when they do not, because the
--- focused column sits against an edge beside a sliver of a neighbour that was
--- never going to fit. Measured on a 719 px column next to a 1278 px one, on a
--- 1536 px monitor:
+-- The mechanism is scrolling:focus_fit_method itself, set per event rather than
+-- once in the config above. 1 scrolls the camera the least amount that makes
+-- the focused column fully visible, which pins it against whichever edge it
+-- entered from; 0 centers it. Neither is right on its own -- 1 pins a wide
+-- column beside a sliver of a neighbour that was never going to fit, and 0
+-- centers everything, always. So the geometry below decides which of the two
+-- the next moment wants, sets it, and lets the compositor do the work.
 --
---     pinned:    x=  27 right= 746   margins left  27, right 790
---     centered:  x= 408 right=1128   margins left 408, right 408
+-- Deciding rather than doing is what makes this durable, and that is measured.
+-- Dispatching `center` by hand does not survive: at the LEFT end of the tape it
+-- does nothing at all, because centering the first column needs empty space
+-- before the tape -- a negative camera offset -- and Hyprland resets one:
 --
--- So: plain focus, then center in that case only. `center` is the one layout
--- message that moves the camera and nothing else -- every `fit` mode resizes
--- columns instead of scrolling, and `move <px>` scrolls but then focuses
--- whatever lands in the middle (ScrollingAlgorithm.cpp:1445-1452, v0.55.4).
---
--- The neighbour is found by reading the workspace geometry, NOT by focusing it.
--- A version that focused one column further and came back was built first and
--- dropped after a live comparison: focusing a column necessarily scrolls the
--- camera onto it, so that version also changed which neighbour you see on every
--- ordinary move -- the column ahead rather than the one you came from. That is
--- a different feature, and it is in this file's history rather than in it.
---
--- It leaves the vertical directions alone: a column's windows are stacked
--- inside it, so there is no second column to make room for. And a column with
--- no neighbour at all -- one column on the whole workspace -- is left where it
--- is, since nothing failed to share the screen with it.
---
--- THE FIRST COLUMN OF AN OVERFLOWING TAPE CANNOT BE CENTERED, and that is the
--- compositor rather than this code. Centering it needs empty space before the
--- tape, which is a negative camera offset, and Hyprland resets one:
---
---     // if the offset is negative but we already extended and fit method is
---     // not center, reset offset to 0
 --     if (maxExtent > usablePrimary && m_offset < 0.0 && *PFITMETHOD != 0)
 --         m_offset = 0.0;
 --     -- ScrollTapeController.cpp:228-231, v0.55.4
 --
--- Measured with Hyprland's own `center` message and nothing of ours involved,
--- on a 1278 px column and a 1536 px monitor:
+-- Note `!= 0`. Under 0 that clamp is skipped, so the first column centers like
+-- any other, and a later recalculation re-centers it instead of undoing it:
 --
---     first column, center dispatched:  x= 22, margins  22 / 236  (unmoved)
---     last  column, center dispatched:  x=132, margins 132 / 127  (centered)
+--     center dispatched under 1:  x= 22, margins  22 / 236   unmoved
+--     center dispatched under 0:  x=127, margins 127 / 132   centered
+--     ... then a zero-width resize under 0:                  still 127 / 132
+--     ... the same under 1:                                  back to x=22
 --
--- The clamp is one-sided, which is why the last column centers and the first
--- does not. Setting focus_fit_method to 0 for the one dispatch does work --
--- x=127, margins 127/132 -- and does not survive: the next recalculation puts
--- it back at x=22, so a zero-width resize is enough to undo it. The dispatch
--- below is therefore left in place and simply does nothing at that end, rather
--- than being wrapped in a flip that would center the column and then let it
--- jump back on an unrelated event.
+-- The rule is re-applied with a zero-width colresize, whose scope guard calls
+-- centerOrFit (ScrollingAlgorithm.cpp:1475-1481) and therefore honours whatever
+-- the option now says. That dispatch moves no focus, which is what lets this
+-- run from an event handler without feeding itself.
 
 -- The layout works in logical pixels and monitor.width is physical, so the
 -- scale divides. There is no reserved area in the Lua monitor object, which is
@@ -1019,11 +996,11 @@ local function fitsBeside(target, neighbour, width)
     return target.size.x + neighbour.width + gap <= width
 end
 
--- The focused column, its index among the columns, the columns either side, and
--- the monitor width -- everything both rules below need. nil when the workspace
--- is not scrolling, or when nothing is focused: `move +col` on the last column
--- scrolls to the end and focuses nothing (ScrollingAlgorithm.cpp:1397-1403), so
--- that is a real case rather than defensive padding.
+-- The focused column and everything the rule needs about it. nil when the
+-- workspace is not scrolling, or when nothing is focused: `move +col` on the
+-- last column scrolls to the end and focuses nothing
+-- (ScrollingAlgorithm.cpp:1397-1403), so that is a real case rather than
+-- defensive padding.
 local function focusedColumn()
     local ws = hl.get_active_workspace()
     if not ws or ws.tiled_layout ~= "scrolling" then return nil end
@@ -1037,44 +1014,146 @@ local function focusedColumn()
     local cols = columnsOf(ws)
     for i, c in ipairs(cols) do
         if c.x == target.at.x then
-            return { target = target, width = width, cols = cols, idx = i,
-                     left = cols[i - 1], right = cols[i + 1] }
+            return { ws = ws.id, target = target, width = width,
+                     idx = i, left = cols[i - 1], right = cols[i + 1] }
         end
     end
 
     return nil
 end
 
-local function centerIfCrowded(dir)
+-- With a direction, the column you are heading towards decides -- except at the
+-- end of the tape, where there is none and the column behind you is the only
+-- one this column has to share the screen with. Without a direction -- a new
+-- window, or a click that landed on the column already focused -- a column is
+-- crowded only when NEITHER side fits, which is the same question asked of both
+-- neighbours at once.
+local function wantsCentering(f, dir)
+    local leftFits  = fitsBeside(f.target, f.left,  f.width)
+    local rightFits = fitsBeside(f.target, f.right, f.width)
+
+    if dir == "left" and f.left then return not leftFits end
+    if dir == "right" and f.right then return not rightFits end
+
+    -- A column with no neighbour at all shares the screen with nothing, so
+    -- nothing failed to fit beside it.
+    if not f.left and not f.right then return false end
+
+    return not leftFits and not rightFits
+end
+
+-- Leaving a centered column is not symmetric with entering one, and this is
+-- where a measurement was needed rather than reasoning. Setting the option back
+-- to 1 does not undo a centering: a fit only CLAMPS the camera, and a centered
+-- column is fully visible, so there is nothing for the clamp to correct. The
+-- column stays centered until something scrolls the camera, and only focus
+-- scrolls the camera.
+--
+-- So the way out is a focus round trip -- the neighbour, then back by window.
+-- Focusing the neighbour scrolls it into view; returning moves nothing, because
+-- the column is visible by then. It runs ONLY on the transition out of a
+-- centered state, which is why the state is remembered rather than measured
+-- from the margins: a column can sit centered under an ordinary fit by
+-- coincidence, and a round trip there would scroll the camera for no reason.
+--
+-- The neighbour is picked by how much of it is already on screen, so the camera
+-- takes the shorter way out.
+local function uncenter(f)
+    local m = hl.get_active_monitor()
+    if not m then return end
+
+    local screenL, screenR = m.x, m.x + f.width
+    local function onScreen(c)
+        if not c then return -1 end
+        return math.max(0, math.min(c.x + c.width, screenR) - math.max(c.x, screenL))
+    end
+
+    local leftFits  = fitsBeside(f.target, f.left,  f.width)
+    local rightFits = fitsBeside(f.target, f.right, f.width)
+
+    local dir
+    if leftFits and rightFits then
+        dir = (onScreen(f.left) >= onScreen(f.right)) and "left" or "right"
+    elseif leftFits then
+        dir = "left"
+    elseif rightFits then
+        dir = "right"
+    else
+        return
+    end
+
+    hl.dispatch(hl.dsp.focus({ direction = dir }))
+    hl.dispatch(hl.dsp.focus({ window = f.target }))
+end
+
+-- Set the option to what this moment wants, then make it take effect. The
+-- reentry guard matters here rather than being insurance: uncenter() moves
+-- focus twice, and each move fires window.active straight back into this.
+local applying = false
+local centered = false
+
+local function applyCameraRule(dir)
+    if applying then return end
+
     local f = focusedColumn()
     if not f then return end
 
-    -- The column you are heading towards decides -- except at the end of the
-    -- tape, where there is none, and the column behind you is the only one this
-    -- column has to share the screen with. Without that fallback the last
-    -- column on the tape was the one place the rule never fired, which is
-    -- exactly where a wide column looks worst: pinned to the edge with a sliver
-    -- of its only neighbour beside it.
-    local neighbour
-    if dir == "left" then
-        neighbour = f.left or f.right
+    applying = true
+
+    if wantsCentering(f, dir) then
+        hl.config({ scrolling = { focus_fit_method = 0 } })
+        hl.dispatch(hl.dsp.layout("colresize +0"))
+        centered = true
     else
-        neighbour = f.right or f.left
+        hl.config({ scrolling = { focus_fit_method = 1 } })
+        hl.dispatch(hl.dsp.layout("colresize +0"))
+        if centered then
+            uncenter(f)
+            centered = false
+        end
     end
-    if not neighbour then return end
 
-    if not fitsBeside(f.target, neighbour, f.width) then
-        hl.dispatch(hl.dsp.layout("center"))
-    end
+    applying = false
 end
 
--- Directional focus, with the centering rule on the two horizontal directions.
-local function focusColumn(dir)
-    return function()
-        hl.dispatch(hl.dsp.focus({ direction = dir }))
-        if dir == "left" or dir == "right" then centerIfCrowded(dir) end
+-- Every focus change runs the rule, whatever caused it -- a keybind, a mouse
+-- click, a window closing and handing focus on. The binds below are therefore
+-- plain dispatchers again: they do not call the rule, they cause the event that
+-- does.
+--
+-- The direction is remembered rather than passed, because an event carries
+-- none. Column INDEX rather than x: x is a position on the tape and moves with
+-- the camera, so the same column reads a different x after every scroll, and a
+-- comparison of two x values across two events says nothing about which way you
+-- went.
+local lastWs, lastIdx = nil, nil
+
+hl.on("window.active", function()
+    local f = focusedColumn()
+    if not f then
+        lastWs, lastIdx = nil, nil
+        return
     end
-end
+
+    local dir
+    if lastWs == f.ws and lastIdx then
+        if f.idx < lastIdx then
+            dir = "left"
+        elseif f.idx > lastIdx then
+            dir = "right"
+        end
+    end
+    lastWs, lastIdx = f.ws, f.idx
+
+    applyCameraRule(dir)
+end)
+
+-- A new window has no direction: it did not come from anywhere.
+hl.on("window.open", function() applyCameraRule(nil) end)
+
+-- A window closing re-flows the tape under the column that keeps focus, and
+-- window.active does not fire when focus does not move.
+hl.on("window.close", function() applyCameraRule(nil) end)
 
 local function cycleStack(dir)
     return function()
@@ -1086,10 +1165,6 @@ local function cycleStack(dir)
         -- which is the same thing and a real inverse -- no walk-forward needed.
         if ws.tiled_layout == "scrolling" then
             hl.dispatch(hl.dsp.layout(dir == "prev" and "focus l" or "focus r"))
-            -- Survives the wrap without a special case: walking off the left
-            -- end lands on the rightmost column, and the neighbour that matters
-            -- there is still the one to its left.
-            centerIfCrowded(dir == "prev" and "left" or "right")
             return
         end
 
@@ -1145,85 +1220,31 @@ end
 -- the cursor into it (ScrollingAlgorithm.cpp:1414-1439), and a measurement
 -- shows the focused window's address changing on every press. They differ from
 -- SUPER+H/L only in being column-wise rather than spatial, and in the warp.
-local function scrollColumn(msg, dir)
-    return function()
-        local ws = hl.get_active_workspace()
-        if not ws or ws.tiled_layout ~= "scrolling" then return end
-
-        hl.dispatch(hl.dsp.layout(msg))
-        centerIfCrowded(dir)
-    end
-end
-
-hl.bind(mainMod .. " + comma",  scrollColumn("move -col", "left"))
-hl.bind(mainMod .. " + period", scrollColumn("move +col", "right"))
+hl.bind(mainMod .. " + comma",  scrollingMsg("move -col"))
+hl.bind(mainMod .. " + period", scrollingMsg("move +col"))
 
 -- Move the focused column along the tape. Wraps at both ends by default
 -- (scrolling:wrap_swapcol), so a column can be sent from one end to the other.
 hl.bind(mainMod .. " + SHIFT + comma",  scrollingMsg("swapcol l"))
 hl.bind(mainMod .. " + SHIFT + period", scrollingMsg("swapcol r"))
 
--- Resizing moves the same question as focusing does: after the width changes,
--- can a neighbour still sit beside this column?
+-- Resizing asks the same question, and no focus event answers it: the width
+-- changes under a column that keeps focus, so window.active never fires. Hence
+-- the one bind wrapper left in this file.
 --
 -- Hyprland re-fits the column itself after every colresize -- centerOrFit runs
--- in colresize's own scope guard (ScrollingAlgorithm.cpp:1475-1481) -- but a fit
--- only CLAMPS. A column that is already fully visible does not move, so a column
--- centered by the rule above stays centered after it shrinks back to a width
--- where a neighbour would fit. Growing has the mirror problem: the column stays
--- pinned to an edge beside a neighbour it can no longer share the screen with.
---
--- So: grow past the point where either neighbour fits, and the column centers.
--- Shrink back, and it un-centers. The un-centering is a focus round trip, since
--- focus is the only camera control -- focusing the neighbour scrolls it into
--- view, and returning by window does not move the camera, because the column is
--- visible by then. Where the layout is already right, both dispatches are
--- no-ops: the neighbour is fully visible, so nothing scrolls.
---
--- The neighbour is picked by how much of it is already on screen, so the camera
--- moves the shorter way and a column with a fitting neighbour on each side does
--- not jump across the tape.
-local function recenterAfterResize()
-    local f = focusedColumn()
-    if not f then return end
-
-    local leftFits  = fitsBeside(f.target, f.left,  f.width)
-    local rightFits = fitsBeside(f.target, f.right, f.width)
-
-    if not leftFits and not rightFits then
-        hl.dispatch(hl.dsp.layout("center"))
-        return
-    end
-
-    local m = hl.get_active_monitor()
-    if not m then return end
-
-    local screenL, screenR = m.x, m.x + f.width
-    local function onScreen(c)
-        if not c then return -1 end
-        return math.max(0, math.min(c.x + c.width, screenR) - math.max(c.x, screenL))
-    end
-
-    local dir
-    if leftFits and rightFits then
-        dir = (onScreen(f.left) >= onScreen(f.right)) and "left" or "right"
-    elseif leftFits then
-        dir = "left"
-    else
-        dir = "right"
-    end
-
-    hl.dispatch(hl.dsp.focus({ direction = dir }))
-    hl.dispatch(hl.dsp.focus({ window = f.target }))
-end
-
+-- in colresize's own scope guard (ScrollingAlgorithm.cpp:1475-1481) -- but with
+-- whatever the option said a moment ago, which is the answer to the previous
+-- question rather than this one. So the rule runs again afterwards, and the
+-- second pass is what centers a column that has outgrown both its neighbours,
+-- or un-centers one that has shrunk back to where a neighbour fits.
 local function resizeColumn(msg)
     return function()
         local ws = hl.get_active_workspace()
         if not ws or ws.tiled_layout ~= "scrolling" then return end
 
         hl.dispatch(hl.dsp.layout(msg))
-        recenterAfterResize()
+        applyCameraRule(nil)
     end
 end
 
@@ -1257,20 +1278,19 @@ hl.bind(mainMod .. " + SHIFT + G", scrollingMsg("fit_into_view"))
 hl.bind(mainMod .. " + I", scrollingMsg("consume"))
 hl.bind(mainMod .. " + O", scrollingMsg("expel"))
 
--- Move focus with mainMod + arrow keys. focusColumn rather than the dispatcher
--- straight: on a scrolling workspace the horizontal two carry the centering
--- rule.
-hl.bind(mainMod .. " + left",  focusColumn("left"))
-hl.bind(mainMod .. " + right", focusColumn("right"))
-hl.bind(mainMod .. " + up",    focusColumn("up"))
-hl.bind(mainMod .. " + down",  focusColumn("down"))
+-- Move focus with mainMod + arrow keys. Plain dispatchers: the camera rule
+-- rides on window.active, so every one of these gets it without asking.
+hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
+hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
+hl.bind(mainMod .. " + up",    hl.dsp.focus({ direction = "up" }))
+hl.bind(mainMod .. " + down",  hl.dsp.focus({ direction = "down" }))
 
 -- Same thing, vim-style. Note these do nothing on the monocle workspace, where
 -- every window occupies the same box -- use the bracket binds above there.
-hl.bind(mainMod .. " + H", focusColumn("left"))
-hl.bind(mainMod .. " + J", focusColumn("down"))
-hl.bind(mainMod .. " + K", focusColumn("up"))
-hl.bind(mainMod .. " + L", focusColumn("right"))
+hl.bind(mainMod .. " + H", hl.dsp.focus({ direction = "left" }))
+hl.bind(mainMod .. " + J", hl.dsp.focus({ direction = "down" }))
+hl.bind(mainMod .. " + K", hl.dsp.focus({ direction = "up" }))
+hl.bind(mainMod .. " + L", hl.dsp.focus({ direction = "right" }))
 
 -- Move the active window in a direction. Same monocle caveat as above: with
 -- every window in the same box there is nowhere to move it to.
