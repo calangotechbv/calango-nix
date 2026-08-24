@@ -628,18 +628,19 @@ hl.config({
     scrolling = {
         fullscreen_on_one_column = true,
 
-        -- Center the focused column, but only when the columns do not all fit.
-        -- That is niri's `center-focused-column = "on-overflow"`, and Hyprland
-        -- has no option spelled that way: focus_fit_method takes 0 or 1 and
-        -- nothing else. The conditional half comes from somewhere other than
-        -- this option, which is why 0 is not simply "always centered".
+        -- Center the focused column, but only when the columns do not all fit
+        -- -- niri's `center-focused-column = "on-overflow"`. Hyprland has no
+        -- option spelled that way, and READ THIS TOGETHER WITH column_width
+        -- BELOW: this value on its own does NOT produce that behaviour. It
+        -- means "always center the focused column", and the conditional half
+        -- comes from the widths, for the reason set out below.
         --
         -- 0 picks centerCol over fitCol on every focus change
         -- (ScrollingAlgorithm.cpp:403-413, v0.55.4; 1, the default, scrolls the
         -- least amount that makes the column fully visible, so the column snaps
-        -- to whichever edge it came from). The camera then overrides that
-        -- whenever the whole tape fits the viewport, centering the tape as a
-        -- whole rather than the focused column:
+        -- to whichever edge it came from). The camera then overrides that when
+        -- the whole tape fits the viewport, centering the tape rather than the
+        -- focused column:
         --
         --     // if the content fits in viewport, center it
         --     if (maxExtent < usablePrimary)
@@ -647,7 +648,13 @@ hl.config({
         --     -- ScrollTapeController.cpp:222-224
         --
         -- calculateCameraOffset runs after centerCol and assigns m_offset
-        -- outright, so it wins. Hence the two behaviours from one value.
+        -- outright, so it wins where it applies. `<` is strict, and that word
+        -- is the entire trap: with the stock 0.5 width, two columns are exactly
+        -- as wide as the screen, the test is false, and a two-terminal
+        -- workspace centers the focused terminal with the other one hanging
+        -- half off the edge. This was written claiming the option alone gave
+        -- on-overflow centering, and a person found the two-terminal case an
+        -- hour later.
         --
         -- Two things this does NOT change. A column wider than the screen is
         -- centered at either setting (fitStrip's lo > hi branch,
@@ -657,6 +664,40 @@ hl.config({
         -- ScrollingAlgorithm.cpp:662-663 -- so clicking a visible window does
         -- not recenter the tape under the cursor.
         focus_fit_method = 0,
+
+        -- 0.49 rather than 0.5, and the preset list re-spelled to match. This
+        -- looks like a cosmetic nudge and is the whole reason the setting above
+        -- behaves as described: the camera's fit test is a STRICT <, and two
+        -- 0.5 columns are EQUAL to the usable width, not smaller. Measured on
+        -- eDP-1 (1536 logical px) with focus_fit_method = 0 and two terminals:
+        --
+        --     x= -352 w=739 right= 387   <- half off the left edge
+        --     x=  401 w=739 right=1140   <- focused, centered
+        --
+        -- 2 x 768 = 1536, so `maxExtent < usablePrimary` reads 1536 < 1536,
+        -- which is false, the tape is never centered as a whole, and centerCol
+        -- centers the focused column with the neighbour hanging off the screen.
+        -- At 0.49 the same two columns measure 0.98 of the width and sit
+        -- centered as a pair, both fully visible (x=37..761 and 775..1499),
+        -- while a third column overflows and the focused one centers again.
+        --
+        -- The presets need the same treatment or SUPER+SHIFT+= walks straight
+        -- back into the equality case. The pair that has to change is 0.667,
+        -- because 0.333 + 0.667 is not merely equal but slightly OVER:
+        --
+        --     0.333 * 1536 + 0.667 * 1536 = 1536.0000000000002
+        --
+        -- so that combination overflows by 2e-13 px and centers. 0.66 keeps
+        -- every combination that fits strictly under the width: 0.49 + 0.49 =
+        -- 0.98, 0.333 + 0.66 = 0.993, 0.333 x 3 = 0.999, and 0.66 + 0.49 =
+        -- 1.15 overflows, which is the case that SHOULD center.
+        --
+        -- Hyprland has no option for "center on overflow" -- this pair of
+        -- values is what produces it. If a future release relaxes that
+        -- comparison to <=, the widths stop being load-bearing and 0.5 can come
+        -- back. Nothing warns when that happens.
+        column_width           = 0.49,
+        explicit_column_widths = "0.333, 0.49, 0.66, 1.0",
     },
 })
 
@@ -969,8 +1010,11 @@ hl.bind(mainMod .. " + SHIFT + period", scrollingMsg("swapcol r"))
 
 -- Column width. The steps are fractions of the monitor, matching
 -- scrolling:column_width; +conf cycles the preset widths in
--- scrolling:explicit_column_widths ("0.333, 0.5, 0.667, 1.0" by default), which
--- is usually the one you want.
+-- scrolling:explicit_column_widths, which is usually the one you want. That
+-- list is set above and is NOT the stock one: every preset there is chosen so
+-- that a set of columns which fits stays strictly under the monitor width,
+-- which is what makes focus_fit_method = 0 center on overflow only. Read the
+-- comment beside column_width before changing a number here.
 hl.bind(mainMod .. " + minus",         scrollingMsg("colresize -0.1"))
 hl.bind(mainMod .. " + equal",         scrollingMsg("colresize +0.1"))
 hl.bind(mainMod .. " + SHIFT + equal", scrollingMsg("colresize +conf"))
