@@ -270,6 +270,24 @@ end)
 -- No HYPRCURSOR_THEME: no hyprcursor theme is installed (nothing ships a
 -- manifest.hl), so Hyprland falls back to this XCursor theme. HYPRCURSOR_SIZE
 -- stays so the fallback matches if one is ever added.
+--
+-- And naming the theme here is necessary but was never sufficient. For the
+-- whole life of this line the theme it names could not be found: Hyprland
+-- resolves it through Nix's libXcursor, whose compiled-in search path is
+-- ~/.local/share/icons, ~/.icons and its own store directory -- never
+-- /usr/share/icons, where Debian's adwaita-icon-theme keeps its cursors.
+-- themePaths() came back empty and the compositor drew its own built-in
+-- arrow instead. home/default.nix's home.pointerCursor is what puts the
+-- theme on that path; the full measurement lives in its comment. Do not
+-- "simplify" that option into a plain home.packages entry -- the profile's
+-- share/icons is not on the path either.
+--
+-- Adding a hyprcursor theme is deliberately NOT the answer here, and was
+-- measured rather than assumed: adwaita-icon-theme 50.0 ships no SVG cursor
+-- sources at all, so hyprcursor-util --extract yields PNG at 24/30/36/48/72/96
+-- with resize_algorithm = none -- the same raster data the XCursor theme
+-- already holds. eDP-1 runs at scale 1.25, so Hyprland asks for size 30, and
+-- 30 is one of those six. A conversion would change nothing on screen.
 hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
