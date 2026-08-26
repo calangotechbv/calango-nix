@@ -35,7 +35,9 @@ the generated-preseed branch moved it to six by adding
 `preseed-package-list`, the VM-harness build-time guard moved it to seven by
 adding `vm-step-lines-verbatim`, the VM-harness Python port moved it to
 eight by adding `vm-harness-tests`, and the stable hyprland config path moved
-it to nine by adding `hypr-config-linked`:
+it to nine by adding `hypr-config-linked` — since renamed `hypr-config-copied`,
+when that path turned out to need a real file rather than a symlink, so the
+count held at nine while the name under it changed:
 
 ```sh
 sg nix-users -c 'nix flake check' 2>&1 | grep -c '^checking derivation checks\.'
@@ -1613,18 +1615,71 @@ for deliberate testing.
   `/etc/cron.daily/google-chrome` exists and points somewhere, which is a real
   command whose output does not support "identical script" — that conclusion
   needed the target read, not just resolved.
-- **The compositor reads its config through `~/.config/hypr/hyprland.lua`, not
-  through a store path, and that is deliberate.** Hyprland keeps the `--config`
-  argument verbatim -- never canonicalised (`Jeremy.cpp:29-30`) -- and re-opens
-  that same path on every reload (`ConfigManager.cpp:385,424`). A session
-  launched with a store path therefore can NEVER reload into a new generation:
-  the path is immutable, so `hyprctl reload` re-reads the same bytes and only a
-  fresh login picks up a change. `home/hyprland.nix` owns the name as an
-  `xdg.configFile` symlink and `home/session.nix` names it in the launcher, so
-  a switch re-points the link and a reload loads the new generation. The link is
-  therefore load-bearing for the login itself, which is why `hypr-config-linked`
-  asserts the generation carries it -- `no-dangling-home-files` cannot: it
-  reports links that point nowhere, not names that are absent.
+- **The compositor reads its config through `~/.config/hypr/hyprland.lua`, and
+  what sits at that path must be a real FILE, never a symlink into the store.**
+  This entry said the opposite for a whole spec, in three places at once — here,
+  in `home/hyprland.nix`'s comment and in `home/session.nix`'s — and every one
+  of them cited a real source line. **Hyprland canonicalises `--config` once, at
+  startup:**
+
+  ```cpp
+  const auto ABS_PATH = std::filesystem::canonical(configPath);
+  if (!std::filesystem::is_regular_file(ABS_PATH)) { throw ... }
+  configPath = ABS_PATH;
+  // main.cpp:126-132, v0.55.4
+  ```
+
+  `std::filesystem::canonical` resolves every symlink hop, so a symlink here is
+  followed exactly once and the store path it pointed at in that instant is what
+  every later reload re-reads (`ConfigManager.cpp:385,424`) — and a store path's
+  contents cannot change. The apparent escape hatch is closed too:
+  `Jeremy.cpp:48-54` re-runs `getCfgPath()` when `needsPathRecheck` is set, but
+  that returns `m_explicitConfigPath`, the string `main.cpp` already resolved.
+  Nothing at runtime can redirect it.
+
+  Measured 2026-08-24. A session started at 16:57 stayed pinned to generation
+  67's config for its whole life: a switch at 17:25 repointed the link, four
+  `hyprctl reload`s followed, and the compositor still had generation 67's
+  single 3-finger gesture and neither of the new file's two. Generation 67's
+  config was still on disk and matched what was live, exactly.
+
+  **`/proc/<pid>/cmdline` cannot detect this**, which is why it survived so
+  long: it still prints `--config /home/isutton/.config/hypr/hyprland.lua`,
+  because `main.cpp` rewrites a local variable and never `argv`. Reading cmdline
+  looks like confirmation that the setup is sound, and it is not evidence
+  either way.
+
+  The false half was **`Jeremy.cpp:29-30`** — cited as proof the argument is
+  "never canonicalised", when those two lines only `return
+  m_explicitConfigPath`. The function that does the canonicalising is one the
+  citation never opened. Same species as the `google-chrome` cron entry two
+  bullets up: a real line, read correctly, that does not support the conclusion
+  drawn beside it. When a claim is "X never happens", grep for X across the
+  whole tree rather than reading the function where you expect it —
+  `grep -rn 'canonical' src/` finds `main.cpp` in one step.
+
+  `home/hyprland.nix` now writes the file through a `home.activation` entry,
+  `install` to a temporary name then `mv`, because the compositor may
+  `luaL_loadfile` that path at any moment and a rename is atomic where a
+  truncating copy is not. It is ordered `entryBetween [ "hyprlandReload" ]
+  [ "linkGeneration" ]`, and both halves are load-bearing: the path was an
+  `xdg.configFile` entry, so Home Manager's manifest still carries it in the
+  previous generation and `linkGeneration` deletes what it no longer manages —
+  a copy written first would be removed moments later, on exactly one switch,
+  the upgrade one.
+
+  That file is load-bearing for the LOGIN, not for a feature: with nothing
+  there the compositor starts with no config at all. It is also written by
+  activation rather than shipped in the manifest, so `no-dangling-home-files`
+  cannot see it and neither can any check that walks `home-files` — which is
+  what the old `hypr-config-linked` did. `hypr-config-copied` replaces it and
+  reads the activation script's own text instead, the same shape as
+  `home/default.nix`'s `nixglSingleSource`.
+
+  **And `hyprlandReload` was inert for the whole time the config was a
+  symlink.** It ran `hyprctl reload` on every switch, the reload re-read the
+  captured store path, and the switch paid Hyprland's entire Lua state (see the
+  paragraph below) to load the same bytes back.
 
   A switch also runs `hyprctl reload` itself, from
   `home/hyprland.nix`'s `hyprlandReload` activation hook, guarded on

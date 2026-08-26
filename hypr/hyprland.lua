@@ -760,10 +760,51 @@ hl.config({
     },
 })
 
+-- Three fingers scroll the tape; four switch workspaces. The scrolling layout
+-- is the thing this machine actually navigates, so it gets the cheaper gesture.
+--
+-- `scroll_move` moves the tape 1:1 against the viewport width while the fingers
+-- are down, then projects the release velocity and snaps to a column
+-- (ScrollMoveGesture.cpp). It reads the layout once at swipe start and does
+-- nothing at all off a scrolling workspace, so it needs no gating of its own --
+-- unlike every layout message further down, which has to be wrapped in
+-- scrollingMsg to avoid an error per press.
+--
+-- Two spellings exist and only one works here. The Lua config takes
+-- `scroll_move` (LuaBindingsConfigRules.cpp:856); the legacy hyprlang keyword
+-- takes `scrollMove` (ConfigManager.cpp:1989). This flake is on the Lua config,
+-- where `hyprctl keyword` refuses outright -- "keyword can't work with
+-- non-legacy parsers. Use eval." -- so the legacy name never applies. It is
+-- named here only because a search will find it and it looks like an
+-- alternative.
+--
+-- The finger counts must differ. addGesture refuses a second gesture on the
+-- same finger count and axis rather than replacing it, with "Gesture will be
+-- overshadowed by a previous gesture" (TrackpadGestures.cpp:58-91). That
+-- refusal is also the way to test a live gesture: adding it twice and getting
+-- the error proves the first add registered, where a silent `ok` proves only
+-- that nothing objected.
+--
+-- Known interaction, measured 2026-08-24 rather than predicted, and NOT fixed
+-- by adding these two lines. A swipe slides the tape under a stationary cursor,
+-- follow_mouse focuses whatever passes beneath it, and the camera rule below
+-- reacts to that focus by scrolling the tape again -- which puts a different
+-- window under the cursor. The loop runs at event-loop speed, not frame speed,
+-- so it is invisible: on a 60 Hz panel (16.7 ms per frame) one swipe produced
+-- three focus changes 6 to 12 ms apart. The control was follow_mouse = 0, where
+-- the same gestures gave 25 focus events with a MINIMUM gap of 640 ms and not
+-- one below a frame. The camera rule's FFM gate is what breaks that loop; these
+-- gestures are only what exposed it.
 hl.gesture({
     fingers = 3,
     direction = "horizontal",
-    action = "workspace"
+    action = "scroll_move",
+})
+
+hl.gesture({
+    fingers = 4,
+    direction = "horizontal",
+    action = "workspace",
 })
 
 -- Example per-device config
@@ -1134,10 +1175,36 @@ local function applyCameraRule(dir)
     applying = false
 end
 
--- Every focus change runs the rule, whatever caused it -- a keybind, a mouse
--- click, a window closing and handing focus on. The binds below are therefore
--- plain dispatchers again: they do not call the rule, they cause the event that
--- does.
+-- Nearly every focus change runs the rule -- a keybind, a window closing and
+-- handing focus on. The binds below are therefore plain dispatchers again: they
+-- do not call the rule, they cause the event that does.
+--
+-- The one exception is focus that follows the mouse, and it is an exception
+-- because Hyprland already decides that case for itself, more carefully than
+-- this rule can. CScrollingAlgorithm registers its own window.active listener
+-- (ScrollingAlgorithm.cpp:589) and classifies the reason: FOCUS_REASON_FFM is
+-- absent from isHardInputFocusReason (FocusState.cpp:310-313), so a hover
+-- arrives at focusOnInput as INPUT_MODE_SOFT, and that path refuses to move the
+-- camera three separate ways (ScrollingAlgorithm.cpp:630-671) -- below
+-- scrolling:follow_min_visible of the target on screen, a click whose target is
+-- not under the cursor, and any column that is already fully visible.
+--
+-- This rule reaches the camera by a route that has none of those tests.
+-- `colresize +0` ends in a CScopeGuard calling centerOrFitCol unconditionally
+-- (ScrollingAlgorithm.cpp:1475-1480), so hovering a 163 px sliver of a
+-- neighbour scrolled the whole tape to it, where upstream would have required
+-- 0.4 * 1536 = 614 px before following. Standing down here is therefore not the
+-- same as suppressing the hover: upstream's listener still runs, so
+-- follow_min_visible governs it instead of nothing at all.
+--
+-- Scoped to FFM deliberately, and the near miss is worth recording. The
+-- touchpad scroll_move gesture ends by focusing the column it landed on, and
+-- which reason that carries depends on a setting: with
+-- gestures:scrolling:move_snap_to_grid on (the default) it goes through
+-- focusColumn -> focusTargetUpdate and arrives as FOCUS_REASON_DESKTOP_STATE_CHANGE
+-- (ScrollingAlgorithm.cpp:2044), which IS hard; only with snapping off does it
+-- use FOCUS_REASON_FFM directly (ScrollMoveGesture.cpp:133). So this gate does
+-- not quiet the rule after a snapped swipe, and must not be assumed to.
 --
 -- The direction is remembered rather than passed, because an event carries
 -- none. Column INDEX rather than x: x is a position on the tape and moves with
@@ -1146,7 +1213,44 @@ end
 -- went.
 local lastWs, lastIdx = nil, nil
 
-hl.on("window.active", function()
+-- Desktop::eFocusReason, FocusState.hpp:9-28. The event hands the reason to Lua
+-- as a plain integer (LuaEventHandler.cpp:95-100), so the name lives here.
+local FOCUS_REASON_FFM = 1
+
+-- Where the pointer was the last time the rule ran, and the whole of what
+-- separates a hover from the cascade it used to start.
+--
+-- The loop: the rule reaches the camera through `colresize +0`, that scrolls
+-- the tape, the scroll slides a DIFFERENT window under the pointer,
+-- follow_mouse focuses it, and the rule runs again. Measured 2026-08-24 at 6 to
+-- 12 ms per turn -- faster than this machine's 16.7 ms frame, so it is
+-- invisible on screen and only the event socket sees it -- two or three columns
+-- walked per hover.
+--
+-- Every turn after the first re-focuses with a STATIONARY pointer, because
+-- nothing moved it; the layout moved underneath it. A deliberate hover always
+-- moves the pointer first. So "did the pointer move" is not a heuristic for the
+-- difference, it IS the difference, and it needs no timer and no debounce.
+--
+-- 0.5 px is margin, not tuning: during a cascade the pointer does not move at
+-- all, and a real hover crosses tens of pixels.
+local lastCursor = nil
+
+local function pointerMoved()
+    local p = hl.get_cursor_pos()
+    -- No reading: say it moved. A rule that runs when it should not is the
+    -- behaviour this file had all along; one that silently stops running is a
+    -- feature that looks broken with nothing to point at.
+    if not p then return true end
+
+    local moved = not lastCursor
+        or math.abs(p.x - lastCursor.x) > 0.5
+        or math.abs(p.y - lastCursor.y) > 0.5
+    lastCursor = p
+    return moved
+end
+
+hl.on("window.active", function(_, reason)
     local f = focusedColumn()
     if not f then
         lastWs, lastIdx = nil, nil
@@ -1162,6 +1266,24 @@ hl.on("window.active", function()
         end
     end
     lastWs, lastIdx = f.ws, f.idx
+
+    -- The index is tracked above whatever happens next, because a return below
+    -- still has to leave it current: otherwise the direction on the NEXT
+    -- keybind is measured from the column you were on before the hover, and
+    -- points the wrong way. `centered` is deliberately left alone on the return
+    -- -- the rule moved no camera there, so what it believes is still true.
+    --
+    -- The else branch is not symmetry for its own sake. Without it, a KEYBIND
+    -- focus that scrolls the camera can land a window under a pointer that
+    -- never moved; the FFM that follows would then compare against a position
+    -- from some earlier hover, find a difference, and let one turn of the
+    -- cascade through. Every path that reaches the rule leaves lastCursor at
+    -- where the pointer is now.
+    if reason == FOCUS_REASON_FFM then
+        if not pointerMoved() then return end
+    else
+        lastCursor = hl.get_cursor_pos()
+    end
 
     applyCameraRule(dir)
 end)
