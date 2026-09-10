@@ -1,6 +1,8 @@
 { config, lib, pkgs, ... }:
 
 let
+  nixgl = import ./../lib/nixgl.nix { inherit pkgs; };
+
   # Derived by reading bin/calango-open (eight non-comment lines) and the
   # discover.py it falls back to. Every external command either script can
   # reach, exhaustively:
@@ -81,6 +83,80 @@ let
     patchShebangs "$out/bin/code"
   '';
 
+  # Applications that must NOT inherit the session's nixGL environment.
+  #
+  # The compositor is nixGL-wrapped, so every session child inherits the five
+  # variables nixGLIntel exports. __EGL_VENDOR_LIBRARY_FILENAMES points libglvnd
+  # at Nix's mesa vendor JSON and LD_LIBRARY_PATH puts Nix's mesa first, so a
+  # Debian-linked process loads a Nix libEGL, its GPU process dies during
+  # initialisation, and Electron creates no window -- while staying alive to
+  # serve its tray icon and its SSH agent, which is why this hides so well.
+  #
+  # An explicit table, not a predicate. home/gui-apps.nix's wrapExemptions
+  # shipped as a derived rule and was deleted after review: a predicate exempts
+  # every future package that satisfies it by accident, and nobody is asked a
+  # question at that moment. A name here is typed by a person who then writes
+  # the sentence beside it.
+  #
+  # Chrome and Slack are Debian-linked too and are deliberately absent. Both
+  # measure healthy -- their gpu-process maps libgallium 6 times and swiftshader
+  # 0 -- so something in their own startup sanitises the environment. That is
+  # luck rather than design; they are absent because nothing of theirs is
+  # broken, not because they are immune.
+  glStripped = {
+    "1password" = {
+      binary    = "/opt/1Password/1password";
+      desktopId = "1password.desktop";
+      reason = ''
+        Debian-linked Electron. With the session's nixGL variables set its GPU
+        process dies during initialisation -- "Initialization of all (2) EGL
+        display types failed" -- and no window is ever created. Measured
+        2026-09-10: no window with them, a window in 1.6 s without.
+      '';
+    };
+  };
+
+  # The variables to strip are READ OUT OF nixGL, not written here.
+  #
+  # lib/nixgl.nix is the one file that decides which GL wrapper this machine
+  # uses, and it does not name these variables at all -- nixGLIntel exports them
+  # at runtime. A hand-written list here would be a second declaration with
+  # nothing checking it. nixGLIntel is a bash script, so the names are readable
+  # at build time, and a sixth variable would be stripped with no edit here.
+  #
+  # `|| true` on the assignment is load-bearing and is not defensive noise. A
+  # builder runs with `set -e` and `pipefail`, so a grep that matches nothing
+  # aborts the assignment before the check below can print anything -- the guard
+  # would read as a counting guard and behave as an unconditional failure.
+  #
+  # The emptiness test is the vacuity anchor. Without it, a change in nixGL's
+  # script shape yields a shim that strips nothing, launches the application
+  # exactly as it fails today, and passes every check -- "the property holds"
+  # and "the instrument broke" being the same reading.
+  glStripShim = name: entry:
+    pkgs.runCommand "calango-${name}" { } ''
+      vars=$(grep -oE '^export [A-Z_]+' ${nixgl.bin} | cut -d' ' -f2 | sort -u) || true
+      if [ -z "$vars" ]; then
+        echo "calango-${name}: no exported variables found in" >&2
+        echo "  ${nixgl.bin}" >&2
+        echo "  The shim would strip nothing, so the application would fail" >&2
+        echo "  exactly as it does without it. Check whether nixGL still" >&2
+        echo "  writes 'export NAME=' at the start of a line." >&2
+        exit 1
+      fi
+
+      flags=""
+      for v in $vars; do flags="$flags -u $v"; done
+
+      mkdir -p "$out/bin"
+      printf '#!%s\nexec %s/bin/env%s %s "$@"\n' \
+        "${pkgs.runtimeShell}" "${pkgs.coreutils}" "$flags" "${entry.binary}" \
+        > "$out/bin/${name}"
+      chmod 555 "$out/bin/${name}"
+    '';
+
+  glStripShims = lib.mapAttrsToList glStripShim glStripped;
+
   desktopEntries = pkgs.runCommand "calango-desktop-entries" { } ''
     mkdir -p "$out"
     cp ${./../data/eu.calangotech.CalangoOpen.desktop} "$out/eu.calangotech.CalangoOpen.desktop"
@@ -104,7 +180,7 @@ let
   '';
 in
 {
-  config.home.packages = [ calangoOpen codeShim ];
+  config.home.packages = [ calangoOpen codeShim ] ++ glStripShims;
 
   # uwsm sources this from `uwsm aux prepare-env` before the compositor
   # starts. There is no flag for its location; it must be at this path.
