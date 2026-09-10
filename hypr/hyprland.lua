@@ -688,6 +688,23 @@ hl.config({
         -- lands in the middle. Focus is the camera control here.
         focus_fit_method = 1,
 
+        -- The camera does not chase focus. Hovering still focuses -- follow_mouse
+        -- is untouched -- the view simply stops moving on its own.
+        --
+        -- Measured, with follow_focus at its default of true: hovering a column
+        -- that was cut off focused it, the camera scrolled to fit it, that scroll
+        -- slid a different window under a pointer that had not moved, and focus
+        -- flipped again. One hover produced three focus changes at x=94..110 in
+        -- about a second. Parking the camera removes the second link and the loop
+        -- cannot start.
+        --
+        -- The cost, stated so nobody re-enables this by accident: a focused
+        -- column can sit entirely off screen and nothing scrolls it back. The
+        -- ways back are the three-finger swipe, SUPER+wheel, SUPER+comma/period,
+        -- and SUPER+CTRL+H/L for the other monitor -- which warps the pointer
+        -- with you, since cursor:no_warps is false.
+        follow_focus = false,
+
         -- The widths are a preference now, not a mechanism. They were chosen
         -- while focus_fit_method was 0, to keep every combination that fits
         -- strictly UNDER the monitor width, since at equality the camera stops
@@ -697,7 +714,7 @@ hl.config({
         -- margin. 0.667 is spelled 0.66 for the same reason: 0.333 * 1536 +
         -- 0.667 * 1536 = 1536.0000000000002, which is over, not equal.
         column_width           = 0.49,
-        explicit_column_widths = "0.333, 0.49, 0.66, 1.0",
+        explicit_column_widths = "0.333, 0.49, 0.66, 0.95",
     },
 })
 
@@ -760,59 +777,38 @@ hl.config({
 
         follow_mouse = 1,
 
+        -- Hover focuses; a window sliding under a STILL pointer does not.
+        --
+        -- Those are two different events and mouse_refocus is the second one.
+        -- With it at Hyprland's default of true, "a different window is now
+        -- under the cursor" counts as a focus change even though the pointer
+        -- never moved -- which is precisely what a three-finger swipe does, and
+        -- the camera rule below reacts to that focus by scrolling the tape
+        -- again, putting yet another window under the cursor.
+        --
+        -- be716f5's measurement of that loop: one swipe produced three focus
+        -- changes 6 to 12 ms apart, below one frame on a 60 Hz panel, so it is
+        -- invisible rather than jittery. Its control was follow_mouse = 0,
+        -- where the same gestures gave 25 focus events with a MINIMUM gap of
+        -- 640 ms. This is the narrower half of that control: it removes the
+        -- stationary case and keeps hover-focus, which follow_mouse above still
+        -- governs.
+        --
+        -- Measured, because an earlier note here claimed the opposite: this DOES
+        -- take effect on `hyprctl reload` -- eval it to true, reload, and it
+        -- comes back false. The claim that it did not came from using
+        -- follow_mouse and touchpad.natural_scroll as controls, and both of
+        -- those carry a config value EQUAL to their default, so "applied" and
+        -- "not applied" read identically. Pick a control whose config value
+        -- differs from the default, or the reading says nothing.
+        mouse_refocus = false,
+
         sensitivity = 0, -- -1.0 - 1.0, 0 means no modification.
 
         touchpad = {
             natural_scroll = false,
         },
     },
-})
-
--- Three fingers scroll the tape; four switch workspaces. The scrolling layout
--- is the thing this machine actually navigates, so it gets the cheaper gesture.
---
--- `scroll_move` moves the tape 1:1 against the viewport width while the fingers
--- are down, then projects the release velocity and snaps to a column
--- (ScrollMoveGesture.cpp). It reads the layout once at swipe start and does
--- nothing at all off a scrolling workspace, so it needs no gating of its own --
--- unlike every layout message further down, which has to be wrapped in
--- scrollingMsg to avoid an error per press.
---
--- Two spellings exist and only one works here. The Lua config takes
--- `scroll_move` (LuaBindingsConfigRules.cpp:856); the legacy hyprlang keyword
--- takes `scrollMove` (ConfigManager.cpp:1989). This flake is on the Lua config,
--- where `hyprctl keyword` refuses outright -- "keyword can't work with
--- non-legacy parsers. Use eval." -- so the legacy name never applies. It is
--- named here only because a search will find it and it looks like an
--- alternative.
---
--- The finger counts must differ. addGesture refuses a second gesture on the
--- same finger count and axis rather than replacing it, with "Gesture will be
--- overshadowed by a previous gesture" (TrackpadGestures.cpp:58-91). That
--- refusal is also the way to test a live gesture: adding it twice and getting
--- the error proves the first add registered, where a silent `ok` proves only
--- that nothing objected.
---
--- Known interaction, measured 2026-08-24 rather than predicted, and NOT fixed
--- by adding these two lines. A swipe slides the tape under a stationary cursor,
--- follow_mouse focuses whatever passes beneath it, and the camera rule below
--- reacts to that focus by scrolling the tape again -- which puts a different
--- window under the cursor. The loop runs at event-loop speed, not frame speed,
--- so it is invisible: on a 60 Hz panel (16.7 ms per frame) one swipe produced
--- three focus changes 6 to 12 ms apart. The control was follow_mouse = 0, where
--- the same gestures gave 25 focus events with a MINIMUM gap of 640 ms and not
--- one below a frame. The camera rule's FFM gate is what breaks that loop; these
--- gestures are only what exposed it.
-hl.gesture({
-    fingers = 3,
-    direction = "horizontal",
-    action = "scroll_move",
-})
-
-hl.gesture({
-    fingers = 4,
-    direction = "horizontal",
-    action = "workspace",
 })
 
 -- Example per-device config
@@ -1038,6 +1034,45 @@ local function scrollingMsg(msg)
     end
 end
 
+-- Three fingers step the tape one column; four switch workspaces.
+--
+-- Declared HERE rather than beside the other input settings, because the action
+-- is scrollingMsg and Lua needs it to exist first. That is also why the block
+-- reads oddly far from hl.device: it follows the helper, not the topic.
+--
+-- `left` and `right` rather than one `horizontal`. Measured: the two cannot
+-- coexist -- registering `left` while a `horizontal` is present is refused with
+-- "Previous HORIZONTAL shadows new LEFT" -- so this replaces the old
+-- `action = "scroll_move"` rather than sitting beside it.
+--
+-- What that trades away. scroll_move moved the tape 1:1 against the viewport
+-- while the fingers were down and snapped to a column on release
+-- (ScrollMoveGesture.cpp), so one long swipe could travel several columns and
+-- the tape tracked your fingers the whole way. These step exactly one column
+-- per swipe and the tape jumps. That is the behaviour that was asked for, and
+-- the continuous version is one `direction = "horizontal", action =
+-- "scroll_move"` away if it is ever missed.
+--
+-- A function action receives NO arguments -- measured, `args=0` across six
+-- swipes -- which is why the direction has to come from two registrations
+-- rather than from a parameter. scrollingMsg already returns a zero-argument
+-- function, so it is the right shape as well as the right gate: off a
+-- scrolling workspace a layout message is an error per swipe.
+--
+-- The left/right mapping matches how scroll_move behaved: fingers left, tape
+-- left, columns from the right come into view. It could not be tested before
+-- landing, because `left` is refused while `horizontal` is registered and a
+-- gesture change does not survive `hyprctl reload` -- it needs a fresh login.
+-- If it feels inverted, swap the two message strings.
+hl.gesture({ fingers = 3, direction = "left",  action = scrollingMsg("move +col") })
+hl.gesture({ fingers = 3, direction = "right", action = scrollingMsg("move -col") })
+
+hl.gesture({
+    fingers = 4,
+    direction = "horizontal",
+    action = "workspace",
+})
+
 -- Move focus one column each way, carrying the camera with it.
 --
 -- This comment used to say the two keys scrolled the viewport and left focus
@@ -1131,8 +1166,11 @@ hl.bind(mainMod .. " + S",         hl.dsp.workspace.toggle_special("magic"))
 hl.bind(mainMod .. " + SHIFT + S", hl.dsp.window.move({ workspace = "special:magic" }))
 
 -- Scroll through existing workspaces with mainMod + scroll
-hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
-hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
+-- SUPER+wheel steps the tape, the mouse counterpart of the three-finger swipe.
+-- It used to change workspace; that lives on SUPER+<number> and the four-finger
+-- gesture, and a mouse had no way to walk the columns at all.
+hl.bind(mainMod .. " + mouse_down", scrollingMsg("move +col"))
+hl.bind(mainMod .. " + mouse_up",   scrollingMsg("move -col"))
 
 -- Move/resize windows with mainMod + LMB/RMB and dragging
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
