@@ -161,6 +161,7 @@ let
     mkdir -p "$out"
     cp ${./../data/eu.calangotech.CalangoOpen.desktop} "$out/eu.calangotech.CalangoOpen.desktop"
     cp ${./../data/code.desktop} "$out/code.desktop"
+    cp ${./../data/1password.desktop} "$out/1password.desktop"
     chmod u+w "$out"/*.desktop
 
     substituteInPlace "$out/eu.calangotech.CalangoOpen.desktop" \
@@ -169,6 +170,13 @@ let
     substituteInPlace "$out/code.desktop" \
       --replace-fail 'Exec=@codeShim@ %F' 'Exec=${codeShim}/bin/code %F' \
       --replace-fail 'Exec=@codeShim@ --new-window %F' 'Exec=${codeShim}/bin/code --new-window %F'
+
+    # 1Password's entry is a copy of the vendor's ten lines with only Exec
+    # changed. MimeType is load-bearing and must survive: drop it and
+    # x-scheme-handler/onepassword stops resolving, which is the trap Signal
+    # already paid for here. The token loop below covers this file too.
+    substituteInPlace "$out/1password.desktop" \
+      --replace-fail 'Exec=@onePasswordShim@ %U' 'Exec=${glStripShim "1password" glStripped."1password"}/bin/1password %U'
 
     for f in "$out"/*.desktop; do
       if grep -q '@[a-zA-Z]*@' "$f"; then
@@ -206,6 +214,8 @@ in
     "${desktopEntries}/eu.calangotech.CalangoOpen.desktop";
   config.xdg.dataFile."applications/code.desktop".source =
     "${desktopEntries}/code.desktop";
+  config.xdg.dataFile."applications/1password.desktop".source =
+    "${desktopEntries}/1password.desktop";
 
   # Without this the entry above is present but not discoverable, so the
   # default-browser hook below would set a handler nothing can resolve.
