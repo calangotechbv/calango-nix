@@ -806,6 +806,52 @@ binary. The `PATH` has to be widened in the *launching shell*, which is what
 `command -v` probes in that shell fail deliberately, and would start finding
 Debian's copies.
 
+**The Applications panel hands every launched application the session's five
+nixGL variables, and to a Debian-linked GL application that is fatal while
+reading as healthy.** `AppLaunch.qml:134` launches with
+`setsid systemd-run --user --scope`, and `--scope` execs into the application,
+so it inherits quickshell's environment — and quickshell is itself
+nixGL-wrapped. Both ends measured rather than inferred, because the second does
+not follow from the first:
+
+```sh
+# quickshell.service's own environment
+tr '\0' '\n' < /proc/$QS_PID/environ | grep -cE '^(LIBGL_DRIVERS_PATH|GBM_BACKENDS_PATH|LIBVA_DRIVERS_PATH|__EGL_VENDOR_LIBRARY_FILENAMES|LD_LIBRARY_PATH)='
+# 5
+# and a probe launched through the launcher's own command shape
+setsid systemd-run --user --scope --quiet ./probe.sh
+# 5
+```
+
+The XDG autostart path is the opposite and is already clean: the systemd user
+manager carries none of them, so an autostart entry launches at **0 of 5**.
+Measured with the real generator, which also settles why an alternate directory
+cannot be used to override a vendor entry — `$XDG_CONFIG_HOME/autostart`
+outranks anything on `XDG_CONFIG_DIRS`, and only the *parent* varies, never the
+`autostart` name itself.
+
+1Password is the application this killed. Its GPU process dies with
+`Initialization of all (2) EGL display types failed`, Electron then creates no
+window at all, and the process stays alive serving its tray icon and its SSH
+agent. **Every instrument that reads a running process says it is healthy.** Its
+gpu-process even maps `libgallium` six times — which reads as hardware
+acceleration, and was recorded as such mid-investigation before being withdrawn.
+A mapped library is not an initialised EGL display. The window appearing is the
+only proof; `libgallium` is corroboration at best.
+
+Because 1Password is single-instance, this only bites when the launcher's
+invocation is the FIRST one. Normally the autostart instance is already up and a
+second invocation merely asks it to show a window — measured, the window appears
+in ~800 ms and the second process exits logging `already running, closing`. So
+the bug hid until the autostart instance died (`status=5/TRAP`, 2026-09-10) and
+then presented as "SUPER+D stopped opening 1Password".
+
+`home/apps.nix`'s `glStripped` table is the fix; spec 23 records why it is not a
+predicate, why `~/.config/autostart` is left alone, and why `dpkg-divert` was
+rejected. Do not scrub the session inheritance instead: it is load-bearing for
+every Nix GL application the panel starts, and `signal-desktop` is the control
+that proves it — it draws only *with* the variables the shim removes.
+
 **A guard that greps a file for a string can be satisfied by that file's own
 comments.** Spec 11's first `appPath` guard checked that `AppLaunch.qml`
 contained `/usr/bin`; one of the comments in that very file explains that the
