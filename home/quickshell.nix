@@ -52,6 +52,36 @@ let
   # this build loudly instead of being silently overwritten with a heredoc
   # that never looked at what it was replacing. AppLaunch.qml's @appPath@
   # is substituted the same way and for the same reason.
+
+  # The main display, taken from THIS MACHINE's Hyprland host file rather than
+  # declared a second time here. hypr/hosts/<host>.lua already answers "which
+  # physical output is the main one" for the compositor's workspace split, and a
+  # second declaration is a second thing to forget: quickshell/common/Screens.qml
+  # carried a hard-coded "HDMI-A-1" -- epiphany's primary, in a tree Syncthing
+  # replicates to every machine -- which put suffer's bar, tray and notifications
+  # on whatever external screen was plugged in.
+  #
+  # flake.nix's host-config-files check asserts every host in hostConfigs has
+  # this file, so the read below cannot be reached with the file absent.
+  #
+  # builtins.match anchors the WHOLE file and its `.` crosses newlines, which was
+  # verified rather than assumed -- on both host files and on a negative control:
+  # suffer yields eDP-1, epiphany yields HDMI-A-1, and a file declaring no
+  # primary yields null. Note `secondary` does not answer to this pattern, since
+  # it does not contain the word primary.
+  #
+  # The throw is what makes that null loud. A renamed or deleted field must fail
+  # evaluation here, naming the file, rather than substitute an empty name and
+  # leave every machine-wide surface with no home.
+  hostLua = builtins.readFile (./../hypr/hosts + "/${config.calango.host}.lua");
+  primaryMonitor =
+    let m = builtins.match ''.*primary[ ]*=[ ]*"([^"]+)".*'' hostLua;
+    in if m == null
+       then throw ("hypr/hosts/${config.calango.host}.lua declares no "
+                   + "`primary = \"<output>\"`, so home/quickshell.nix cannot "
+                   + "resolve the main display for quickshell/common/Screens.qml.")
+       else builtins.head m;
+
   quickshellConfig = pkgs.runCommand "quickshell-config" { } ''
     cp -r ${./../quickshell} "$out"
     chmod -R u+w "$out"
@@ -62,6 +92,9 @@ let
 
     substituteInPlace "$out/common/AppLaunch.qml" \
       --replace-fail "@appPath@" '${appPath}'
+
+    substituteInPlace "$out/common/Screens.qml" \
+      --replace-fail "@primaryMonitor@" '${primaryMonitor}'
 
     # Assert the substituted list still contains the two directories that carry
     # the applications, by content rather than by trusting the Nix list above.

@@ -10,13 +10,25 @@ import "."
 // Several surfaces are machine-wide rather than per-screen -- the bar's status
 // pills and system tray, the notification popups -- and showing the same thing
 // on every monitor is noise, not redundancy. They all resolve the target here so
-// the name is written once; change primaryName and everything moves together.
+// the name is read from one place and everything moves together.
 Singleton {
   id: root
 
   // The default until something is chosen. Read back from disk at startup, and
   // rewritten by the monitor manager's "Main display" picker.
-  property string primaryName: "HDMI-A-1"
+  //
+  // Substituted by home/quickshell.nix out of THIS MACHINE's
+  // hypr/hosts/<host>.lua `primary` field -- the same declaration the compositor
+  // reads for its workspace split, so the shell and Hyprland cannot disagree
+  // about which output is the main one.
+  //
+  // Do not write a display name on this line. This tree is one file replicated
+  // to every machine by Syncthing, and the literal that used to sit here was
+  // "HDMI-A-1" -- epiphany's primary -- which put suffer's bar, tray and
+  // notifications on whatever external screen happened to be plugged in. That is
+  // the same fault hypr/hyprland.lua's hosts/ mechanism exists to prevent,
+  // reproduced in the shell.
+  property string primaryName: "@primaryMonitor@"
 
   // Resolved rather than assumed. If primaryName is unplugged the role hands off
   // to the first connected screen, because the alternative is that pulling one
