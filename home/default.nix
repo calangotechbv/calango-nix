@@ -227,6 +227,80 @@ in
   # profile's fonts either way.
   fonts.fontconfig.enable = true;
 
+  # The cursor baseline, owned here for the same reason as the font baseline
+  # above -- and, unlike the fonts, this one was not merely unowned. It was
+  # broken, and every instrument that reports a *name* said it was fine.
+  #
+  # hypr/hyprland.lua sets XCURSOR_THEME=Adwaita, dconf's
+  # org.gnome.desktop.interface cursor-theme reads 'Adwaita', and
+  # /usr/share/icons/Adwaita/cursors holds 62 entries from Debian's
+  # adwaita-icon-theme 48.1-1. The compositor was drawing none of them.
+  # Measured 2026-08-25 against the running Hyprland 0.55.4:
+  #
+  #   /proc/<hyprland>/maps   maps ONLY /nix/store/...-libxcursor-1.2.3, and
+  #                           no Debian libXcursor at all
+  #   strings on that .so     its compiled-in XCURSORPATH is
+  #                           ~/.local/share/icons:~/.icons:<its own
+  #                           store>/share/icons:<same>/share/pixmaps
+  #                           -- /usr/share/icons is NOT on it
+  #   XCURSOR_PATH            unset: in the session, in the compositor's
+  #                           environ, and nowhere in this repo
+  #   ~/.local/share/icons    13 themes, no Adwaita
+  #   ~/.icons                Apple-cursors only
+  #
+  # The measurements above are commands. What joins them is a reading of
+  # Hyprland 0.55.4's own source, whose VERSION file was checked against the
+  # running build first: src/managers/XCursorManager.cpp:208 builds
+  # themePaths() from XcursorLibraryPath() alone, so themePaths("Adwaita")
+  # can only have returned an empty set; :126 then falls to
+  # loadStandardCursors(), which asks XcursorShapeLoadImages() through that
+  # same library path and so fails for every shape; and :137 hands
+  # m_defaultCursor the 32x32 arrow compiled in at :100-111.
+  #
+  # Two instruments cannot answer this question, and both LOOK like they can:
+  # `hyprctl setcursor <anything> 24` prints `ok` and logs nothing even for a
+  # theme that provably does not exist -- proven by mutation against the name
+  # ThisThemeDoesNotExist123 -- and Hyprland's debug:disable_logs defaults to
+  # TRUE, so its own XCursor log lines never reach the log file at all. A
+  # green `ok` and a silent log are what a broken theme looks like here.
+  #
+  # This is exactly why a bare `adwaita-icon-theme` entry in home.packages
+  # would NOT have fixed it: ~/.nix-profile/share/icons is not on that path
+  # either. Same shape as home/portals.nix's note that
+  # ~/.nix-profile/share/systemd/user is not on the unit path. A Nix package
+  # alone places nothing where it will be found.
+  #
+  # home.pointerCursor is the mechanism that does place it. Read from
+  # home-manager's modules/config/home-cursor.nix rather than assumed, it
+  # writes the theme to BOTH ~/.local/share/icons/Adwaita (xdg.dataFile) and
+  # ~/.icons/Adwaita (home.file, via dotIcons.enable, whose default is true)
+  # -- the first two entries of that compiled-in path -- and it also adds the
+  # package to home.packages and exports XCURSOR_PATH pointing at the
+  # profile's share/icons. Three independent routes to one theme. All four
+  # target names were confirmed absent first, since home-manager refuses to
+  # clobber an existing file.
+  #
+  # The sub-options stay at their defaults deliberately, and the defaults are
+  # the reason this is three lines rather than ten:
+  #   x11.enable = false        its xsetroot rides in xsession.profileExtra,
+  #                             which no session this flake starts reads
+  #   gtk.enable = false        gtk.cursorTheme would fight home/gtk.nix's
+  #                             apply-gtk-theme for the same dconf keys
+  #   hyprcursor.enable = false nothing ships a manifest.hl; see
+  #                             hypr/hyprland.lua on why converting Adwaita
+  #                             would only repackage the same PNGs
+  #   sway.enable = false       not this compositor
+  #
+  # size = 24 matches hypr/hyprland.lua's XCURSOR_SIZE. The module also sets
+  # XCURSOR_THEME and XCURSOR_SIZE in home.sessionVariables under mkDefault,
+  # so those two values now have a second source; both say the same thing,
+  # and hl.env stays the one the compositor's own children read.
+  home.pointerCursor = {
+    package = pkgs.adwaita-icon-theme;
+    name = "Adwaita";
+    size = 24;
+  };
+
   # Qt6, and so the cheapest proof that quickshell will draw in spec 2.
   services.hyprpolkitagent = {
     enable = true;
