@@ -13,7 +13,8 @@
 ## Global Constraints
 
 - Wrap every `nix` and `home-manager` invocation in `sg nix-users -c '…'`.
-- Use `/usr/bin/grep` explicitly, with `-F` for a literal, whenever a count is load-bearing. The interactive `grep` is ugrep and returns `0` for patterns containing `${`.
+- Use `/usr/bin/grep` explicitly, with `-F` for a literal, whenever a count is load-bearing **in an interactive shell**. The interactive `grep` is ugrep and returns `0` for patterns containing `${`.
+- **Inside a Nix builder, use plain `grep`.** The builder's shell is the real one, so the ugrep rule does not apply — and `/usr/bin/grep` is not in the sandbox, so naming it there is an impurity that fails the build.
 - Inside a Nix builder, `set -e` and `pipefail` are ON. A bare `n=$(… | grep -c …)` aborts the build when the pattern does not match, rather than yielding `0`. Assign with `|| true` and test the variable, or put the grep in an `if` condition.
 - Inside an activation hook's `run … sh -c '…'` child, `errexit` and `pipefail` are OFF (`$-` is `hBc`). Each step carries its own `|| exit 0`.
 - Every guard is proven able to fail by mutation before it is trusted.
@@ -96,7 +97,7 @@
   # before, and passes every check.
   glStripShim = name: entry:
     pkgs.runCommand "calango-${name}" { } ''
-      vars=$(/usr/bin/grep -oE '^export [A-Z_]+' ${nixgl.bin} | cut -d' ' -f2 | sort -u) || true
+      vars=$(grep -oE '^export [A-Z_]+' ${nixgl.bin} | cut -d' ' -f2 | sort -u) || true
       if [ -z "$vars" ]; then
         echo "calango-${name}: no exported variables found in" >&2
         echo "  ${nixgl.bin}" >&2
