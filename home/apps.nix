@@ -217,6 +217,51 @@ in
   config.xdg.dataFile."applications/1password.desktop".source =
     "${desktopEntries}/1password.desktop";
 
+  # Two properties no build-time guard can reach, because a Nix builder may not
+  # read /opt.
+  #
+  #   1. The vendor binary moved. The shim execs it by absolute path, so the
+  #      symptom is an application that does not start at all -- which is the
+  #      same symptom this whole mechanism exists to cure, and would be blamed
+  #      on it.
+  #   2. The vendor .desktop drifted from our copy. Ours shadows it by id, so an
+  #      upgrade that adds a MimeType or an Action is dropped silently.
+  #
+  # Non-fatal, for the reason mimeappsIds below is: a fatal version aborts every
+  # switch on a machine where the corp package is simply not installed, and this
+  # flake targets more than one machine.
+  #
+  # entryAfter and not entryBetween. Nothing downstream reads what this produces
+  # -- it writes to stderr only -- so the `before` list would be empty, and
+  # entryBetween [] xs is by definition entryAfter xs. linkGeneration is the
+  # real edge: it is what creates ~/.local/share/applications/<id>, which the
+  # drift check reads.
+  #
+  # The body runs under `sh -c`, which inherits neither errexit nor pipefail
+  # from the activation script -- `$-` is `hBc` there, measured -- so the two
+  # greps carry their own `|| a=""` rather than relying on inherited options.
+  config.home.activation.glStrippedTargets =
+    lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+      run ${pkgs.bash}/bin/sh -c '
+${lib.concatStringsSep "\n" (lib.mapAttrsToList (name: entry: ''
+        if [ ! -x "${entry.binary}" ]; then
+          echo "${name}: ${entry.binary} is missing or not executable." >&2
+          echo "  The shim on PATH execs it, so launching ${name} will fail." >&2
+        fi
+        vendor="/usr/share/applications/${entry.desktopId}"
+        ours="$HOME/.local/share/applications/${entry.desktopId}"
+        if [ -r "$vendor" ] && [ -r "$ours" ]; then
+          a=$(grep -v "^Exec=" "$vendor" | sort) || a=""
+          b=$(grep -v "^Exec=" "$ours" | sort) || b=""
+          if [ "$a" != "$b" ]; then
+            echo "${entry.desktopId}: the vendor entry differs from ours on a field other than Exec." >&2
+            echo "  Ours shadows it, so that difference is being dropped." >&2
+            echo "  Compare: diff <(sort $vendor) <(sort $ours)" >&2
+          fi
+        fi'') glStripped)}
+      ' || true
+    '';
+
   # Without this the entry above is present but not discoverable, so the
   # default-browser hook below would set a handler nothing can resolve.
   #
