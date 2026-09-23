@@ -280,6 +280,18 @@ ${lib.concatStringsSep "\n" (lib.mapAttrsToList (name: entry: ''
         || echo "update-desktop-database failed; the browser handler may not resolve" >&2
     '';
 
+  # The hook above indexes only our own directory. /usr/share/applications is
+  # root's, and its mimeinfo.cache is built by this package's dpkg trigger
+  # (interest-noawait /usr/share/applications; postinst runs
+  # update-desktop-database). Without it gio lists no Debian application for a
+  # scheme at all, even one whose entry declares it -- measured with this
+  # flake's own gio against google-chrome.desktop, which registered with a
+  # cache beside it and was invisible without one. So the browser picker's
+  # discover.py found nothing but CalangoOpen, skips that as itself, and
+  # offered no browser. suffer had the package for historical reasons; a bare
+  # Debian 13 (epiphany) did not, which is how it was found.
+  config.calango.deb.keep.desktop-file-utils = "Its dpkg trigger builds /usr/share/applications/mimeinfo.cache, which gio needs to list any apt-installed application as a handler. Without it the browser picker finds no browser: Chrome's entry declares x-scheme-handler/https and is still invisible. Missing from a bare Debian 13, found on epiphany.";
+
   # Warn when ~/.config/mimeapps.list names a .desktop id that neither
   # XDG_DATA_DIRS nor $HOME/.local/share provides any more. The loop below
   # searches both, and the second is the load-bearing half: measured on this
