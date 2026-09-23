@@ -611,10 +611,17 @@
         # ${./test/vm/steps} is a source input the same way ${./hypr/hosts}
         # is above -- a Nix build cannot read a path it was never given, and
         # test/vm/steps/*.txt are not referenced by any other flake output.
+        #
+        # bootstrap/after-gate-a.sh is the second transcription, the one a
+        # person runs instead of reading Stages B to D, and it follows the same
+        # `#= ` convention for the same reason. Named as its own input rather
+        # than globbed with the steps: it is not a step file, and the VM
+        # harness must not start driving it.
         vm-step-lines-verbatim =
           pkgs.runCommand "vm-step-lines-verbatim" { } ''
             r=${suffer.config.calango.bootstrapDir}/RUNBOOK.md
             steps=${./test/vm/steps}
+            script=${./bootstrap/after-gate-a.sh}
 
             total=0
             missing=0
@@ -629,7 +636,7 @@
                 fails="$fails
             MISSING from RUNBOOK.md: $line"
               fi
-            done < <(sed -n 's/^#= //p' "$steps"/*.txt)
+            done < <(sed -n 's/^#= //p' "$steps"/*.txt "$script")
 
             # The vacuity anchor: with no '#=' lines the loop above runs zero
             # times, $missing stays 0, and this would pass having asserted
@@ -645,7 +652,8 @@
               echo "  $r" >&2
               echo "$fails" >&2
               echo "" >&2
-              echo "Either RUNBOOK.md changed and test/vm/steps/*.txt must" >&2
+              echo "Either RUNBOOK.md changed and test/vm/steps/*.txt (or" >&2
+              echo "  bootstrap/after-gate-a.sh) must" >&2
               echo "  follow, or a step was written against a runbook that no" >&2
               echo "  longer exists." >&2
               exit 1

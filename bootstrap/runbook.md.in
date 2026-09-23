@@ -188,6 +188,19 @@ hook's drift check reports on; `sudo` is what Stage C needs to run at all, and
 Stage 0's whole saving is that it adds this group without anyone asking. A
 gate that only counted the three would pass on a machine still missing it.
 
+**Once Gate A is green, `bootstrap/after-gate-a.sh` runs Stages B to D for
+you**, with Gates B, C and E, stopping at the first one that answers wrong. It
+exists before the clone does, so fetch it on its own:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/calangotechbv/calango-nix/main/bootstrap/after-gate-a.sh
+bash after-gate-a.sh
+```
+
+It stops once, to let you edit `hypr/hosts/<host>.lua`, and a second run
+resumes after the last step that finished. The stages below are what it does,
+and they are still the reference when it stops.
+
 ---
 
 ## Stage B — as `<user>`
