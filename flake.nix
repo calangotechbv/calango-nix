@@ -553,9 +553,7 @@
               echo "  hyprland.lua falls back to an empty host table, which" >&2
               echo "  leaves primary nil and every workspace rule a no-op." >&2
               echo "  Copy hypr/hosts/suffer.lua to the new name and edit the" >&2
-              echo "  outputs. Note hypr/hosts/epiphany.lua is a Fedora" >&2
-              echo "  machine this flake cannot target -- do not copy that one" >&2
-              echo "  expecting it to be a worked example." >&2
+              echo "  outputs." >&2
               exit 1
             fi
             touch "$out"
