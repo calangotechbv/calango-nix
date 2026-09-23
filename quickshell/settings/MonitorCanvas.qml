@@ -184,9 +184,11 @@ Item {
       dragMaxX: canvas.width  - width
       dragMaxY: canvas.height - canvas._stripH - height
 
-      // Orange border warns the user that two independent monitors are misaligned — a gap
-      // or overlap that Hyprland will reject or mis-render.  Only canvas-placed monitors
-      // are considered; disabled and mirroring outputs are excluded by definition.
+      // Orange border warns the user that a monitor is misaligned: it overlaps
+      // another, which blocks Apply, or it shares an edge with none of them,
+      // which Apply allows but leaves the pointer unable to reach it.  Only
+      // canvas-placed monitors are considered; disabled and mirroring outputs
+      // are excluded by definition.
       Rectangle {
         anchors.fill: parent
         color: "transparent"
@@ -194,17 +196,21 @@ Item {
         border.width: 2
         radius: 6
         visible: {
+          const d = enabledTile.modelData;
+          const dW = MonitorUtils.logicalW(d), dH = MonitorUtils.logicalH(d);
+          let others = 0, touching = 0;
           for (let i = 0; i < canvas.monitors.length; i++) {
             if (i === enabledTile.index) continue;
             const o = canvas.monitors[i];
             if (!canvas._onCanvas(o)) continue;
-            if (MonitorUtils.overlapsAABB(
-                  enabledTile.modelData.x, enabledTile.modelData.y,
-                  MonitorUtils.logicalW(enabledTile.modelData), MonitorUtils.logicalH(enabledTile.modelData),
-                  o.x, o.y, MonitorUtils.logicalW(o), MonitorUtils.logicalH(o)))
+            const oW = MonitorUtils.logicalW(o), oH = MonitorUtils.logicalH(o);
+            if (MonitorUtils.overlapsAABB(d.x, d.y, dW, dH, o.x, o.y, oW, oH))
               return true;
+            others++;
+            if (MonitorUtils.touchesAABB(d.x, d.y, dW, dH, o.x, o.y, oW, oH))
+              touching++;
           }
-          return false;
+          return others > 0 && touching === 0;
         }
         z: 2
       }
