@@ -168,12 +168,14 @@
         ];
       };
       suffer = mkHome "isutton" "suffer";
+      epiphany = mkHome "isutton" "epiphany";
 
       # The one place naming which hosts exist. homeConfigurations and the
       # host-config-files check both read it, so a host added to one cannot be
       # missing from the other.
       hostConfigs = {
         "isutton@suffer" = suffer;
+        "isutton@epiphany" = epiphany;
       };
     in
     {
